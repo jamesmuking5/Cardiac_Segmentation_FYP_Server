@@ -1,7 +1,7 @@
 {
   "name": "cardiac_segmentation_fyp_server",
   "version": "1.0.0",
-  "description": "This is a Node.js + Express.js backend for the Cardiac Segmentation Software Project for Team 6's FYP.",
+  "description": "This is a Node.js + Express.js backend for the VisHeart Cardiac Segmentation Software Project for Team 6's FYP A.",
   "main": "index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
