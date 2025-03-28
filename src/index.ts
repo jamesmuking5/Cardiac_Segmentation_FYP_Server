@@ -5,7 +5,7 @@ import dotenv from "dotenv";
 const app = express();
 
 // Import Winston Logger
-const logger = require("./services/logger");
+import logger from "./services/logger";
 // Import MongoDB Connection and connect to database
 const { connectToDatabase } = require("./services/database");
 connectToDatabase();
