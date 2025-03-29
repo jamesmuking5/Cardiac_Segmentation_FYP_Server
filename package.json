@@ -1,7 +1,7 @@
 {
   "name": "cardiac_segmentation_fyp_server",
   "version": "1.0.0",
-  "description": "This is a Node.js + Express.js backend for the Cardiac Segmentation Software Project for Team 6's FYP.",
+  "description": "This is a Node.js + Express.js backend for the VisHeart Cardiac Segmentation Software Project for Team 6's FYP A.",
   "main": "index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
@@ -22,13 +22,17 @@
   },
   "homepage": "https://github.com/jamesmuking5/Cardiac_Segmentation_FYP_Server#readme",
   "dependencies": {
+    "bcrypt": "^5.1.1",
     "dotenv": "^16.4.7",
     "express": "^4.21.2",
+    "mongoose": "^8.13.0",
+    "multer": "^1.4.5-lts.2",
     "nodemon": "^3.1.9",
     "winston": "^3.17.0",
     "winston-daily-rotate-file": "^5.0.0"
   },
   "devDependencies": {
+    "@types/bcrypt": "^5.0.2",
     "@types/express": "^5.0.1",
     "@types/node": "^22.13.13",
     "ts-node": "^10.9.2",
