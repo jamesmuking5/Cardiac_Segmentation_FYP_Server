@@ -4,7 +4,7 @@ import mongoose from "mongoose";
 import path from "path";
 import dotenv from "dotenv";
 import logger from "./logger";
-import * as bcrypt from 'bcrypt';
+import * as bcrypt from "bcrypt";
 
 dotenv.config({ path: path.join(__dirname, "../../.env") });
 
@@ -19,6 +19,7 @@ const connectToDatabase = async () => {
     logger.info(
       `Database: Connected to MongoDB database: ${dbname} at ${dburl}`
     );
+    await createAdminUser();
   } catch (error) {
     logger.error(`Database: Error connecting to MongoDB: ${error}`);
   }
@@ -36,7 +37,7 @@ const userSchema = new mongoose.Schema({
 const User = mongoose.model("User", userSchema);
 
 // Create a default admin user if it doesn't exist
-interface createAdminUser {
+interface User {
   username: string;
   password: string;
   email: string;
@@ -54,7 +55,7 @@ const createAdminUser = async () => {
           `Database: No admin account found. Creating default admin account.`
         );
         // Create an admin user with username "admin" and password "admin" (Emergency creation of admin account in case of no admin account)
-        const hashedPassword = bcrypt.hash("admin", 10);
+        const hashedPassword = await bcrypt.hash("admin", 10);
         const admin = new User({
           username: "admin",
           password: hashedPassword,
@@ -83,4 +84,4 @@ const createAdminUser = async () => {
   }
 };
 
-module.exports = { connectToDatabase };
+module.exports = { connectToDatabase, User };
