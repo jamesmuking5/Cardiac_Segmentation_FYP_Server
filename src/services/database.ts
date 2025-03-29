@@ -4,7 +4,7 @@ import mongoose from "mongoose";
 import path from "path";
 import dotenv from "dotenv";
 import logger from "./logger";
-import bcrypt from "bcrypt";
+import * as bcrypt from 'bcrypt';
 
 dotenv.config({ path: path.join(__dirname, "../../.env") });
 
@@ -15,10 +15,7 @@ const dburl: string =
 // Connect to MongoDB
 const connectToDatabase = async () => {
   try {
-    await mongoose.connect(dburl, {
-      useNewUrlParser: true,
-      useUnifiedTopology: true,
-    });
+    await mongoose.connect(dburl);
     logger.info(
       `Database: Connected to MongoDB database: ${dbname} at ${dburl}`
     );
