@@ -1,6 +1,6 @@
 // File: src/services/database.ts
 // Description: Database Service for the VisHeart Server
-import mongoose from "mongoose";
+import mongoose, {Schema, model, Model} from "mongoose";
 import path from "path";
 import dotenv from "dotenv";
 import logger from "./logger";
@@ -10,7 +10,7 @@ dotenv.config({ path: path.join(__dirname, "../../.env") });
 
 const dbname: string = "visheart";
 const dburl: string =
-  process.env.MONGODB_URI || "mongodb://localhost:27017/visheart";
+  process.env.MONGODB_URI || "mongodb://127.0.0.1:27017/visheart";
 
 // Connect to MongoDB
 const connectToDatabase = async () => {
@@ -25,19 +25,8 @@ const connectToDatabase = async () => {
   }
 };
 
-/* Collection Creation */
-// User Collection
-const userSchema = new mongoose.Schema({
-  username: { type: String, required: true, unique: true },
-  password: { type: String, required: true },
-  email: { type: String, required: true, unique: true },
-  phone: { type: String, required: true, unique: true },
-  role: { type: String, required: true, default: "user" },
-});
-const User = mongoose.model("User", userSchema);
-
-// Create a default admin user if it doesn't exist
-interface User {
+// User Interface
+interface IUser {
   username: string;
   password: string;
   email: string;
@@ -45,6 +34,25 @@ interface User {
   role: string;
 }
 
+// User Model Interface
+interface IUserDocument extends IUser, mongoose.Document {}
+
+// Mongoose Model Interface - Defines static methods
+interface IUserModel extends Model<IUserDocument> {}
+
+/* Collection Creation */
+// User Collection
+const userSchema= new mongoose.Schema<IUserDocument>({
+  username: { type: String, required: true, unique: true },
+  password: { type: String, required: true },
+  email: { type: String, required: true, unique: true },
+  phone: { type: String, required: true, unique: true },
+  role: { type: String, required: true, default: "user" },
+});
+// Create the model with proper typing
+const User = model<IUserDocument, IUserModel>("User", userSchema);
+
+// Create a default admin user if it doesn't exist
 const createAdminUser = async () => {
   try {
     // Check if an admin user exists
@@ -69,7 +77,7 @@ const createAdminUser = async () => {
         const createdAdmin = await User.findOne({ username: "admin" });
         if (createdAdmin) {
           logger.info(
-            `Database: Default admin account created successfully. Please change the password immediately.`
+            `Database: WARNING: Default admin account created successfully. Please change the password IMMEDIATELY.`
           );
         }
       } else {
@@ -84,4 +92,5 @@ const createAdminUser = async () => {
   }
 };
 
-module.exports = { connectToDatabase, User };
+// Using ES modules instead of CommonJS which is module.exports = {connectToDatabase, User};
+export { connectToDatabase, User };
