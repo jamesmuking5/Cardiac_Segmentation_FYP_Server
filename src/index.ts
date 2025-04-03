@@ -1,6 +1,17 @@
 import express, { Request, Response } from "express";
 import dotenv from "dotenv";
+import path from "path";
 
+// Load environment variables from .env file
+try {
+    // override: true allows to override cached environment variables
+    dotenv.config({ path: path.join(__dirname, "../../.env"), override: true }); 
+  } catch (error) {
+    logger.error(
+      `Database: Error loading .env file. Please check the file path and permissions.`
+    );
+  }
+  
 // Create express app
 const app = express();
 
