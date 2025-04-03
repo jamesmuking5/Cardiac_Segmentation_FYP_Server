@@ -286,4 +286,4 @@ const updateUser = async (
 
 
 // Using ES modules instead of CommonJS which is module.exports = {connectToDatabase, User};
-export { connectToDatabase, userModel, fileModel, createUser };
+export { connectToDatabase, userModel, fileModel, createUser, updateUser };
