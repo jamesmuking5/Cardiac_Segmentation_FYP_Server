@@ -192,6 +192,7 @@ const createUser = async (
 const updateUser = async (
   username: string,
   updates: {
+    username?: string,
     password?: string,
     email?: string,
     phone?: string,
@@ -217,6 +218,25 @@ const updateUser = async (
         unchangedFields.push("password");
       } else {
         updateData.password = await bcrypt.hash(updates.password, 10);
+      }
+    }
+
+    // Check username
+    if (updates.username !== undefined) {
+      if (updates.email === existingUser.username) {
+        unchangedFields.push("username");
+      }
+      else { 
+        // Check if the username is already in use by another user
+        const usernameExists = await userModel.findOne({ 
+          username: updates.username,
+          _id: { $ne: existingUser._id } // Exclude current user
+        });
+        
+        if (usernameExists) {
+          return { success: false, error: `Username "${updates.username}" is already in use by another user.` };
+        }
+        updateData.username = updates.username;
       }
     }
 
@@ -283,7 +303,6 @@ const updateUser = async (
     else { logger.error(`Database: Unknown error updating user: ${error}`); return { success: false, error: "Unknown error" }; }
   }
 }
-
 
 // Using ES modules instead of CommonJS which is module.exports = {connectToDatabase, User};
 export { connectToDatabase, userModel, fileModel, createUser, updateUser };
