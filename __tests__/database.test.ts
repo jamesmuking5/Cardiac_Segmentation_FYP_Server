@@ -34,6 +34,7 @@ beforeEach(async () => {
   }
 });
 
+// Test suite for database services
 describe('Database Service', () => {
   // Test connectToDatabase
   describe('connectToDatabase', () => {
@@ -216,4 +217,7 @@ describe('Database Service', () => {
       expect(passwordMatchesAfterUpdate).toBe(true); // Password should remain unchanged
     });
   })
+
+  // Test createFile
+  describe('createFile', () => { });
 });
