@@ -11,7 +11,7 @@ import LogError from "../utils/error_logger"; // Import the error logging utilit
 const serviceLocation: string = "Database"; // Service location for error logging
 
 // TODO: File check script to check if the file exists and is readable before loading it
-// TODO:
+// TODO: Delete User and Files functions
 
 // Load environment variables from .env file
 try {
