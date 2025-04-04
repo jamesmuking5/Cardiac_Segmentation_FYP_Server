@@ -6,6 +6,10 @@ import dotenv from "dotenv";
 import logger from "./logger";
 import * as bcrypt from "bcrypt";
 
+// Import utility functions
+import LogError from "../utils/error_logger"; // Import the error logging utility
+const serviceLocation: string = "Database"; // Service location for error logging
+
 // TODO: File check script to check if the file exists and is readable before loading it
 // TODO:
 
@@ -14,20 +18,12 @@ try {
   // override: true allows to override cached environment variables
   dotenv.config({ path: path.join(__dirname, "../../.env"), override: true });
 } catch (error: unknown) {
-  if (error instanceof Error) {
-    logger.error(
-      `Database: Unable to load environment variables. Error: ${error.message}`
-    );
-  } else {
-    logger.error(
-      `Database: Unknown error loading environment variables: ${error}`
-    );
-  }
-}
+  LogError(error as Error, serviceLocation, "Error loading .env file.");
+};
 
 // Database connection URL and name
-const dbname: string = "visheart";
-const dburl: string =
+const DB_NAME: string = "visheart";
+const DB_URI: string =
   process.env.MONGODB_URI || "mongodb://127.0.0.1:27017/visheart";
 
 // Fetch default admin password
@@ -36,24 +32,15 @@ const adminPass: string = process.env.ADMIN_PASS || "admin"; // Default to "admi
 // Connect to MongoDB
 const connectToDatabase = async (): Promise<void> => {
   try {
-    await mongoose.connect(dburl);
-    logger.info(
-      `Database: Connected to MongoDB database: ${dbname} at ${dburl}`
-    );
+    await mongoose.connect(DB_URI);
+    logger.info(`Database: Connected to MongoDB database: ${DB_NAME} at ${DB_URI}`);
     await createAdminUser();
   } catch (error: unknown) {
-    if (error instanceof Error) {
-      logger.error(
-        `Database: Unable to connect to MongoDB database. Error: ${error.message}`
-      );
-    } else {
-      logger.error(
-        `Database: Unknown error connecting to the database: ${error}`
-      );
-    }
+    LogError(error as Error, serviceLocation, `Error connecting to MongoDB database: ${DB_NAME} at ${DB_URI}`)
   }
 };
 
+/* Interfaces */
 // User Interface (anyone that is treated as a user must have these properties)
 interface IUser {
   username: string;
@@ -131,15 +118,7 @@ const createAdminUser = async () => {
       return;
     }
   } catch (error: unknown) {
-    if (error instanceof Error) {
-      logger.error(
-        `Database: Error checking or creating admin user: ${error.message}`
-      );
-    } else {
-      logger.error(
-        `Database: Unknown error checking or creating admin user: ${error}`
-      );
-    }
+    LogError(error as Error, serviceLocation, "Error checking or creating admin account.");
   }
 };
 
@@ -178,15 +157,15 @@ const createUser = async (
       $or: [{ username: username }, { email: email }, { phone: phone }],
     });
     if (existingUser) {
-      let reasons: string = `User already exists: `;
+      let reasons: string = `User already exists:`;
       if (existingUser.username === username) {
-        reasons += `Username "${username}" already exists. `;
+        reasons += ` Username "${username}" already exists.`;
       }
       if (existingUser.email === email) {
-        reasons += `Email "${email}" already exists. `;
+        reasons += ` Email "${email}" already exists.`;
       }
       if (existingUser.phone === phone) {
-        reasons += `Phone "${phone}" already exists. `;
+        reasons += ` Phone "${phone}" already exists.`;
       }
       logger.warn(`Database: Error creating user: ${reasons}`);
       return { success: false, error: reasons };
@@ -208,13 +187,8 @@ const createUser = async (
     );
     return { success: true, user: newUser };
   } catch (error: unknown) {
-    if (error instanceof Error) {
-      logger.error(`Database: Error creating user: ${error.message}`);
-      return { success: false, error: error.message };
-    } else {
-      logger.error(`Database: Unknown error creating user: ${error}`);
-      return { success: false, error: "Unknown error" };
-    }
+    LogError(error as Error, serviceLocation, `Error creating user ${username}.`);
+    return { success: false, error: "Error creating user." };
   }
 };
 
@@ -349,15 +323,66 @@ const updateUser = async (
     );
     return { success: true, user: updatedUser };
   } catch (error: unknown) {
-    if (error instanceof Error) {
-      logger.error(`Database: Error updating user: ${error.message}`);
-      return { success: false, error: error.message };
-    } else {
-      logger.error(`Database: Unknown error updating user: ${error}`);
-      return { success: false, error: "Unknown error" };
-    }
+    LogError(error as Error, serviceLocation, `Error updating user ${username}.`);
+    return { success: false, error: "Error updating user." };
   }
 };
+
+// File Functions
+// Define result type for createFile function
+type FileCrudResult =
+  | { success: true; file: IFileDocument } // Successful file creation
+  | { success: false; error: string }; // File already exists or other error
+
+// Function to create a new file record in the database
+const createFile = async (
+  filename: string,
+  filepath: string,
+  filetype: string,
+  filehash: string,
+  filesize: number, // In bytes
+  createdBy: string,
+  description: string | undefined = undefined
+): Promise<FileCrudResult> => {
+  try {
+    // Check if file exists with name, hash
+    const existingFile = await fileModel.findOne({
+      $or: [{ filename: filename }, { filehash: filehash }],
+    });
+    if (existingFile) {
+      let reasons: string = `File already exists: `;
+      if (existingFile.filename === filename) {
+        reasons += `Filename "${filename}" already exists. `;
+      }
+      if (existingFile.filehash === filehash) {
+        reasons += `File hash "${filehash}" already exists. `;
+      }
+      logger.warn(`Database: Error creating file: ${reasons}`);
+      return { success: false, error: reasons };
+    }
+    // Create a new file instance
+    const newFile: IFileDocument = new fileModel({
+      filename: filename,
+      filepath: filepath,
+      filetype: filetype,
+      filehash: filehash,
+      filesize: filesize,
+      createdBy: createdBy,
+      description: description,
+    });
+    // Save the new file to the database
+    await newFile.save();
+    logger.info(
+      `Database: File ${newFile._id} created successfully: ${newFile.filename}, ${newFile.filepath}, ${newFile.filetype}`
+    );
+    return { success: true, file: newFile };
+  }
+  catch (error: unknown) {
+    LogError(error as Error, serviceLocation, `Error creating file ${filename}.`);
+    return { success: false, error: "Error creating file." };
+  }
+};
+
 
 // Using ES modules instead of CommonJS which is module.exports = {connectToDatabase, User};
 export { connectToDatabase, userModel, fileModel, createUser, updateUser };
