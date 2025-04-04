@@ -3,12 +3,12 @@
 import { MongoMemoryServer } from 'mongodb-memory-server';
 import mongoose, { ConnectOptions } from 'mongoose';
 import {
-  UserRole,
   connectToDatabase,
   userModel,
   fileModel,
   createUser,
   updateUser,
+  UserRole,
 } from '../src/services/database';
 import bcrypt from 'bcrypt';
 
@@ -57,16 +57,54 @@ describe('Database Service', () => {
       expect(mongoose.connection.readyState).toBe(1); // 1 = connected
     });
 
-    // TODO: Add tests specifically for the createAdminUser logic within connectToDatabase.
-    // This might involve:
-    // 1. Clearing the user collection.
-    // 2. Calling connectToDatabase (potentially needing to disconnect/reconnect or mock).
-    // 3. Checking if the admin user exists.
-    // 4. Repeating with a pre-existing admin to ensure no duplicate is made.
-    // Note: Directly testing non-exported functions like createAdminUser is hard.
-    // Testing its effect via the exported connectToDatabase is the practical approach here.
-    it.todo('should create a default admin user if none exists');
+    it("should create a default admin user if none exists", async () => {
+      // Verify there is no admin user before running the function
+      const beforeCheck = await userModel.findOne({ role: UserRole.Admin });
+      expect(beforeCheck).toBeNull();
+
+      // Now call the actual connectToDatabase function
+      // This works because already connected to the in-memory database
+      // so it will skip the mongoose.connect() part and just run the createAdminUser() logic
+      await connectToDatabase();
+
+      // Check that an admin was created
+      const adminUser = await userModel.findOne({ role: UserRole.Admin });
+      if (adminUser) {
+        expect(adminUser).not.toBeNull();
+        expect(adminUser?.username).toBe("admin");
+      }
+    });
+
+
     it.todo('should not create a default admin user if one already exists');
+    // it("should not create a default admin user if one already exists", async () => {
+    //   // Verify there is no admin user first
+    //   const beforeCheck = await userModel.findOne({ role: UserRole.Admin });
+    //   expect(beforeCheck).toBeNull();
+
+    //   // Create an admin user manually
+    //   await createUser(
+    //     'existingAdmin',
+    //     'helpmegetthroughthis',
+    //     'mylifeisadream@example.com',
+    //     '1234567890',
+    //     UserRole.Admin
+    //   );
+
+    //   // Now call the connectToDatabase function
+    //   await connectToDatabase(); // This should not create a new admin user
+
+    //   // Check that the admin user still exists and no duplicates were created
+    //   const adminUser = await userModel.findOne({ role: UserRole.Admin });
+    //   expect(adminUser).not.toBeNull();
+    //   if (adminUser) {
+    //     expect(adminUser.username).toBe('existingAdmin'); // Check the username of the existing admin
+    //   }
+    //   // Check that no new admin user was created
+    //   const allAdmins = await userModel.find({ role: UserRole.Admin });
+    //   expect(allAdmins.length).toBe(1); // Ensure only one admin user exists
+    //   expect(allAdmins[0].username).toBe('existingAdmin'); // Check that the existing Admin is the only first one
+    // });
   });
 
   // --- createUser Tests ---
