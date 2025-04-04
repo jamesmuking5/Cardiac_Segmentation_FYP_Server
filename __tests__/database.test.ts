@@ -1,6 +1,14 @@
+// File: __tests__/database.test.ts
+// Description: This file contains unit tests for the database service functions.
 import { MongoMemoryServer } from 'mongodb-memory-server';
-import mongoose from 'mongoose';
-import { connectToDatabase, userModel, fileModel, createUser, updateUser } from '../src/services/database';
+import mongoose, { ConnectOptions } from 'mongoose';
+import {
+  connectToDatabase,
+  userModel,
+  fileModel, 
+  createUser,
+  updateUser,
+} from '../src/services/database';
 import bcrypt from 'bcrypt';
 
 // Mocking logger to prevent console output during tests
@@ -11,213 +19,330 @@ jest.mock('../src/services/logger', () => ({
 }));
 
 let mongoServer: MongoMemoryServer;
+let dbUri: string;
 
 // Setup in-memory MongoDB server
 beforeAll(async () => {
   mongoServer = await MongoMemoryServer.create();
-  const uri = mongoServer.getUri();
-  await mongoose.connect(uri);
+  dbUri = mongoServer.getUri();
+  // Connect only once here
+  await mongoose.connect(dbUri);
 });
 
 // Clean up after tests
 afterAll(async () => {
-  await mongoose.connection.close();
+  await mongoose.disconnect();
   await mongoServer.stop();
 });
 
-// Clear data between tests
+// Clear data between tests for all describe blocks
 beforeEach(async () => {
-  // Clear all collections
+  // Clear all collections more reliably
   const collections = mongoose.connection.collections;
   for (const key in collections) {
     await collections[key].deleteMany({});
   }
+  // Optional: Re-ensure admin user logic if connectToDatabase test becomes more complex
+  // For now, assume connect in beforeAll handles initial setup if needed.
 });
 
-// Test suite for database services
+// --- Main Test Suite ---
 describe('Database Service', () => {
-  // Test connectToDatabase
+
+  // --- connectToDatabase Tests ---
   describe('connectToDatabase', () => {
-    it('should connect to the database', async () => {
+    // Basic connection check (relies on beforeAll)
+    it('should establish a connection to the database', () => {
       expect(mongoose.connection.readyState).toBe(1); // 1 = connected
     });
+
+    // TODO: Add tests specifically for the createAdminUser logic within connectToDatabase.
+    // This might involve:
+    // 1. Clearing the user collection.
+    // 2. Calling connectToDatabase (potentially needing to disconnect/reconnect or mock).
+    // 3. Checking if the admin user exists.
+    // 4. Repeating with a pre-existing admin to ensure no duplicate is made.
+    // Note: Directly testing non-exported functions like createAdminUser is hard.
+    // Testing its effect via the exported connectToDatabase is the practical approach here.
+    it.todo('should create a default admin user if none exists');
+    it.todo('should not create a default admin user if one already exists');
   });
 
-  // Test createUser
+  // --- createUser Tests ---
   describe('createUser', () => {
-    it('should create a new user successfully', async () => {
-      // Create a test user
-      const result = await createUser(
-        'testuser',
-        'password123',
-        'test@example.com',
-        '1234567890'
-        // role is omitted for default 'user' - to check
-      );
-      // Check if operation was successful
-      expect(result).toBeTruthy();
-      if (result.success === true) {
-        expect(result.user).toBeDefined();
-        expect(result.user.username).toBe('testuser');
-        expect(result.user.email).toBe('test@example.com');
-        expect(result.user.phone).toBe('1234567890');
-        expect(result.user.role).toBe('user'); // Default role
-      }
-      // Verify the user was saved to the database by querying it directly
-      const savedUser = await userModel.findOne({ username: 'testuser' });
-      expect(savedUser).not.toBeNull();
-      expect(savedUser?.email).toBe('test@example.com');
-      expect(savedUser?.phone).toBe('1234567890');
+    it('should create a new user successfully with default role', async () => {
+      // Arrange
+      const username = 'testuser';
+      const password = 'password123';
+      const email = 'test@example.com';
+      const phone = '1234567890';
 
-      // Optional: Verify password was properly hashed
-      const passwordMatches = await bcrypt.compare('password123', savedUser!.password);
+      // Act
+      const result = await createUser(username, password, email, phone);
+
+      // Assert - Check result object
+      expect(result.success).toBe(true);
+      if (result.success === true) { // Type narrowing
+        expect(result.user).toBeDefined();
+        expect(result.user.username).toBe(username);
+        expect(result.user.email).toBe(email);
+        expect(result.user.phone).toBe(phone);
+        expect(result.user.role).toBe('user'); // Check default role
+      } else {
+        fail('createUser should have succeeded but failed');
+      }
+
+      // Assert - Check database state
+      const savedUser = await userModel.findOne({ username: username });
+      expect(savedUser).not.toBeNull();
+      expect(savedUser?.email).toBe(email);
+      expect(savedUser?.phone).toBe(phone);
+      expect(savedUser?.role).toBe('user');
+
+      // Assert - Check password hashing
+      const passwordMatches = await bcrypt.compare(password, savedUser!.password);
       expect(passwordMatches).toBe(true);
+    });
+
+    it('should create a new user successfully with a specified role', async () => {
+       // Arrange
+       const username = 'adminuser';
+       const password = 'password123';
+       const email = 'admin@example.com';
+       const phone = '1112223333';
+       const role = 'admin';
+       // Act
+       const result = await createUser(username, password, email, phone, role);
+        // Assert
+       expect(result.success).toBe(true);
+       if (result.success === true) {
+           expect(result.user.role).toBe(role);
+       } else {
+           fail('createUser should have succeeded but failed');
+       }
+       const savedUser = await userModel.findOne({ username: username });
+       expect(savedUser?.role).toBe(role);
+    });
+
+    // --- createUser Failure Scenarios ---
+    describe('when unique fields conflict', () => {
+        const conflictUsername = 'conflictUser';
+        const conflictEmail = 'conflict@example.com';
+        const conflictPhone = '5555555555';
+
+        // Setup the user that will cause conflicts
+        beforeEach(async () => {
+            await createUser(
+                conflictUsername,
+                'password123',
+                conflictEmail,
+                conflictPhone
+            );
+        });
+
+        it('should fail if username already exists', async () => {
+            const result = await createUser(
+                conflictUsername, // Existing username
+                'newpass',
+                'new@example.com',
+                '1234567890'
+            );
+            expect(result.success).toBe(false);
+            if (result.success === false) {
+                expect(result.error).toContain(`Username "${conflictUsername}" already exists`);
+                expect(result.error).not.toContain('Email'); // Ensure only username conflict is reported
+                expect(result.error).not.toContain('Phone');
+            } else {
+                 fail('createUser should have failed (duplicate username) but succeeded');
+            }
+             // Verify no new user was added
+            const users = await userModel.find({ email: 'new@example.com' });
+            expect(users.length).toBe(0);
+        });
+
+        it('should fail if email already exists', async () => {
+             const result = await createUser(
+                'newUser',
+                'newpass',
+                conflictEmail, // Existing email
+                '1234567890'
+            );
+            expect(result.success).toBe(false);
+            if (result.success === false) {
+                expect(result.error).toContain(`Email "${conflictEmail}" already exists`);
+                expect(result.error).not.toContain('Username');
+                expect(result.error).not.toContain('Phone');
+            } else {
+                 fail('createUser should have failed (duplicate email) but succeeded');
+            }
+        });
+
+        it('should fail if phone already exists', async () => {
+             const result = await createUser(
+                'newUser',
+                'newpass',
+                'new@example.com',
+                conflictPhone // Existing phone
+            );
+            expect(result.success).toBe(false);
+            if (result.success === false) {
+                expect(result.error).toContain(`Phone "${conflictPhone}" already exists`);
+                 expect(result.error).not.toContain('Username');
+                 expect(result.error).not.toContain('Email');
+            } else {
+                 fail('createUser should have failed (duplicate phone) but succeeded');
+            }
+        });
+
+        it('should fail and report all conflicts if username, email, and phone already exist', async () => {
+             const result = await createUser(
+                conflictUsername, // Existing username
+                'newpass',
+                conflictEmail, // Existing email
+                conflictPhone // Existing phone
+            );
+            expect(result.success).toBe(false);
+            if (result.success === false) {
+                expect(result.error).toContain(`Username "${conflictUsername}" already exists`);
+                expect(result.error).toContain(`Email "${conflictEmail}" already exists`);
+                expect(result.error).toContain(`Phone "${conflictPhone}" already exists`);
+            } else {
+                 fail('createUser should have failed (all duplicates) but succeeded');
+            }
+        });
     });
   });
 
-  // Test updateUser
-  describe('updatedUser', () => {
-    it('should update an existing user successfully', async () => {
-      // Add a test user first (using previous test code)
-      const result = await createUser(
-        'testuser',
-        'password123',
-        'test@example.com',
-        '1234567890'
-        // role is omitted for default 'user' - to check
-      );
-      // Check if operation was successful
-      expect(result).toBeTruthy();
-      if (result.success === true) {
-        expect(result.user).toBeDefined();
-        // Check the other fields remain unchanged
-        expect(result.user.username).toBe('testuser');
-        expect(result.user.email).toBe('test@example.com');
-        expect(result.user.phone).toBe('1234567890');
-        expect(result.user.role).toBe('user'); // Default role
-      }
-      // Verify the user was saved to the database by querying it directly
-      const savedUser = await userModel.findOne({ username: 'testuser' });
-      expect(savedUser).not.toBeNull();
-      expect(savedUser?.email).toBe('test@example.com');
-      expect(savedUser?.phone).toBe('1234567890');
+  // --- updateUser Tests ---
+  describe('updateUser', () => {
+    const initialUsername = 'updateTestUser';
+    const initialPassword = 'initialPassword';
+    const initialEmail = 'initial@example.com';
+    const initialPhone = '1110001110';
 
-      // Optional: Verify password was properly hashed
-      const passwordMatches = await bcrypt.compare('password123', savedUser!.password);
-      expect(passwordMatches).toBe(true);
-
-      /* Update User Test Section */
-      // Test is broken down into {email, phone}, {password}, {role}, {username} to check if only the updated field is changed
-      // 1. Assume {email, phone} is updated
-      const updateResult = await updateUser(
-        'testuser',
-        {
-          email: 'test2@example.com',
-          phone: '99999999',
-        }
-      )
-      // Check if operation was successful
-      expect(updateResult).toBeTruthy();
-      if (updateResult.success === true) {
-        expect(updateResult.user.email).toBe('test2@example.com'); // Updated email
-        expect(updateResult.user.phone).toBe('99999999'); // Updated phone
-        // Check the other fields remain unchanged
-        expect(updateResult.user.username).toBe('testuser');
-        expect(updateResult.user.role).toBe('user'); // Default role
-        // Cannot check password here as it is hashed in the database
-      }
-      // Verify the user was updated in the database by querying it directly
-      const updatedUser = await userModel.findOne({ username: 'testuser' });
-      expect(updatedUser).not.toBeNull();
-      // Check updated fields
-      expect(updatedUser?.email).toBe('test2@example.com'); // Updated email
-      expect(updatedUser?.phone).toBe('99999999'); // Updated phone
-      // Check that other fields remain unchanged
-      expect(updatedUser?.username).toBe('testuser'); // Unchanged username
-      expect(updatedUser?.role).toBe('user'); // Default role
-      let passwordMatchesAfterUpdate = await bcrypt.compare('password123', updatedUser!.password);
-      expect(passwordMatchesAfterUpdate).toBe(true); // Password should remain unchanged
-
-      // 2. Assume {password} is updated
-      const updateResult2 = await updateUser(
-        'testuser',
-        { password: 'imtiredpleasehelpme', });
-      // Check if operation was successful
-      expect(updateResult2.success).toBeTruthy();
-      if (updateResult2.success === true) {
-        // Check the other fields remain unchanged
-        expect(updateResult2.user.username).toBe('testuser');
-        expect(updateResult2.user.email).toBe('test2@example.com');
-        expect(updateResult2.user.phone).toBe('99999999');
-        expect(updateResult2.user.role).toBe('user'); // Default role
-        // Cannot chek passwouser.rd here as it is hashed in the database
-      }
-      // Verify the user was updated in the database by querying it directly
-      const updatedUser2 = await userModel.findOne({ username: 'testuser' });
-      expect(updatedUser2).not.toBeNull();
-      // Check updated fields
-      passwordMatchesAfterUpdate = await bcrypt.compare('imtiredpleasehelpme', updatedUser2!.password);
-      expect(passwordMatchesAfterUpdate).toBe(true); // Password should be changed
-      // Check that other fields remain unchanged
-      expect(updatedUser2?.username).toBe('testuser'); // Unchanged username
-      expect(updatedUser2?.email).toBe('test2@example.com'); // Updated email
-      expect(updatedUser2?.phone).toBe('99999999'); // Updated phone
-      expect(updatedUser2?.role).toBe('user'); // Default role
-
-      // 3. Assume {role} is updated
-      const updateResult3 = await updateUser(
-        'testuser',
-        { role: 'admin' });
-      // Check if operation was successful
-      expect(updateResult3.success).toBeTruthy();
-      if (updateResult3.success === true) {
-        expect(updateResult3.user.role).toBe('admin'); // Updated admin role
-        // Check the other fields remain unchanged
-        expect(updateResult3.user.username).toBe('testuser');
-        expect(updateResult3.user.email).toBe('test2@example.com');
-        expect(updateResult3.user.phone).toBe('99999999');
-        // Cannot check password here as it is hashed in the database      
-      }
-      // Verify the user was updated in the database by querying it directly
-      const updatedUser3 = await userModel.findOne({ username: 'testuser' });
-      expect(updatedUser3).not.toBeNull();
-      // Check updated fields
-      expect(updatedUser3?.role).toBe('admin'); // Updated admin role
-      // Check that other fields remain unchanged
-      expect(updatedUser3?.username).toBe('testuser'); // Unchanged username
-      expect(updatedUser3?.email).toBe('test2@example.com'); // Updated email
-      expect(updatedUser3?.phone).toBe('99999999'); // Updated phone
-      passwordMatchesAfterUpdate = await bcrypt.compare('imtiredpleasehelpme', updatedUser3!.password);
-      expect(passwordMatchesAfterUpdate).toBe(true); // Password should remain unchanged
-
-      // 4. Assume {username} is updated
-      const updateResult4 = await updateUser(
-        'testuser',
-        { username: 'testuser2' });
-      // Check if operation was successful
-      expect(updateResult4.success).toBeTruthy();
-      if (updateResult4.success === true) {
-        expect(updateResult4.user.username).toBe('testuser2'); // Updated username
-        // Check the other fields remain unchanged
-        expect(updateResult4.user.email).toBe('test2@example.com');
-        expect(updateResult4.user.phone).toBe('99999999');
-        expect(updateResult4.user.role).toBe('admin');
-        // Cannot check password here as it is hashed in the database
-      }
-      // Verify the user was updated in the database by querying it directly
-      const updatedUser4 = await userModel.findOne({ username: 'testuser2' });
-      expect(updatedUser4).not.toBeNull();
-      // Check updated fields
-      expect(updatedUser4?.username).toBe('testuser2'); // Updated username
-      // Check that other fields remain unchanged
-      expect(updatedUser4?.email).toBe('test2@example.com'); // Updated email
-      expect(updatedUser4?.phone).toBe('99999999'); // Updated phone
-      expect(updatedUser4?.role).toBe('admin'); // Updated admin role
-      passwordMatchesAfterUpdate = await bcrypt.compare('imtiredpleasehelpme', updatedUser3!.password);
-      expect(passwordMatchesAfterUpdate).toBe(true); // Password should remain unchanged
+    // Setup user for update tests
+    beforeEach(async () => {
+        await createUser(initialUsername, initialPassword, initialEmail, initialPhone);
     });
-  })
 
-  // Test createFile
-  describe('createFile', () => { });
+    it('should update email, phone, password, and role successfully', async () => {
+      // Arrange: Define the updates
+      const updates = {
+        email: 'updated@example.com',
+        phone: '2220002220',
+        password: 'newSecurePassword',
+        role: 'admin',
+      };
+
+      // Act: Perform the update
+      const updateResult = await updateUser(initialUsername, updates);
+
+      // Assert: Check the result and final database state
+      expect(updateResult.success).toBe(true);
+
+      // Verify database state
+      const updatedUser = await userModel.findOne({ username: initialUsername });
+      expect(updatedUser).not.toBeNull();
+
+      if (updatedUser) { // Type guard
+        expect(updatedUser.email).toBe(updates.email);
+        expect(updatedUser.phone).toBe(updates.phone);
+        expect(updatedUser.role).toBe(updates.role);
+        expect(updatedUser.username).toBe(initialUsername); // Username should be unchanged
+
+        // Verify password hash
+        const passwordMatches = await bcrypt.compare(updates.password, updatedUser.password);
+        expect(passwordMatches).toBe(true);
+      } else {
+         fail("Updated user not found in DB");
+      }
+    });
+
+    it('should update username successfully', async () => {
+      // Arrange
+      const newUsername = 'user-renamed';
+
+      // Act
+      const updateResult = await updateUser(initialUsername, { username: newUsername });
+
+      // Assert: Check success status
+      expect(updateResult.success).toBe(true);
+
+      // Verify database state - query by OLD username should fail
+      const oldUser = await userModel.findOne({ username: initialUsername });
+      expect(oldUser).toBeNull();
+
+      // Verify database state - query by NEW username should succeed
+      const newUser = await userModel.findOne({ username: newUsername });
+      expect(newUser).not.toBeNull();
+
+      if (newUser) {
+        expect(newUser.username).toBe(newUsername);
+        // Check other fields remained unchanged from initial state
+        expect(newUser.email).toBe(initialEmail);
+        expect(newUser.phone).toBe(initialPhone);
+        expect(newUser.role).toBe('user'); // Initial default role
+        const passwordMatches = await bcrypt.compare(initialPassword, newUser.password);
+        expect(passwordMatches).toBe(true); // Initial password
+      } else {
+          fail("Renamed user not found in DB");
+      }
+    });
+
+    it('should return success: false if trying to update a non-existent user', async () => {
+        const result = await updateUser('nonexistentuser', { email: 'a@b.com'});
+        expect(result.success).toBe(false);
+        if (result.success === false) {
+             expect(result.error).toContain('does not exist');
+        } else {
+             fail('updateUser should have failed for non-existent user but succeeded');
+        }
+    });
+
+     it('should return success: false if update results in no changes', async () => {
+        const result = await updateUser(initialUsername, { email: initialEmail, phone: initialPhone }); // Provide existing data
+        expect(result.success).toBe(false);
+        if (result.success === false) {
+             expect(result.error).toContain('No fields to update');
+        } else {
+             fail('updateUser should have failed (no changes) but succeeded');
+        }
+    });
+
+
+    it('should fail if updated email conflicts with another existing user', async () => {
+        // Arrange: Create a second user whose email we'll conflict with
+        const otherUserEmail = 'other@example.com';
+        await createUser('otherUser', 'password', otherUserEmail, '3330003330');
+
+        // Act: Try to update the first user to use the second user's email
+        const result = await updateUser(initialUsername, { email: otherUserEmail });
+
+        // Assert
+        expect(result.success).toBe(false);
+        if (result.success === false) {
+            expect(result.error).toContain(`Email "${otherUserEmail}" is already in use`);
+        } else {
+            fail('updateUser should have failed (email conflict) but succeeded');
+        }
+    });
+
+     // TODO: Add similar tests for phone conflicts and username conflicts during update
+
+     it.todo('should fail if updated phone conflicts with another existing user');
+     it.todo('should fail if updated username conflicts with another existing user');
+
+  });
+
+  // --- createFile Tests ---
+  describe('createFile', () => {
+    // TODO: Add tests for createFile
+    // Need to import/use 'createFile' function from database.ts
+    // Need to import IFileDocument if checking returned object properties
+
+    it.todo('should create a new file record successfully');
+    it.todo('should fail if filename already exists');
+    it.todo('should fail if filehash already exists');
+  });
+
 });
