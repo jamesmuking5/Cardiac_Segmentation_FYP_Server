@@ -3,9 +3,10 @@
 import { MongoMemoryServer } from 'mongodb-memory-server';
 import mongoose, { ConnectOptions } from 'mongoose';
 import {
+  UserRole,
   connectToDatabase,
   userModel,
-  fileModel, 
+  fileModel,
   createUser,
   updateUser,
 } from '../src/services/database';
@@ -87,7 +88,7 @@ describe('Database Service', () => {
         expect(result.user.username).toBe(username);
         expect(result.user.email).toBe(email);
         expect(result.user.phone).toBe(phone);
-        expect(result.user.role).toBe('user'); // Check default role
+        expect(result.user.role).toBe(UserRole.User); // Check default role
       } else {
         fail('createUser should have succeeded but failed');
       }
@@ -97,7 +98,7 @@ describe('Database Service', () => {
       expect(savedUser).not.toBeNull();
       expect(savedUser?.email).toBe(email);
       expect(savedUser?.phone).toBe(phone);
-      expect(savedUser?.role).toBe('user');
+      expect(savedUser?.role).toBe(UserRole.User); // Check default role
 
       // Assert - Check password hashing
       const passwordMatches = await bcrypt.compare(password, savedUser!.password);
@@ -105,111 +106,111 @@ describe('Database Service', () => {
     });
 
     it('should create a new user successfully with a specified role', async () => {
-       // Arrange
-       const username = 'adminuser';
-       const password = 'password123';
-       const email = 'admin@example.com';
-       const phone = '1112223333';
-       const role = 'admin';
-       // Act
-       const result = await createUser(username, password, email, phone, role);
-        // Assert
-       expect(result.success).toBe(true);
-       if (result.success === true) {
-           expect(result.user.role).toBe(role);
-       } else {
-           fail('createUser should have succeeded but failed');
-       }
-       const savedUser = await userModel.findOne({ username: username });
-       expect(savedUser?.role).toBe(role);
+      // Arrange
+      const username = 'adminuser';
+      const password = 'password123';
+      const email = 'admin@example.com';
+      const phone = '1112223333';
+      const role = UserRole.Admin; // Assuming UserRole is an enum or similar type
+      // Act
+      const result = await createUser(username, password, email, phone, role);
+      // Assert
+      expect(result.success).toBe(true);
+      if (result.success === true) {
+        expect(result.user.role).toBe(role);
+      } else {
+        fail('createUser should have succeeded but failed');
+      }
+      const savedUser = await userModel.findOne({ username: username });
+      expect(savedUser?.role).toBe(role);
     });
 
     // --- createUser Failure Scenarios ---
     describe('when unique fields conflict', () => {
-        const conflictUsername = 'conflictUser';
-        const conflictEmail = 'conflict@example.com';
-        const conflictPhone = '5555555555';
+      const conflictUsername = 'conflictUser';
+      const conflictEmail = 'conflict@example.com';
+      const conflictPhone = '5555555555';
 
-        // Setup the user that will cause conflicts
-        beforeEach(async () => {
-            await createUser(
-                conflictUsername,
-                'password123',
-                conflictEmail,
-                conflictPhone
-            );
-        });
+      // Setup the user that will cause conflicts
+      beforeEach(async () => {
+        await createUser(
+          conflictUsername,
+          'password123',
+          conflictEmail,
+          conflictPhone
+        );
+      });
 
-        it('should fail if username already exists', async () => {
-            const result = await createUser(
-                conflictUsername, // Existing username
-                'newpass',
-                'new@example.com',
-                '1234567890'
-            );
-            expect(result.success).toBe(false);
-            if (result.success === false) {
-                expect(result.error).toContain(`Username "${conflictUsername}" already exists`);
-                expect(result.error).not.toContain('Email'); // Ensure only username conflict is reported
-                expect(result.error).not.toContain('Phone');
-            } else {
-                 fail('createUser should have failed (duplicate username) but succeeded');
-            }
-             // Verify no new user was added
-            const users = await userModel.find({ email: 'new@example.com' });
-            expect(users.length).toBe(0);
-        });
+      it('should fail if username already exists', async () => {
+        const result = await createUser(
+          conflictUsername, // Existing username
+          'newpass',
+          'new@example.com',
+          '1234567890'
+        );
+        expect(result.success).toBe(false);
+        if (result.success === false) {
+          expect(result.error).toContain(`Username "${conflictUsername}" already exists`);
+          expect(result.error).not.toContain('Email'); // Ensure only username conflict is reported
+          expect(result.error).not.toContain('Phone');
+        } else {
+          fail('createUser should have failed (duplicate username) but succeeded');
+        }
+        // Verify no new user was added
+        const users = await userModel.find({ email: 'new@example.com' });
+        expect(users.length).toBe(0);
+      });
 
-        it('should fail if email already exists', async () => {
-             const result = await createUser(
-                'newUser',
-                'newpass',
-                conflictEmail, // Existing email
-                '1234567890'
-            );
-            expect(result.success).toBe(false);
-            if (result.success === false) {
-                expect(result.error).toContain(`Email "${conflictEmail}" already exists`);
-                expect(result.error).not.toContain('Username');
-                expect(result.error).not.toContain('Phone');
-            } else {
-                 fail('createUser should have failed (duplicate email) but succeeded');
-            }
-        });
+      it('should fail if email already exists', async () => {
+        const result = await createUser(
+          'newUser',
+          'newpass',
+          conflictEmail, // Existing email
+          '1234567890'
+        );
+        expect(result.success).toBe(false);
+        if (result.success === false) {
+          expect(result.error).toContain(`Email "${conflictEmail}" already exists`);
+          expect(result.error).not.toContain('Username');
+          expect(result.error).not.toContain('Phone');
+        } else {
+          fail('createUser should have failed (duplicate email) but succeeded');
+        }
+      });
 
-        it('should fail if phone already exists', async () => {
-             const result = await createUser(
-                'newUser',
-                'newpass',
-                'new@example.com',
-                conflictPhone // Existing phone
-            );
-            expect(result.success).toBe(false);
-            if (result.success === false) {
-                expect(result.error).toContain(`Phone "${conflictPhone}" already exists`);
-                 expect(result.error).not.toContain('Username');
-                 expect(result.error).not.toContain('Email');
-            } else {
-                 fail('createUser should have failed (duplicate phone) but succeeded');
-            }
-        });
+      it('should fail if phone already exists', async () => {
+        const result = await createUser(
+          'newUser',
+          'newpass',
+          'new@example.com',
+          conflictPhone // Existing phone
+        );
+        expect(result.success).toBe(false);
+        if (result.success === false) {
+          expect(result.error).toContain(`Phone "${conflictPhone}" already exists`);
+          expect(result.error).not.toContain('Username');
+          expect(result.error).not.toContain('Email');
+        } else {
+          fail('createUser should have failed (duplicate phone) but succeeded');
+        }
+      });
 
-        it('should fail and report all conflicts if username, email, and phone already exist', async () => {
-             const result = await createUser(
-                conflictUsername, // Existing username
-                'newpass',
-                conflictEmail, // Existing email
-                conflictPhone // Existing phone
-            );
-            expect(result.success).toBe(false);
-            if (result.success === false) {
-                expect(result.error).toContain(`Username "${conflictUsername}" already exists`);
-                expect(result.error).toContain(`Email "${conflictEmail}" already exists`);
-                expect(result.error).toContain(`Phone "${conflictPhone}" already exists`);
-            } else {
-                 fail('createUser should have failed (all duplicates) but succeeded');
-            }
-        });
+      it('should fail and report all conflicts if username, email, and phone already exist', async () => {
+        const result = await createUser(
+          conflictUsername, // Existing username
+          'newpass',
+          conflictEmail, // Existing email
+          conflictPhone // Existing phone
+        );
+        expect(result.success).toBe(false);
+        if (result.success === false) {
+          expect(result.error).toContain(`Username "${conflictUsername}" already exists`);
+          expect(result.error).toContain(`Email "${conflictEmail}" already exists`);
+          expect(result.error).toContain(`Phone "${conflictPhone}" already exists`);
+        } else {
+          fail('createUser should have failed (all duplicates) but succeeded');
+        }
+      });
     });
   });
 
@@ -222,7 +223,7 @@ describe('Database Service', () => {
 
     // Setup user for update tests
     beforeEach(async () => {
-        await createUser(initialUsername, initialPassword, initialEmail, initialPhone);
+      await createUser(initialUsername, initialPassword, initialEmail, initialPhone);
     });
 
     it('should update email, phone, password, and role successfully', async () => {
@@ -231,7 +232,7 @@ describe('Database Service', () => {
         email: 'updated@example.com',
         phone: '2220002220',
         password: 'newSecurePassword',
-        role: 'admin',
+        role: UserRole.Admin, // UserRole is an enum or similar type
       };
 
       // Act: Perform the update
@@ -254,7 +255,7 @@ describe('Database Service', () => {
         const passwordMatches = await bcrypt.compare(updates.password, updatedUser.password);
         expect(passwordMatches).toBe(true);
       } else {
-         fail("Updated user not found in DB");
+        fail("Updated user not found in DB");
       }
     });
 
@@ -281,57 +282,85 @@ describe('Database Service', () => {
         // Check other fields remained unchanged from initial state
         expect(newUser.email).toBe(initialEmail);
         expect(newUser.phone).toBe(initialPhone);
-        expect(newUser.role).toBe('user'); // Initial default role
+        expect(newUser.role).toBe(UserRole.User); // Initial default role
         const passwordMatches = await bcrypt.compare(initialPassword, newUser.password);
         expect(passwordMatches).toBe(true); // Initial password
       } else {
-          fail("Renamed user not found in DB");
+        fail("Renamed user not found in DB");
       }
     });
 
     it('should return success: false if trying to update a non-existent user', async () => {
-        const result = await updateUser('nonexistentuser', { email: 'a@b.com'});
-        expect(result.success).toBe(false);
-        if (result.success === false) {
-             expect(result.error).toContain('does not exist');
-        } else {
-             fail('updateUser should have failed for non-existent user but succeeded');
-        }
+      const result = await updateUser('nonexistentuser', { email: 'a@b.com' });
+      expect(result.success).toBe(false);
+      if (result.success === false) {
+        expect(result.error).toContain('does not exist');
+      } else {
+        fail('updateUser should have failed for non-existent user but succeeded');
+      }
     });
 
-     it('should return success: false if update results in no changes', async () => {
-        const result = await updateUser(initialUsername, { email: initialEmail, phone: initialPhone }); // Provide existing data
-        expect(result.success).toBe(false);
-        if (result.success === false) {
-             expect(result.error).toContain('No fields to update');
-        } else {
-             fail('updateUser should have failed (no changes) but succeeded');
-        }
+    it('should return success: false if update results in no changes', async () => {
+      const result = await updateUser(initialUsername, { email: initialEmail, phone: initialPhone }); // Provide existing data
+      expect(result.success).toBe(false);
+      if (result.success === false) {
+        expect(result.error).toContain('No fields to update');
+      } else {
+        fail('updateUser should have failed (no changes) but succeeded');
+      }
     });
 
 
     it('should fail if updated email conflicts with another existing user', async () => {
-        // Arrange: Create a second user whose email we'll conflict with
-        const otherUserEmail = 'other@example.com';
-        await createUser('otherUser', 'password', otherUserEmail, '3330003330');
+      // Arrange: Create a second user whose email we'll conflict with
+      const otherUserEmail = 'other@example.com';
+      await createUser('otherUser', 'password', otherUserEmail, '3330003330');
 
-        // Act: Try to update the first user to use the second user's email
-        const result = await updateUser(initialUsername, { email: otherUserEmail });
+      // Act: Try to update the first user to use the second user's email
+      const result = await updateUser(initialUsername, { email: otherUserEmail });
 
-        // Assert
-        expect(result.success).toBe(false);
-        if (result.success === false) {
-            expect(result.error).toContain(`Email "${otherUserEmail}" is already in use`);
-        } else {
-            fail('updateUser should have failed (email conflict) but succeeded');
-        }
+      // Assert
+      expect(result.success).toBe(false);
+      if (result.success === false) {
+        expect(result.error).toContain(`Email "${otherUserEmail}" is already in use`);
+      } else {
+        fail('updateUser should have failed (email conflict) but succeeded');
+      }
     });
 
-     // TODO: Add similar tests for phone conflicts and username conflicts during update
+    it('should fail if updated phone conflicts with another existing user', async () => {
+      // Arrange: Create a second user whose phone we'll conflict with
+      const otherUserPhone = '4440004440';
+      await createUser('otherUser2', 'password', 'otherUser2@example.com', otherUserPhone);
 
-     it.todo('should fail if updated phone conflicts with another existing user');
-     it.todo('should fail if updated username conflicts with another existing user');
+      // Act: Try to update the first user to use the second user's phone
+      const result = await updateUser(initialUsername, { phone: otherUserPhone });
 
+      // Assert
+      expect(result.success).toBe(false);
+      if (result.success === false) {
+        expect(result.error).toContain(`Phone "${otherUserPhone}" is already in use`);
+      } else {
+        fail('updateUser should have failed (phone conflict) but succeeded');
+      }
+    });
+
+    it('should fail if updated username conflicts with another existing user', async () => {
+      // Arrange: Create a second user whose username we'll conflict with
+      const otherUserUsername = 'conflictUser';
+      await createUser(otherUserUsername, 'password', 'conflictUser@example.com', '5550005550');
+
+      // Act: Try to update the first user to use the second user's username
+      const result = await updateUser(initialUsername, { username: otherUserUsername });
+
+      // Assert
+      expect(result.success).toBe(false);
+      if (result.success === false) {
+        expect(result.error).toContain(`Username "${otherUserUsername}" is already in use`);
+      } else {
+        fail('updateUser should have failed (username conflict) but succeeded');
+      }
+    });
   });
 
   // --- createFile Tests ---
