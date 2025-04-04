@@ -25,6 +25,21 @@ const logFormat = printf(({ level, message, timestamp }: LogFormatParams) => {
 });
 
 // Create logger
+/**
+ * Custom logger service using Winston with daily rotation and colorized output.
+ * @module logger
+ * @description Logger service using Winston with daily rotation and colorized output.
+ * @requires winston
+ * @requires winston-daily-rotate-file
+ * @exports logger
+ * @type {Logger} - Winston logger instance with daily rotation and colorized output.
+ * @example
+ * import logger from './services/logger';
+ * 
+ * logger.info('This is an info message');
+ * logger.error('This is an error message');
+ * logger.warn('This is a warning message');
+ */
 const logger = createLogger({
   level: "info",
   format: combine(timestamp({ format: "DD-MM-YYYY HH:mm:ss" }), logFormat),
