@@ -29,7 +29,7 @@ const DB_URI: string =
 // Fetch default admin password
 const adminPass: string = process.env.ADMIN_PASS || "admin"; // Default to "admin" if not set
 
-// Connect to MongoDB
+// Connect to MongoDB (called in index.ts)
 const connectToDatabase = async (): Promise<void> => {
   try {
     await mongoose.connect(DB_URI);
@@ -41,13 +41,18 @@ const connectToDatabase = async (): Promise<void> => {
 };
 
 /* Interfaces */
+// Enumeration for user roles
+enum UserRole {
+  User = "user",
+  Admin = "admin",
+}
 // User Interface (anyone that is treated as a user must have these properties)
 interface IUser {
   username: string;
   password: string;
   email: string;
   phone: string;
-  role: string;
+  role: UserRole; // Default to "user" unless specified otherwise
 }
 // User Model Interface (single user document in the database)
 interface IUserDocument extends IUser, Document { }
@@ -77,7 +82,7 @@ const userSchema = new Schema<IUserDocument>({
   password: { type: String, required: true },
   email: { type: String, required: true, unique: true },
   phone: { type: String, required: true, unique: true },
-  role: { type: String, required: true, default: "user" },
+  role: { type: String, required: true, enum: Object.values(UserRole), default: UserRole.User },
 });
 // Create the model with proper typing
 const userModel = model<IUserDocument, IUserModel>("User", userSchema);
@@ -88,7 +93,7 @@ const createAdminUser = async () => {
   // Cannot use IUserDocument ONLY here because it may return null if no admins exist.
   // If it returns a user, TypeScript auto casts it to IUserDocument because of const User = model<IUserDocument, IUserModel>("User", userSchema);.
   // The default is IUserDocument | null but can just let auto infer the type.
-  const existingAdmin = await userModel.findOne({ role: "admin" });
+  const existingAdmin = await userModel.findOne({ role: UserRole.Admin });
   try {
     if (!existingAdmin) {
       logger.info(
@@ -102,7 +107,7 @@ const createAdminUser = async () => {
         password: hashedPassword,
         email: "admin@example.com",
         phone: "1234567890",
-        role: "admin",
+        role: UserRole.Admin,
       });
       // Save the admin user to the database
       await admin.save();
@@ -144,12 +149,24 @@ type UserCrudResult =
   | { success: false; error: string }; // User already exists or other error
 
 // Function to create a new user given a username, password, email, and phone number
+/**
+ * @param username {string} - The username of the user to create
+ * @param password {string} - The password of the user to create
+ * @param email {string} - The email of the user to create
+ * @param phone {string} - The phone number of the user to create
+ * @param role {UserRole} (Optional) The role of the user. Defaults to UserRole.User. Can also be UserRole.Admin.
+ * @returns {UserCrudResult} - A promise that resolves to an object indicating success or failure. If successful, it returns the created user document.
+ * If the user already exists, it returns an error message.
+ * If the user does not exist, it returns an error message.
+ * If the user is created successfully, it returns the created user document.
+ */
 const createUser = async (
   username: string,
   password: string,
   email: string,
   phone: string,
-  role: string = "user" // Default role is "user" unless specified otherwise
+  role: UserRole = UserRole.User, // Default role is "user" unless specified otherwise
+  // Default role is "user" unless specified otherwise
 ): Promise<UserCrudResult> => {
   try {
     // Use a single query with $or to check all unique constraints
@@ -182,9 +199,7 @@ const createUser = async (
     });
     // Save the new user to the database
     await newUser.save();
-    logger.info(
-      `Database: User ${newUser._id} created successfully: ${newUser.username}, ${newUser.email}, ${newUser.phone}`
-    );
+    logger.info(`Database: User ${newUser._id} created successfully: ${newUser.username}, ${newUser.email}, ${newUser.phone}, ${newUser.role}`);
     return { success: true, user: newUser };
   } catch (error: unknown) {
     LogError(error as Error, serviceLocation, `Error creating user ${username}.`);
@@ -193,6 +208,18 @@ const createUser = async (
 };
 
 // Function to update a user, given a user ID and an object with the new data
+/**
+ * @param username - The username of the user to update
+ * @param updates - An object containing the fields to update. At least one field must be provided:
+ * @param updates.username - The new username of the user (optional).
+ * @param updates.password - The new password of the user (optional).
+ * @param updates.email - The new email of the user (optional).
+ * @param updates.phone - The new phone number of the user (optional).
+ * @param updates.role - The new role of the user (optional).
+ * @returns - A promise that resolves to an object indicating success or failure. 
+ * If successful, it returns the updated user document.
+ * If the user does not exist or if any of the fields are not unique, it returns an error message.
+ */
 const updateUser = async (
   username: string,
   updates: {
@@ -200,7 +227,7 @@ const updateUser = async (
     password?: string;
     email?: string;
     phone?: string;
-    role?: string;
+    role?: UserRole;
   }
 ): Promise<UserCrudResult> => {
   try {
@@ -383,6 +410,5 @@ const createFile = async (
   }
 };
 
-
 // Using ES modules instead of CommonJS which is module.exports = {connectToDatabase, User};
-export { connectToDatabase, userModel, fileModel, createUser, updateUser };
+export { connectToDatabase, userModel, fileModel, createUser, updateUser, UserRole };
