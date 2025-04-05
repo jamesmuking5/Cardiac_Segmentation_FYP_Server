@@ -11,7 +11,7 @@ import LogError from "../utils/error_logger"; // Import the error logging utilit
 const serviceLocation = "Database"; // Service location for error logging
 
 // TODO: File check script to check if the file exists and is readable before loading it
-// TODO: Delete User and Files functions
+// TODO: Read and Delete User and CRUD Files functions
 
 // Load environment variables from .env file
 try {
@@ -54,8 +54,24 @@ interface IUser {
   phone: string;
   role: UserRole; // Default to "user" unless specified otherwise
 }
+// User Interface Safe - sanitized version for public use (e.g., API responses)
+interface IUserSafe {
+  username: string;
+  email: string;
+  phone: string;
+  role: UserRole; // Default to "user" unless specified otherwise
+}
 // User Model Interface (single user document in the database)
 interface IUserDocument extends IUser, Document { }
+// Convert IUserDocument to IUserSafe for public use
+function toIUserSafe(user: IUserDocument): IUserSafe {
+  return {
+    username: user.username,
+    email: user.email,
+    phone: user.phone,
+    role: user.role,
+  };
+}
 
 // File Interface - Defines a saved file record in the database
 interface IFile {
@@ -138,12 +154,22 @@ const fileSchema = new Schema<IFileDocument>({
 const fileModel = model<IFileDocument, Model<IFileDocument>>("File", fileSchema);
 
 /* Database Functions */
+enum CRUDOperation {
+  CREATE = "create",
+  READ = "read",
+  UPDATE = "update",
+  DELETE = "delete",
+}
+
 // User Functions
-// Define result type for createUser function
-type UserCrudResult =
-  | { success: true; user: IUserDocument } // Successful user creation
-  | { success: false; error: string } // User already exists or other error
-  | { success: true; message: string }; // User deletion successful
+// Define result type for user CRUD operations
+interface UserCrudResult {
+  success: boolean; // Indicates whether the operation was successful 
+  operation: CRUDOperation; // The type of operation performed (CREATE, READ, UPDATE, DELETE)
+  user?: IUserSafe; // The created or updated user document (applicable for CREATE and UPDATE operations)
+  users?: IUserSafe[]; // Array of user documents (applicable for READ operation)
+  message?: string; // Message if error/warning occurred (applicable for all operations)
+}
 
 // Function to create a new user given a username, password, email, and phone number
 /**
@@ -183,7 +209,7 @@ const createUser = async (
         reasons += ` Phone "${phone}" already exists.`;
       }
       logger.warn(`Database: Error creating user: ${reasons}`);
-      return { success: false, error: reasons };
+      return { success: false, operation: CRUDOperation.CREATE, message: reasons };
     }
     // Hash the password before saving it to the database
     const hashedPassword = await bcrypt.hash(password, 10);
@@ -198,12 +224,19 @@ const createUser = async (
     // Save the new user to the database
     await newUser.save();
     logger.info(`Database: User ${newUser._id} created successfully: ${newUser.username}, ${newUser.email}, ${newUser.phone}, ${newUser.role}`);
-    return { success: true, user: newUser };
+    return { success: true, operation: CRUDOperation.CREATE, user: toIUserSafe(newUser) };
   } catch (error: unknown) {
     LogError(error as Error, serviceLocation, `Error creating user ${username}.`);
-    return { success: false, error: "Error creating user." };
+    return { success: false, operation: CRUDOperation.CREATE, message: "Error creating user." };
   }
 };
+
+// // Function to read user or users based on property of IUser
+// const readUser = async (): UserCrudResult => {
+
+// }
+
+
 
 // Function to update a user, given a user ID and an object with the new data
 /**
@@ -233,7 +266,7 @@ const updateUser = async (
     const existingUser = await userModel.findOne({ username: username });
     if (!existingUser) {
       logger.warn(`Database: User ${username} does not exist.`);
-      return { success: false, error: `User ${username} does not exist.` };
+      return { success: false, operation: CRUDOperation.UPDATE, message: `User ${username} does not exist.` };
     }
 
     // Create update object and track what fields are being updated
@@ -265,10 +298,7 @@ const updateUser = async (
         });
 
         if (usernameExists) {
-          return {
-            success: false,
-            error: `Username "${updates.username}" is already in use by another user.`,
-          };
+          return { success: false, operation: CRUDOperation.UPDATE, message: `Username "${updates.username}" is already in use by another user.`, };
         }
         updateData.username = updates.username;
       }
@@ -286,10 +316,7 @@ const updateUser = async (
         });
 
         if (emailExists) {
-          return {
-            success: false,
-            error: `Email "${updates.email}" is already in use by another user.`,
-          };
+          return { success: false, operation: CRUDOperation.UPDATE, message: `Email "${updates.email}" is already in use by another user.`, };
         }
         updateData.email = updates.email;
       }
@@ -307,10 +334,7 @@ const updateUser = async (
         });
 
         if (phoneExists) {
-          return {
-            success: false,
-            error: `Phone "${updates.phone}" is already in use by another user.`,
-          };
+          return { success: false, operation: CRUDOperation.UPDATE, message: `Phone "${updates.phone}" is already in use by another user.`, };
         }
         updateData.phone = updates.phone;
       }
@@ -332,10 +356,7 @@ const updateUser = async (
           ", "
         )}`
       );
-      return {
-        success: false,
-        error: `No fields to update for user ${username}.`,
-      };
+      return { success: false, operation: CRUDOperation.UPDATE, message: `No fields to update for user ${username}.`, };
     }
 
     // Perform the update
@@ -346,10 +367,10 @@ const updateUser = async (
         updateData
       ).join(", ")}`
     );
-    return { success: true, user: updatedUser };
+    return { success: true, operation: CRUDOperation.UPDATE, user: toIUserSafe(updatedUser) };
   } catch (error: unknown) {
     LogError(error as Error, serviceLocation, `Error updating user ${username}.`);
-    return { success: false, error: "Error updating user." };
+    return { success: false, operation: CRUDOperation.UPDATE, message: "Error updating user." };
   }
 };
 
