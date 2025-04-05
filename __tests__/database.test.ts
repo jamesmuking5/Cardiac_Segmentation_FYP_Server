@@ -121,7 +121,7 @@ describe('Database Service', () => {
 
       // Assert - Check result object
       expect(result.success).toBe(true);
-      if (result.success === true) { // Type narrowing
+      if (result.success === true && result.user) { // Type narrowing
         expect(result.user).toBeDefined();
         expect(result.user.username).toBe(username);
         expect(result.user.email).toBe(email);
@@ -154,7 +154,7 @@ describe('Database Service', () => {
       const result = await createUser(username, password, email, phone, role);
       // Assert
       expect(result.success).toBe(true);
-      if (result.success === true) {
+      if (result.success === true && result.user) { // Type narrowing
         expect(result.user.role).toBe(role);
       } else {
         fail('createUser should have succeeded but failed');
@@ -188,9 +188,9 @@ describe('Database Service', () => {
         );
         expect(result.success).toBe(false);
         if (result.success === false) {
-          expect(result.error).toContain(`Username "${conflictUsername}" already exists`);
-          expect(result.error).not.toContain('Email'); // Ensure only username conflict is reported
-          expect(result.error).not.toContain('Phone');
+          expect(result.message).toContain(`Username "${conflictUsername}" already exists`);
+          expect(result.message).not.toContain('Email'); // Ensure only username conflict is reported
+          expect(result.message).not.toContain('Phone');
         } else {
           fail('createUser should have failed (duplicate username) but succeeded');
         }
@@ -208,9 +208,9 @@ describe('Database Service', () => {
         );
         expect(result.success).toBe(false);
         if (result.success === false) {
-          expect(result.error).toContain(`Email "${conflictEmail}" already exists`);
-          expect(result.error).not.toContain('Username');
-          expect(result.error).not.toContain('Phone');
+          expect(result.message).toContain(`Email "${conflictEmail}" already exists`);
+          expect(result.message).not.toContain('Username');
+          expect(result.message).not.toContain('Phone');
         } else {
           fail('createUser should have failed (duplicate email) but succeeded');
         }
@@ -225,9 +225,9 @@ describe('Database Service', () => {
         );
         expect(result.success).toBe(false);
         if (result.success === false) {
-          expect(result.error).toContain(`Phone "${conflictPhone}" already exists`);
-          expect(result.error).not.toContain('Username');
-          expect(result.error).not.toContain('Email');
+          expect(result.message).toContain(`Phone "${conflictPhone}" already exists`);
+          expect(result.message).not.toContain('Username');
+          expect(result.message).not.toContain('Email');
         } else {
           fail('createUser should have failed (duplicate phone) but succeeded');
         }
@@ -242,9 +242,9 @@ describe('Database Service', () => {
         );
         expect(result.success).toBe(false);
         if (result.success === false) {
-          expect(result.error).toContain(`Username "${conflictUsername}" already exists`);
-          expect(result.error).toContain(`Email "${conflictEmail}" already exists`);
-          expect(result.error).toContain(`Phone "${conflictPhone}" already exists`);
+          expect(result.message).toContain(`Username "${conflictUsername}" already exists`);
+          expect(result.message).toContain(`Email "${conflictEmail}" already exists`);
+          expect(result.message).toContain(`Phone "${conflictPhone}" already exists`);
         } else {
           fail('createUser should have failed (all duplicates) but succeeded');
         }
@@ -332,7 +332,7 @@ describe('Database Service', () => {
       const result = await updateUser('nonexistentuser', { email: 'a@b.com' });
       expect(result.success).toBe(false);
       if (result.success === false) {
-        expect(result.error).toContain('does not exist');
+        expect(result.message).toContain('does not exist');
       } else {
         fail('updateUser should have failed for non-existent user but succeeded');
       }
@@ -342,12 +342,27 @@ describe('Database Service', () => {
       const result = await updateUser(initialUsername, { email: initialEmail, phone: initialPhone }); // Provide existing data
       expect(result.success).toBe(false);
       if (result.success === false) {
-        expect(result.error).toContain('No fields to update');
+        expect(result.message).toContain('No fields to update');
       } else {
         fail('updateUser should have failed (no changes) but succeeded');
       }
     });
+    it('should fail if updated username conflicts with another existing user', async () => {
+      // Arrange: Create a second user whose username we'll conflict with
+      const otherUserUsername = 'conflictUser';
+      await createUser(otherUserUsername, 'password', 'conflictUser@example.com', '5550005550');
 
+      // Act: Try to update the first user to use the second user's username
+      const result = await updateUser(initialUsername, { username: otherUserUsername });
+
+      // Assert
+      expect(result.success).toBe(false);
+      if (result.success === false) {
+        expect(result.message).toContain(`Username "${otherUserUsername}" is already in use`);
+      } else {
+        fail('updateUser should have failed (username conflict) but succeeded');
+      }
+    });
 
     it('should fail if updated email conflicts with another existing user', async () => {
       // Arrange: Create a second user whose email we'll conflict with
@@ -360,7 +375,7 @@ describe('Database Service', () => {
       // Assert
       expect(result.success).toBe(false);
       if (result.success === false) {
-        expect(result.error).toContain(`Email "${otherUserEmail}" is already in use`);
+        expect(result.message).toContain(`Email "${otherUserEmail}" is already in use`);
       } else {
         fail('updateUser should have failed (email conflict) but succeeded');
       }
@@ -377,28 +392,13 @@ describe('Database Service', () => {
       // Assert
       expect(result.success).toBe(false);
       if (result.success === false) {
-        expect(result.error).toContain(`Phone "${otherUserPhone}" is already in use`);
+        expect(result.message).toContain(`Phone "${otherUserPhone}" is already in use`);
       } else {
         fail('updateUser should have failed (phone conflict) but succeeded');
       }
     });
 
-    it('should fail if updated username conflicts with another existing user', async () => {
-      // Arrange: Create a second user whose username we'll conflict with
-      const otherUserUsername = 'conflictUser';
-      await createUser(otherUserUsername, 'password', 'conflictUser@example.com', '5550005550');
 
-      // Act: Try to update the first user to use the second user's username
-      const result = await updateUser(initialUsername, { username: otherUserUsername });
-
-      // Assert
-      expect(result.success).toBe(false);
-      if (result.success === false) {
-        expect(result.error).toContain(`Username "${otherUserUsername}" is already in use`);
-      } else {
-        fail('updateUser should have failed (username conflict) but succeeded');
-      }
-    });
   });
 
   // --- createFile Tests ---
