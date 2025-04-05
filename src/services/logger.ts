@@ -1,25 +1,20 @@
 // File: src/services/logger.ts
 // Description: Logger service using Winston with daily rotation and colorized output.
-const { createLogger, format, transports } = require("winston");
-const { combine, timestamp, printf, colorize } = format;
-require("winston-daily-rotate-file");
-
-// Define type for log format parameters
-interface LogFormatParams {
-  level: string;
-  message: string;
-  timestamp: string;
-}
+import { createLogger, format, transports } from "winston";
+const { combine, timestamp, printf } = format;
+import "winston-daily-rotate-file";
+import { TransformableInfo } from "logform";
 
 // Define custom log format with colorization
-const logFormat = printf(({ level, message, timestamp }: LogFormatParams) => {
-  let colorizedTimestamp = timestamp;
+const logFormat = printf((info: TransformableInfo) => {
+  const { level, message, timestamp: ts } = info;
+  let colorizedTimestamp = ts as string;
   if (level === "info") {
-    colorizedTimestamp = `\x1b[32m${timestamp}\x1b[0m`; // Green for info
+    colorizedTimestamp = `\x1b[32m${ts}\x1b[0m`; // Green for info
   } else if (level === "error") {
-    colorizedTimestamp = `\x1b[31m${timestamp}\x1b[0m`; // Red for error
+    colorizedTimestamp = `\x1b[31m${ts}\x1b[0m`; // Red for error
   } else if (level === "warn") {
-    colorizedTimestamp = `\x1b[33m${timestamp}\x1b[0m`; // Yellow for warn
+    colorizedTimestamp = `\x1b[33m${ts}\x1b[0m`; // Yellow for warn
   }
   return `${colorizedTimestamp} [${level.toUpperCase()}]:\n${message}`;
 });
