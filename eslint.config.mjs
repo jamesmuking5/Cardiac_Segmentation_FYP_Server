@@ -1,34 +1,59 @@
-// eslint.config.js
-// Generated with Gemini Advanced 2.5 Pro
 import { defineConfig } from "eslint/config";
 import globals from "globals";
 import js from "@eslint/js";
 import tseslint from "typescript-eslint";
-import eslintConfigPrettier from "eslint-config-prettier"; // Import Prettier config
+import eslintConfigPrettier from "eslint-config-prettier";
 
 export default defineConfig([
-  // Base configurations for JS and TS
-  js.configs.recommended,
-  ...tseslint.configs.recommended, // Spread recommended TS configs (assuming it's an array)
-
-  // Configuration applying to your specific files
+  // Global ignores - add the dist directory to prevent linting compiled files
   {
-    files: ["**/*.{js,mjs,cjs,ts}"],
-    languageOptions: {
-      ecmaVersion: "latest", // Good practice to specify
-      sourceType: "module",  // Assuming ESM
-      globals: {
-        ...globals.browser, // Keep browser globals if needed
-        // ...globals.node // Add node globals if needed, perhaps in a separate config object targeting specific files
-      }
-    },
-    // You can add specific rule overrides here if needed
-    // rules: {
-    //   "some-eslint-rule": "warn",
-    // }
+    ignores: ["dist/**", "node_modules/**"]
   },
 
-  // Prettier config MUST BE LAST!
-  // This turns off all ESLint rules that conflict with Prettier.
+  // Base configurations
+  js.configs.recommended,
+  ...tseslint.configs.recommended,
+  ...tseslint.configs.stylistic,
+
+  // Configuration for TypeScript files
+  {
+    files: ["**/*.ts"],  // Fixed: Removed curly braces around extension
+    languageOptions: {
+      ecmaVersion: 2022,
+      sourceType: "commonjs",  // Changed to CommonJS to match your tsconfig
+      parser: tseslint.parser,
+      parserOptions: {
+        project: "./tsconfig.json",
+      },
+      globals: {
+        ...globals.node,  // Changed from browser to node globals
+      }
+    },
+    rules: {
+      // Node.js specific rules
+      "no-console": "warn", // Prefer using your custom logger instead of console
+      "no-unused-vars": "off", // TypeScript handles this
+      "@typescript-eslint/no-unused-vars": ["error", { 
+        "argsIgnorePattern": "^_", 
+        "varsIgnorePattern": "^_" 
+      }],
+      "@typescript-eslint/explicit-function-return-type": "warn",
+      "@typescript-eslint/no-explicit-any": "warn",
+      "@typescript-eslint/no-floating-promises": "error",
+      "no-return-await": "off",
+      "@typescript-eslint/return-await": "error",
+    }
+  },
+  
+  // Configuration for test files with relaxed rules
+  {
+    files: ["**/__tests__/**/*.ts"],
+    rules: {
+      "@typescript-eslint/no-explicit-any": "off",
+      "@typescript-eslint/explicit-function-return-type": "off"
+    }
+  },
+
+  // Prettier config must be last
   eslintConfigPrettier,
 ]);
