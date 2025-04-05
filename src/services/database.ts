@@ -8,7 +8,7 @@ import * as bcrypt from "bcrypt";
 
 // Import utility functions
 import LogError from "../utils/error_logger"; // Import the error logging utility
-const serviceLocation: string = "Database"; // Service location for error logging
+const serviceLocation = "Database"; // Service location for error logging
 
 // TODO: File check script to check if the file exists and is readable before loading it
 // TODO: Delete User and Files functions
@@ -22,7 +22,7 @@ try {
 };
 
 // Database connection URL and name
-const DB_NAME: string = "visheart";
+const DB_NAME = "visheart";
 const DB_URI: string =
   process.env.MONGODB_URI || "mongodb://127.0.0.1:27017/visheart";
 
@@ -56,8 +56,6 @@ interface IUser {
 }
 // User Model Interface (single user document in the database)
 interface IUserDocument extends IUser, Document { }
-// Mongoose Model Interface - Defines static methods (the schema model) - Model<IUserDocument> means Model's (from mongoose) datatype is IUserDocument
-interface IUserModel extends Model<IUserDocument> { }
 
 // File Interface - Defines a saved file record in the database
 interface IFile {
@@ -72,8 +70,6 @@ interface IFile {
 }
 // File Model Interface (single file document in the database)
 interface IFileDocument extends IFile, Document { }
-// Mongoose Model Interface - Defines static methods (the schema model)
-interface IFileModel extends Model<IFileDocument> { }
 
 /* Collection Creation */
 // User Collection
@@ -85,13 +81,13 @@ const userSchema = new Schema<IUserDocument>({
   role: { type: String, required: true, enum: Object.values(UserRole), default: UserRole.User },
 });
 // Create the model with proper typing
-const userModel = model<IUserDocument, IUserModel>("User", userSchema);
+const userModel = model<IUserDocument, Model<IUserDocument>>("User", userSchema);
 
 // Create a default admin user if it doesn't exist
-const createAdminUser = async () => {
+const createAdminUser = async (): Promise<void> => {
   // Check if an admin user exists
   // Cannot use IUserDocument ONLY here because it may return null if no admins exist.
-  // If it returns a user, TypeScript auto casts it to IUserDocument because of const User = model<IUserDocument, IUserModel>("User", userSchema);.
+  // If it returns a user, TypeScript auto casts it to IUserDocument because of const User = model<IUserDocument, Model<IUserDocument>>("User", userSchema);.
   // The default is IUserDocument | null but can just let auto infer the type.
   const existingAdmin = await userModel.findOne({ role: UserRole.Admin });
   try {
@@ -139,14 +135,15 @@ const fileSchema = new Schema<IFileDocument>({
   description: { type: String, required: false },
 });
 // Create the model with proper typing
-const fileModel = model<IFileDocument, IFileModel>("File", fileSchema);
+const fileModel = model<IFileDocument, Model<IFileDocument>>("File", fileSchema);
 
 /* Database Functions */
 // User Functions
 // Define result type for createUser function
 type UserCrudResult =
   | { success: true; user: IUserDocument } // Successful user creation
-  | { success: false; error: string }; // User already exists or other error
+  | { success: false; error: string } // User already exists or other error
+  | { success: true; message: string }; // User deletion successful
 
 // Function to create a new user given a username, password, email, and phone number
 /**
@@ -155,7 +152,8 @@ type UserCrudResult =
  * @param email {string} - The email of the user to create
  * @param phone {string} - The phone number of the user to create
  * @param role {UserRole} (Optional) The role of the user. Defaults to UserRole.User. Can also be UserRole.Admin.
- * @returns {UserCrudResult} - A promise that resolves to an object indicating success or failure. If successful, it returns the created user document.
+ * @returns {UserCrudResult} - A promise that resolves to an object indicating success or failure.
+ * If successful, it returns the created user document.
  * If the user already exists, it returns an error message.
  * If the user does not exist, it returns an error message.
  * If the user is created successfully, it returns the created user document.
@@ -174,7 +172,7 @@ const createUser = async (
       $or: [{ username: username }, { email: email }, { phone: phone }],
     });
     if (existingUser) {
-      let reasons: string = `User already exists:`;
+      let reasons = `User already exists:`;
       if (existingUser.username === username) {
         reasons += ` Username "${username}" already exists.`;
       }
@@ -216,9 +214,9 @@ const createUser = async (
  * @param updates.email - The new email of the user (optional).
  * @param updates.phone - The new phone number of the user (optional).
  * @param updates.role - The new role of the user (optional).
- * @returns - A promise that resolves to an object indicating success or failure. 
+ * @returns {UserCrudResult} - A promise that resolves to an object indicating success or failure. 
  * If successful, it returns the updated user document.
- * If the user does not exist or if any of the fields are not unique, it returns an error message.
+ * If any field conflicts with existing users, it returns an error message.
  */
 const updateUser = async (
   username: string,
@@ -355,6 +353,11 @@ const updateUser = async (
   }
 };
 
+// Should return a success message if the user is deleted successfully with UserCrudResult [2]
+// const deleteUser = async (username: string): Promise<UserCrudResult> => {
+
+// };
+
 // File Functions
 // Define result type for createFile function
 type FileCrudResult =
@@ -377,7 +380,7 @@ const createFile = async (
       $or: [{ filename: filename }, { filehash: filehash }],
     });
     if (existingFile) {
-      let reasons: string = `File already exists: `;
+      let reasons = `File already exists: `;
       if (existingFile.filename === filename) {
         reasons += `Filename "${filename}" already exists. `;
       }
@@ -411,4 +414,4 @@ const createFile = async (
 };
 
 // Using ES modules instead of CommonJS which is module.exports = {connectToDatabase, User};
-export { connectToDatabase, userModel, fileModel, createUser, updateUser, UserRole };
+export { connectToDatabase, userModel, fileModel, createUser, updateUser, createFile, UserRole };
