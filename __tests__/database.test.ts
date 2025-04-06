@@ -7,6 +7,7 @@ import {
   userModel,
   fileModel,
   createUser,
+  readUser,
   updateUser,
   UserRole,
 } from '../src/services/database';
@@ -250,6 +251,166 @@ describe('Database Service', () => {
         }
       });
     });
+  });
+
+  // --- readUser Tests ---
+  describe('readUser', () => {
+    // Sample users for testing read operations
+    const user1Data = { username: 'reader1', email: 'reader1@example.com', phone: '1010101010', password: 'password1', role: UserRole.User };
+    const user2Data = { username: 'reader2', email: 'reader2@example.com', phone: '2020202020', password: 'password2', role: UserRole.User };
+    const adminUserData = { username: 'readerAdmin', email: 'readerAdmin@example.com', phone: '3030303030', password: 'passwordAdmin', role: UserRole.Admin };
+
+    // Setup users before each test in this block
+    beforeEach(async () => {
+      // Create the sample users needed for read tests
+      // Note: Global beforeEach already clears the DB
+      await createUser(user1Data.username, user1Data.password, user1Data.email, user1Data.phone, user1Data.role);
+      await createUser(user2Data.username, user2Data.password, user2Data.email, user2Data.phone, user2Data.role);
+      await createUser(adminUserData.username, adminUserData.password, adminUserData.email, adminUserData.phone, adminUserData.role);
+    });
+
+    it('should return all users when no criteria are provided', async () => {
+      // Act
+      const result = await readUser();
+
+      // Assert
+      expect(result.success).toBe(true);
+      expect(result.operation).toBe('read'); // Assuming CRUDOperation.READ is 'read'
+      expect(result.users).toBeDefined();
+      if (result.success && result.users) { // Type guard
+        expect(result.users.length).toBe(3); // user1, user2, adminUser
+        // Optional: Check if some expected usernames are present
+        const usernames = result.users.map(u => u.username);
+        expect(usernames).toContain(user1Data.username);
+        expect(usernames).toContain(user2Data.username);
+        expect(usernames).toContain(adminUserData.username);
+      } else {
+        fail('readUser() without criteria failed or did not return users.');
+      }
+    });
+
+    it('should find a user by unique username', async () => {
+      // Act
+      const result = await readUser(user1Data.username);
+
+      // Assert
+      expect(result.success).toBe(true);
+      expect(result.operation).toBe('read');
+      expect(result.users).toBeDefined();
+      if (result.success && result.users) {
+        expect(result.users.length).toBe(1);
+        expect(result.users[0].username).toBe(user1Data.username);
+        expect(result.users[0].email).toBe(user1Data.email);
+        expect(result.users[0].phone).toBe(user1Data.phone);
+        expect(result.users[0].role).toBe(user1Data.role);
+        // IMPORTANT: Verify password is NOT present
+        expect((result.users[0] as any).password).toBeUndefined();
+      } else {
+        fail('readUser(username) failed or did not return users.');
+      }
+    });
+
+    it('should find a user by unique email', async () => {
+      // Act
+      const result = await readUser(undefined, user2Data.email);
+
+      // Assert
+      expect(result.success).toBe(true);
+      expect(result.users?.length).toBe(1);
+      expect(result.users?.[0].username).toBe(user2Data.username);
+      expect(result.users?.[0].email).toBe(user2Data.email);
+    });
+
+    it('should find a user by unique phone', async () => {
+      // Act
+      const result = await readUser(undefined, undefined, adminUserData.phone);
+
+      // Assert
+      expect(result.success).toBe(true);
+      expect(result.users?.length).toBe(1);
+      expect(result.users?.[0].username).toBe(adminUserData.username);
+      expect(result.users?.[0].phone).toBe(adminUserData.phone);
+    });
+
+    it('should return multiple users when searching by role (UserRole.User)', async () => {
+      // Act
+      const result = await readUser(undefined, undefined, undefined, UserRole.User);
+
+      // Assert
+      expect(result.success).toBe(true);
+      expect(result.operation).toBe('read');
+      expect(result.users).toBeDefined();
+      if (result.success && result.users) {
+        expect(result.users.length).toBe(2); // reader1, reader2
+        const usernames = result.users.map(u => u.username);
+        expect(usernames).toContain(user1Data.username);
+        expect(usernames).toContain(user2Data.username);
+        expect(usernames).not.toContain(adminUserData.username); // Ensure admin isn't included
+      } else {
+        fail('readUser(role: User) failed or did not return users.');
+      }
+    });
+
+    it('should return users matching ANY provided criteria (OR logic)', async () => {
+      // Act: Search for user1's username OR admin's email
+      const result = await readUser(user1Data.username, adminUserData.email);
+
+      // Assert
+      expect(result.success).toBe(true);
+      expect(result.operation).toBe('read');
+      expect(result.users).toBeDefined();
+      if (result.success && result.users) {
+        expect(result.users.length).toBe(2); // Should find both user1 and adminUser
+        const usernames = result.users.map(u => u.username);
+        expect(usernames).toContain(user1Data.username);
+        expect(usernames).toContain(adminUserData.username);
+        expect(usernames).not.toContain(user2Data.username);
+      } else {
+        fail('readUser with OR criteria failed or did not return users.');
+      }
+    });
+
+    it('should return only matching users if one criterion matches and another does not', async () => {
+      // Act: Search for user1's username OR a non-existent email
+      const result = await readUser(user1Data.username, 'nonexistent@email.com');
+
+      // Assert
+      expect(result.success).toBe(true);
+      expect(result.operation).toBe('read');
+      expect(result.users).toBeDefined();
+      if (result.success && result.users) {
+        expect(result.users.length).toBe(1); // Should find only user1
+        expect(result.users[0].username).toBe(user1Data.username);
+      } else {
+        fail('readUser with one matching OR criteria failed.');
+      }
+    });
+
+
+    it('should return success: true and empty array when no user matches criteria', async () => {
+      // Act
+      const result = await readUser('nonexistentuser', 'nobody@nowhere.com');
+
+      // Assert
+      expect(result.success).toBe(true); // Still successful operation
+      expect(result.operation).toBe('read');
+      expect(result.users).toBeDefined();
+      expect(result.users?.length).toBe(0); // Empty array
+      expect(result.message).toContain("No users found matching the specified criteria.");
+    });
+
+    it('should return success: true and empty array when searching by non-existent role', async () => {
+      // Note: This assumes UserRole only has User/Admin. If you had more roles, adjust.
+      // We'll try searching by a non-existent username instead, as roles are limited.
+      const result = await readUser('nonexistentuser');
+
+      // Assert
+      expect(result.success).toBe(true);
+      expect(result.operation).toBe('read');
+      expect(result.users?.length).toBe(0);
+      expect(result.message).toContain("No users found matching the specified criteria.");
+    });
+
   });
 
   // --- updateUser Tests ---
