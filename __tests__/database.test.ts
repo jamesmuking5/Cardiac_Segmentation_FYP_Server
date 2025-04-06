@@ -411,10 +411,20 @@ describe('Database Service', () => {
     const initialPassword = 'initialPassword';
     const initialEmail = 'initial@example.com';
     const initialPhone = '1110001110';
+    let initialUserId: string;
+    let initialUser: IUserSafe | undefined; // Store the initial safe user
 
     // Setup user for update tests
     beforeEach(async () => {
-      await createUser(initialUsername, initialPassword, initialEmail, initialPhone);
+      const result = await createUser(initialUsername, initialPassword, initialEmail, initialPhone);
+      // Capture the initial state for comparison
+      if (result.success && result.user) {
+        initialUserId = result.user._id;
+        initialUser = result.user;
+      } else {
+        // Fail fast if setup fails
+        throw new Error("Failed to create initial user for updateUser tests");
+      }
     });
 
     it('should update email, phone, password, and role successfully', async () => {
@@ -473,6 +483,58 @@ describe('Database Service', () => {
         expect(passwordMatches).toBe(true); // Initial password
       } else {
         fail("Renamed user not found in DB");
+      }
+    });
+
+    it("should update username successfully and return updated IUserSafe", async () => {
+      // Arrange
+      const newUsername = "user-renamed";
+      expect(initialUser).toBeDefined(); // Ensure setup worked
+
+      // Act
+      const result = await updateUser(initialUsername, { username: newUsername });
+
+      // Assert: Check the returned result object
+      expect(result.success).toBe(true);
+      expect(result.operation).toBe(CRUDOperation.UPDATE);
+      expect(result.user).toBeDefined();
+
+      if (result.success && result.user) {
+        // Check returned user object properties
+        expect(result.user._id).toBe(initialUserId); // ID MUST remain the same
+        expect(typeof result.user._id).toBe("string");
+        expect(result.user.username).toBe(newUsername); // Verify NEW username
+        // Verify other fields are unchanged from the initial state
+        expect(result.user.email).toBe(initialUser!.email);
+        expect(result.user.phone).toBe(initialUser!.phone);
+        expect(result.user.role).toBe(initialUser!.role);
+        expect((result.user as any).password).toBeUndefined(); // Still sanitized
+      } else {
+        fail("updateUser (username) should have succeeded but failed");
+      }
+
+      // Assert: Check database state consistency
+      // Verify old username no longer exists
+      const oldUserCheck = await userModel.findOne({ username: initialUsername });
+      expect(oldUserCheck).toBeNull();
+
+      // Verify new username exists and has correct data
+      const newUserCheck = await userModel.findOne({ username: newUsername });
+      expect(newUserCheck).not.toBeNull();
+      if (newUserCheck) {
+        expect(String(newUserCheck._id)).toBe(initialUserId); // Check ID in DB
+        expect(newUserCheck.username).toBe(newUsername);
+        expect(newUserCheck.email).toBe(initialEmail); // Check original email
+        expect(newUserCheck.phone).toBe(initialPhone); // Check original phone
+        expect(newUserCheck.role).toBe(UserRole.User); // Check original role
+        // Check password hash hasn't changed (unless explicitly updated)
+        const passwordMatches = await bcrypt.compare(
+          initialPassword,
+          newUserCheck.password
+        );
+        expect(passwordMatches).toBe(true);
+      } else {
+        fail("User with new username not found in DB");
       }
     });
 
@@ -545,80 +607,8 @@ describe('Database Service', () => {
         fail('updateUser should have failed (phone conflict) but succeeded');
       }
     });
-
-    describe('when updated fields conflict with other users', () => {
-      const userA_username = 'userToUpdate';
-      const userA_email = 'userA@example.com';
-      const userA_phone = '1111111111';
-
-      const userB_username = 'otherUserWithData';
-      const userB_email = 'conflictingEmail@example.com'; // Email that UserA will try to take
-      const userB_phone = '2222222222'; // Phone that UserA will try to take
-
-      let userA_id: string; // To store UserA's actual _id
-
-      // Setup the two users before each test in this block
-      beforeEach(async () => {
-        const resA = await createUser(userA_username, 'passwordA', userA_email, userA_phone);
-        if (resA.success && resA.user) userA_id = resA.user._id; // Capture UserA's ID
-
-        await createUser(userB_username, 'passwordB', userB_email, userB_phone);
-      });
-
-      it('should fail if updated email conflicts with another user (BUG NOTE: uses username exclusion)', async () => {
-        // Act: Try to update userA to use userB's email
-        const result = await updateUser(userA_username, { email: userB_email });
-
-        // Assert: This SHOULD fail due to the email conflict.
-        // The current implementation will likely achieve this because userB's username != userA_username.
-        expect(result.success).toBe(false);
-        expect(result.operation).toBe(CRUDOperation.UPDATE);
-        expect(result.user).toBeUndefined();
-        expect(result.message).toContain(`Email "${userB_email}" is already in use`);
-
-        // --- Test Explaining the Bug ---
-        // Developer Note: This test passes with the current code, but the underlying logic for the
-        // email uniqueness check within updateUser is fragile. It currently excludes the user being updated via:
-        // `{ email: updates.email, username: { $ne: username } }`
-        // This relies on the conflicting user (userB) having a different username than the original user (userA).
-        // The robust and correct way to exclude the user being updated is by its immutable _id:
-        // `{ email: updates.email, _id: { $ne: existingUser._id } }`
-        // This test serves to confirm the desired *outcome* (conflict detected) while documenting the needed internal fix.
-      });
-
-      it('should fail if updated phone conflicts with another user (BUG NOTE: uses username exclusion)', async () => {
-        // Act: Try to update userA to use userB's phone number
-        const result = await updateUser(userA_username, { phone: userB_phone });
-
-        // Assert: This SHOULD fail due to the phone conflict.
-        expect(result.success).toBe(false);
-        expect(result.operation).toBe(CRUDOperation.UPDATE);
-        expect(result.user).toBeUndefined();
-        expect(result.message).toContain(`Phone "${userB_phone}" is already in use`);
-
-        // --- Test Explaining the Bug ---
-        // Developer Note: Similar to the email test, the phone uniqueness check uses
-        // `{ phone: updates.phone, username: { $ne: username } }` which should be
-        // `{ phone: updates.phone, _id: { $ne: existingUser._id } }` for robustness.
-      });
-
-      // For contrast: Test the username conflict check, which DOES use the correct _id exclusion
-      it('should fail if updated username conflicts with another existing user (uses correct _id exclusion)', async () => {
-        // Act: Try to update userA to use userB's username
-        const result = await updateUser(userA_username, { username: userB_username });
-
-        // Assert
-        expect(result.success).toBe(false);
-        expect(result.operation).toBe(CRUDOperation.UPDATE);
-        expect(result.user).toBeUndefined();
-        expect(result.message).toContain(`Username "${userB_username}" is already in use`);
-        // Note: This check in updateUser correctly uses _id: { $ne: existingUser._id }
-      });
-
-    }); // End describe 'when updated fields conflict...'
-
-
   });
+
   // --- authenticateUser Tests ---
   describe('authenticateUser', () => {
     const testUsername = 'authUser';
