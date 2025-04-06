@@ -30,13 +30,27 @@ const DB_URI: string =
 const adminPass: string = process.env.ADMIN_PASS || "admin"; // Default to "admin" if not set
 
 // Connect to MongoDB (called in index.ts)
+// Added parameter so can be used in test files to connect to a different database if needed, but default is the environment variable
+/**
+ * Connects to the MongoDB database using Mongoose. Logs success or failure messages.
+ * @returns {Promise<void>} - A promise that resolves when the connection is established.
+ * @throws {Error} - Throws an error if the connection fails.
+ * 
+ */
 const connectToDatabase = async (): Promise<void> => {
   try {
-    await mongoose.connect(DB_URI);
-    logger.info(`Database: Connected to MongoDB database: ${DB_NAME} at ${DB_URI}`);
+    // 0=disconnected, 1=connected, 2=connecting, 3=disconnecting
+    // Added this for unit test to use the createAdminUser function without explicitly exposing it
+    if (mongoose.connection.readyState !== 1) {
+      await mongoose.connect(DB_URI);
+      logger.info(`Database: Connected to MongoDB database: ${DB_NAME} at ${DB_URI}`);
+    } else {
+      logger.info(`Database: Already connected to ${DB_NAME}. Skipping connect call.`);
+    }
     await createAdminUser();
   } catch (error: unknown) {
     LogError(error as Error, serviceLocation, `Error connecting to MongoDB database: ${DB_NAME} at ${DB_URI}`)
+    throw new Error(`Error connecting to MongoDB: ${error}`);
   }
 };
 
@@ -51,15 +65,15 @@ enum UserRole {
   User = "user",
   Admin = "admin",
 }
-// User Interface (anyone that is treated as a user must have these properties)
+
 /**
  * IUser interface defines the structure of a user object in the system.
  * It includes properties for:
- * {string} username - The unique username of the user.
- * {string} password - The hashed password of the user.
- * {string} email - The email address of the user.
- * {string} phone - The phone number of the user.
- * {UserRole} role - The role of the user, which can be either "user" or "admin".
+ * - {string} username - The unique username of the user.
+ * - {string} password - The hashed password of the user.
+ * - {string} email - The email address of the user.
+ * - {string} phone - The phone number of the user.
+ * - {UserRole} role - The role of the user, which can be either "user" or "admin".
  */
 interface IUser {
   username: string;
@@ -68,8 +82,21 @@ interface IUser {
   phone: string;
   role: UserRole; // Default to "user" unless specified otherwise
 }
-// User Interface Safe - sanitized version for public use (e.g., API responses)
+
+/**
+ * IUserSafe interface defines the structure of a santized user object that is safe for public use.
+ * It includes properties for:
+ * - {string} _id - The unique identifier of the user, converted to a string.
+ * - {string} username - The unique username of the user.
+ * - {string} email - The email address of the user.
+ * - {string} phone - The phone number of the user.
+ * - {UserRole} role - The role of the user, which can be either "user" or "admin".
+ */
 interface IUserSafe {
+  /**
+   * _id is taken from the MongoDB document ID and converted to a string.
+   */
+  _id: string;
   username: string;
   email: string;
   phone: string;
@@ -80,6 +107,7 @@ interface IUserDocument extends IUser, Document { }
 // Convert IUserDocument to IUserSafe for public use
 function toIUserSafe(user: IUserDocument): IUserSafe {
   return {
+    _id: String(user._id),
     username: user.username,
     email: user.email,
     phone: user.phone,
@@ -173,6 +201,10 @@ enum CRUDOperation {
   READ = "read",
   UPDATE = "update",
   DELETE = "delete",
+  /**
+   * AUTHENTICATE is used for user authentication operations and is not a CRUD operation but is required by PassportJS.
+   */
+  AUTHENTICATE = "authenticate",
 }
 
 // User Functions
@@ -254,9 +286,11 @@ const createUser = async (
  * @param phone {string} - The phone number of the user to read (optional)
  * @param role {UserRole} - The role of the user to read (optional)
  * @returns {UserCrudResult} - A promise that resolves to an object indicating success or failure.
- * If no user is found, it returns an error message.
- * If the user(s) is found successfully, it returns the found user(s) document(s).
- * If no criteria is provided, it returns all users.
+ * @example If only require username search, use readUser("username")
+ * @example If only require email search, use readUser(undefined, "email")
+ * @example If only require phone search, use readUser(undefined, undefined, "phone")
+ * @example If only require role search, use readUser(undefined, undefined, undefined, UserRole.Admin)
+ * @description If no criteria is provided, it returns all users
  */
 const readUser = async (
   username?: string,
@@ -264,7 +298,6 @@ const readUser = async (
   phone?: string,
   role?: UserRole,
 ): Promise<UserCrudResult> => {
-
 
   const searchConditions: object[] = [];
   if (username) searchConditions.push({ username: username });
@@ -276,10 +309,8 @@ const readUser = async (
   const filterCriteriaString = searchConditions.length > 0
     ? searchConditions.map(cond => JSON.stringify(cond)).join(' OR ')
     : 'all users';
-  
   try {
     let foundUsers: IUserDocument[];
-
     // If no search conditions are provided, find all users
     if (searchConditions.length === 0) {
       logger.info(`Database: Reading all users.`);
@@ -290,7 +321,6 @@ const readUser = async (
       logger.info(`Database: Reading users matching ANY of: ${filterCriteriaString}`);
       foundUsers = await userModel.find(query);
     }
-
     // Process the results
     if (foundUsers.length === 0) {
       logger.info(`Database: No users found matching criteria: ${filterCriteriaString}`);
@@ -318,7 +348,6 @@ const readUser = async (
     return { success: false, operation: CRUDOperation.READ, message: "Error reading user." };
   }
 }
-
 
 // Function to update a user, given a user ID and an object with the new data
 /**
@@ -351,7 +380,7 @@ const updateUser = async (
       logger.warn(`Database: User ${username} does not exist.`);
       return { success: false, operation: CRUDOperation.UPDATE, message: `User ${username} does not exist.` };
     }
-
+    // NOTE - use user._id from now on instead of username because username be one of the fields being updated.
     // Create update object and track what fields are being updated
     const updateData: Partial<IUser> = {};
     const unchangedFields: string[] = [];
@@ -371,7 +400,7 @@ const updateUser = async (
 
     // Check username
     if (updates.username !== undefined) {
-      if (updates.email === existingUser.username) {
+      if (updates.username === existingUser.username) {
         unchangedFields.push("username");
       } else {
         // Check if the username is already in use by another user
@@ -379,10 +408,7 @@ const updateUser = async (
           username: updates.username,
           _id: { $ne: existingUser._id }, // Exclude current user
         });
-
-        if (usernameExists) {
-          return { success: false, operation: CRUDOperation.UPDATE, message: `Username "${updates.username}" is already in use by another user.`, };
-        }
+        if (usernameExists) return { success: false, operation: CRUDOperation.UPDATE, message: `Username "${updates.username}" is already in use by another user.`, };
         updateData.username = updates.username;
       }
     }
@@ -395,7 +421,7 @@ const updateUser = async (
         // Check if the email is already in use by another user
         const emailExists = await userModel.findOne({
           email: updates.email,
-          username: { $ne: username }, // Exclude current user
+          _id: { $ne: existingUser._id }  // Exclude current user
         });
 
         if (emailExists) {
@@ -413,7 +439,7 @@ const updateUser = async (
         // Check if the phone is already in use by another user
         const phoneExists = await userModel.findOne({
           phone: updates.phone,
-          username: { $ne: username }, // Exclude current user
+          _id: { $ne: existingUser._id } // Exclude current user
         });
 
         if (phoneExists) {
@@ -461,6 +487,72 @@ const updateUser = async (
 // const deleteUser = async (username: string): Promise<UserCrudResult> => {
 
 // };
+
+// Auxiliary User functions
+// Function to authenticate a user given a username and password
+/**
+ * Authenticates a user given a username and password.
+ * @param {string} username - The username of the user to authenticate. Must be non-empty.
+ * @param {string} passwordAttempt - The plain-text password provided by the user to authenticate. Must be non-empty.
+ * @returns {Promise<UserCrudResult>} - A promise resolving to an object indicating success or failure.
+ * If successful, `success` is true and `user` contains the sanitized authenticated user document.
+ * If authentication fails (user not found, password mismatch, invalid input), `success` is false and `message` provides a generic error ("Invalid username or password.").
+ * If an internal error occurs (DB issue, bcrypt error), `success` is false and `message` indicates an internal error.
+ */
+const authenticateUser = async (
+  username: string,
+  passwordAttempt: string
+): Promise<UserCrudResult> => {
+
+  const operation = CRUDOperation.AUTHENTICATE;
+
+  // Check for null, undefined, empty strings, or non-string types for username
+  if (!username || typeof username !== 'string' || username.trim() === '') {
+    logger.warn(`Database: Attempt with invalid or empty username.`);
+    return { success: false, operation, message: 'Invalid username or password.' };
+  }
+
+  // Check for null, undefined, or empty string for password (allow any characters)
+  if (passwordAttempt === undefined || passwordAttempt === null || passwordAttempt === '') { // Explicitly check empty string
+    logger.warn(`Database: Attempt for username "${username}" with missing or empty password.`);
+    return { success: false, operation, message: 'Invalid username or password.' };
+  }
+
+  try {
+    // 1. Find the user specifically by username
+    // Use .select('+password') to ensure the password hash is retrieved especially if have schema-level settings that might exclude it by default.
+    const user: IUserDocument | null = await userModel.findOne({ username: username }).select('+password');
+
+    // 2. Handle case where username doesn't exist
+    if (!user) {
+      logger.warn(`Database: Login attempt failed for non-existent username: ${username}`);
+      return { success: false, operation, message: 'Invalid username or password.' };
+    }
+
+    // Check if the user record retrieved actually has a valid password hash stored, protects against data corruption or improperly created user records.
+    if (!user.password || typeof user.password !== 'string' || user.password.length === 0) {
+      logger.error(`Database: User "${username}" found in DB but has a missing, null, or empty password hash. Cannot authenticate.`);
+      return { success: false, operation, message: 'Authentication failed due to an account configuration issue.' };
+    }
+
+    // 3. Compare the provided password attempt with the stored hash
+    const isMatch = await bcrypt.compare(passwordAttempt, user.password);
+
+    // 4. Handle case where passwords don't match
+    if (!isMatch) {
+      logger.warn(`Database: Login attempt failed for username: ${username} (Incorrect password)`);
+      return { success: false, operation, message: 'Invalid username or password.' };
+    }
+
+    // 5. Authentication successful!
+    logger.info(`Database: Login successful for username: ${username}`);
+    return { success: true, operation, user: toIUserSafe(user) };
+
+  } catch (error: unknown) {
+    LogError(error as Error, serviceLocation, `Error during authentication process for username ${username}.`);
+    return { success: false, operation, message: 'An internal server error occurred during authentication.' };
+  }
+};
 
 // File Functions
 // Define result type for createFile function
@@ -518,4 +610,5 @@ const createFile = async (
 };
 
 // Using ES modules instead of CommonJS which is module.exports = {connectToDatabase, User};
-export { connectToDatabase, userModel, fileModel, createUser, readUser, updateUser, createFile, UserRole };
+// ONLY unit tests should use userModel, fileModel directly, otherwise use the created functions to create users/files.
+export { connectToDatabase, userModel, fileModel, createUser, readUser, updateUser, authenticateUser, createFile, UserRole, IUserSafe, UserCrudResult, CRUDOperation };
