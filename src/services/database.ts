@@ -42,11 +42,25 @@ const connectToDatabase = async (): Promise<void> => {
 
 /* Interfaces */
 // Enumeration for user roles
+/**
+ * UserRole enum defines the different roles a user can have in the system.
+ * - User: Regular user with standard permissions.
+ * - Admin: User with elevated permissions for administrative tasks.
+ */
 enum UserRole {
   User = "user",
   Admin = "admin",
 }
 // User Interface (anyone that is treated as a user must have these properties)
+/**
+ * IUser interface defines the structure of a user object in the system.
+ * It includes properties for:
+ * {string} username - The unique username of the user.
+ * {string} password - The hashed password of the user.
+ * {string} email - The email address of the user.
+ * {string} phone - The phone number of the user.
+ * {UserRole} role - The role of the user, which can be either "user" or "admin".
+ */
 interface IUser {
   username: string;
   password: string;
@@ -231,15 +245,84 @@ const createUser = async (
   }
 };
 
-// // Function to read user or users based on property of IUser
-// const readUser = async (): UserCrudResult => {
 
-// }
+// Function to read user or users based on property of IUser
+/**
+ * Searches/Finds/Reads for users in the database. If no criteria is provided, it returns all users.
+ * @param username {string} - The username of the user to read (optional)
+ * @param email {string} - The email of the user to read (optional)
+ * @param phone {string} - The phone number of the user to read (optional)
+ * @param role {UserRole} - The role of the user to read (optional)
+ * @returns {UserCrudResult} - A promise that resolves to an object indicating success or failure.
+ * If no user is found, it returns an error message.
+ * If the user(s) is found successfully, it returns the found user(s) document(s).
+ * If no criteria is provided, it returns all users.
+ */
+const readUser = async (
+  username?: string,
+  email?: string,
+  phone?: string,
+  role?: UserRole,
+): Promise<UserCrudResult> => {
 
+
+  const searchConditions: object[] = [];
+  if (username) searchConditions.push({ username: username });
+  if (email) searchConditions.push({ email: email });
+  if (phone) searchConditions.push({ phone: phone });
+  if (role) searchConditions.push({ role: role });
+
+  // String representation for logging purposes
+  const filterCriteriaString = searchConditions.length > 0
+    ? searchConditions.map(cond => JSON.stringify(cond)).join(' OR ')
+    : 'all users';
+  
+  try {
+    let foundUsers: IUserDocument[];
+
+    // If no search conditions are provided, find all users
+    if (searchConditions.length === 0) {
+      logger.info(`Database: Reading all users.`);
+      foundUsers = await userModel.find({});
+    } else {
+      // If search conditions ARE provided, use $or logic
+      const query = { $or: searchConditions };
+      logger.info(`Database: Reading users matching ANY of: ${filterCriteriaString}`);
+      foundUsers = await userModel.find(query);
+    }
+
+    // Process the results
+    if (foundUsers.length === 0) {
+      logger.info(`Database: No users found matching criteria: ${filterCriteriaString}`);
+      // Return SUCCESS, but with empty array - It's not an error to find nothing
+      return {
+        success: true, // Operation succeeded
+        operation: CRUDOperation.READ,
+        users: [], // Found zero users
+        message: "No users found matching the specified criteria.",
+      };
+    }
+
+    // Convert found users to IUserSafe for public use
+    const safeUsers: IUserSafe[] = foundUsers.map(toIUserSafe); // Simplified map usage
+    logger.info(`Database: Successfully read ${safeUsers.length} user(s) matching criteria: ${filterCriteriaString}`);
+    return {
+      success: true,
+      operation: CRUDOperation.READ,
+      users: safeUsers,
+    };
+
+  }
+  catch (error: unknown) {
+    LogError(error as Error, serviceLocation, `Error reading user ${username}.`);
+    return { success: false, operation: CRUDOperation.READ, message: "Error reading user." };
+  }
+}
 
 
 // Function to update a user, given a user ID and an object with the new data
 /**
+ * Updates a user in the database with the provided username and updates object.
  * @param username - The username of the user to update
  * @param updates - An object containing the fields to update. At least one field must be provided:
  * @param updates.username - The new username of the user (optional).
@@ -435,4 +518,4 @@ const createFile = async (
 };
 
 // Using ES modules instead of CommonJS which is module.exports = {connectToDatabase, User};
-export { connectToDatabase, userModel, fileModel, createUser, updateUser, createFile, UserRole };
+export { connectToDatabase, userModel, fileModel, createUser, readUser, updateUser, createFile, UserRole };
