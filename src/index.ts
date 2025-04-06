@@ -42,12 +42,8 @@ const PORT = process.env.PORT || 3000;
 /* Middleware */
 app.use(express.json());
 
-
-
 // Add the auth routes
 app.use("/auth", authRoutes); // Mount the auth routes at the /auth path
-
-
 
 // Configure express-session 
 // When a user logs in, a session is created and a session ID is sent to the client via a cookie
@@ -79,11 +75,11 @@ app.listen(PORT, () => {
   logger.info(`Server running at http://localhost:${PORT}`);
 });
 
-if (process.env.NODE_ENV !== "test") {
-  app.listen(PORT, () => {
-    logger.info(`Server running at http://localhost:${PORT}`);
-  });
-}
+// if (process.env.NODE_ENV !== "test") {
+//   app.listen(PORT, () => {
+//     logger.info(`Server running at http://localhost:${PORT}`);
+//   });
+// }
 
 // Export the app for testing
 export { app };
