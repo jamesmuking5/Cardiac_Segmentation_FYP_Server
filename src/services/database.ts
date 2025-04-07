@@ -12,6 +12,7 @@ const serviceLocation = "Database"; // Service location for error logging
 
 // TODO: File check script to check if the file exists and is readable before loading it
 // TODO: Read and Delete User and CRUD Files functions
+// TODO: Clean up files and users when deleting a user
 
 // Load environment variables from .env file
 try {
@@ -483,10 +484,56 @@ const updateUser = async (
   }
 };
 
-// Should return a success message if the user is deleted successfully with UserCrudResult [2]
-// const deleteUser = async (username: string): Promise<UserCrudResult> => {
+// Should return a success message if the user is deleted successfully with UserCrudResult
+// Could possibly implement a 'move-to-deleted-users' collection instead of deleting the user, but for now, just delete the user.
+// Unit test should just check if the user is deleted with this function, by using readUser to check if the user exists after deletion since they read from  same collection.
+// This should also delete any files associated with the user, but that is not implemented yet. (TODO: Implement file deletion)
+/**
+  * Function to delete a user from the database given a username.
+  * @param username - The username of the user to delete
+  * @returns { Promise<UserCrudResult> } - A promise that resolves to an object indicating success or failure.
+  * - If successful, it returns a success message.
+  * - If the user does not exist, it returns an error message.
+  * - If the user is an admin and this is the last admin, it returns an error message.
+  * - If the user is deleted successfully, it returns a success message.
+  * - If the user is not deleted successfully, it returns an error message.
+ */
+const deleteUser = async (username: string): Promise<UserCrudResult> => {
+  const operation = CRUDOperation.DELETE;
+  try {
 
-// };
+    // Check if the user exists
+    const existingUser = await userModel.findOne({ username: username });
+    // Check if the user is an admin and if this is the last admin
+    if (existingUser && existingUser.role === UserRole.Admin) {
+      // Check if this is the last admin
+      const adminCount = await userModel.countDocuments({ role: UserRole.Admin });
+      if (adminCount <= 1) {
+        logger.warn(`Database: Attempted to delete last admin user: ${username}`);
+        return { success: false, operation, message: 'Cannot delete the last administrator account' };
+      }
+    }
+    if (!existingUser) {
+      logger.warn(`Database: User ${username} does not exist.`);
+      return { success: false, operation, message: `User ${username} does not exist.` };
+    }
+    // Delete the user
+    await userModel.deleteOne({ username: username });
+    // Check if the user was deleted successfully using readUser function
+    const deletedUserResult = await readUser(username);
+    if (deletedUserResult.success && deletedUserResult.users && deletedUserResult.users.length > 0) {
+      logger.warn(`Database: User ${username} was not deleted successfully.`);
+      return { success: false, operation, message: `User ${username} was not deleted successfully.` };
+    }
+    // User deleted successfully
+    logger.info(`Database: User ${username} deleted successfully.`);
+    return { success: true, operation, message: `User ${username} deleted successfully.` };
+
+  } catch (error: unknown) {
+    LogError(error as Error, serviceLocation, `Error deleting user ${username}.`);
+    return { success: false, operation, message: "Error when deleting user." };
+  }
+};
 
 // Auxiliary User functions
 // Function to authenticate a user given a username and password
@@ -611,4 +658,4 @@ const createFile = async (
 
 // Using ES modules instead of CommonJS which is module.exports = {connectToDatabase, User};
 // ONLY unit tests should use userModel, fileModel directly, otherwise use the created functions to create users/files.
-export { connectToDatabase, userModel, fileModel, createUser, readUser, updateUser, authenticateUser, createFile, UserRole, IUserSafe, UserCrudResult, CRUDOperation };
+export { connectToDatabase, userModel, fileModel, createUser, readUser, updateUser, deleteUser, authenticateUser, createFile, UserRole, IUserSafe, UserCrudResult, CRUDOperation };
