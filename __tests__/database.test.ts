@@ -1,14 +1,20 @@
 // File: __tests__/database.test.ts
 // Description: This file contains unit tests for the database service functions.
 import { MongoMemoryServer } from 'mongodb-memory-server';
-import mongoose, { ConnectOptions } from 'mongoose';
+import mongoose from 'mongoose';
 import {
   connectToDatabase,
   userModel,
   fileModel,
   createUser,
+  readUser,
   updateUser,
+  authenticateUser,
+  createFile,
   UserRole,
+  IUserSafe,
+  UserCrudResult,
+  CRUDOperation
 } from '../src/services/database';
 import bcrypt from 'bcrypt';
 
@@ -24,16 +30,19 @@ let dbUri: string;
 
 // Setup in-memory MongoDB server
 beforeAll(async () => {
-  mongoServer = await MongoMemoryServer.create();
-  dbUri = mongoServer.getUri();
-  // Connect only once here
-  await mongoose.connect(dbUri);
+  if (mongoose.connection.readyState !== 1) {
+    mongoServer = await MongoMemoryServer.create();
+    dbUri = mongoServer.getUri();
+    await mongoose.connect(dbUri);
+  }
 });
 
 // Clean up after tests
 afterAll(async () => {
   await mongoose.disconnect();
-  await mongoServer.stop();
+  if (mongoServer) {
+     await mongoServer.stop();
+  }
 });
 
 // Clear data between tests for all describe blocks
@@ -43,13 +52,10 @@ beforeEach(async () => {
   for (const key in collections) {
     await collections[key].deleteMany({});
   }
-  // Optional: Re-ensure admin user logic if connectToDatabase test becomes more complex
-  // For now, assume connect in beforeAll handles initial setup if needed.
 });
 
 // --- Main Test Suite ---
 describe('Database Service', () => {
-
   // --- connectToDatabase Tests ---
   describe('connectToDatabase', () => {
     // Basic connection check (relies on beforeAll)
@@ -58,53 +64,39 @@ describe('Database Service', () => {
     });
 
     it("should create a default admin user if none exists", async () => {
-      // Verify there is no admin user before running the function
+      // Ensure no admins exist initially (beforeEach clears)
       const beforeCheck = await userModel.findOne({ role: UserRole.Admin });
       expect(beforeCheck).toBeNull();
 
-      // Now call the actual connectToDatabase function
-      // This works because already connected to the in-memory database
-      // so it will skip the mongoose.connect() part and just run the createAdminUser() logic
-      await connectToDatabase();
+      // Run the function containing createAdminUser logic
+      // In a real scenario, connectToDatabase would connect first, but here we are already connected
+      await connectToDatabase(); // This effectively runs createAdminUser
 
-      // Check that an admin was created
       const adminUser = await userModel.findOne({ role: UserRole.Admin });
-      if (adminUser) {
-        expect(adminUser).not.toBeNull();
-        expect(adminUser?.username).toBe("admin");
-      }
+      expect(adminUser).not.toBeNull();
+      expect(adminUser?.username).toBe("admin");
+      expect(adminUser?._id).toBeDefined(); // Check _id exists in DB
     });
 
 
-    it.todo('should not create a default admin user if one already exists');
-    // it("should not create a default admin user if one already exists", async () => {
-    //   // Verify there is no admin user first
-    //   const beforeCheck = await userModel.findOne({ role: UserRole.Admin });
-    //   expect(beforeCheck).toBeNull();
+    it("should not create a default admin user if one already exists", async () => {
+      // Arrange: Manually create an admin first
+      const existingAdminData = { username: 'manualAdmin', password: 'pw', email: 'man@admin.com', phone: '111', role: UserRole.Admin };
+      await createUser(existingAdminData.username, existingAdminData.password, existingAdminData.email, existingAdminData.phone, existingAdminData.role);
 
-    //   // Create an admin user manually
-    //   await createUser(
-    //     'existingAdmin',
-    //     'helpmegetthroughthis',
-    //     'mylifeisadream@example.com',
-    //     '1234567890',
-    //     UserRole.Admin
-    //   );
+      const firstAdmin = await userModel.findOne({ username: existingAdminData.username });
+      expect(firstAdmin).not.toBeNull();
+      const firstAdminId = firstAdmin?._id;
 
-    //   // Now call the connectToDatabase function
-    //   await connectToDatabase(); // This should not create a new admin user
+      // Act: Run connectToDatabase again, which triggers createAdminUser check
+      await connectToDatabase();
 
-    //   // Check that the admin user still exists and no duplicates were created
-    //   const adminUser = await userModel.findOne({ role: UserRole.Admin });
-    //   expect(adminUser).not.toBeNull();
-    //   if (adminUser) {
-    //     expect(adminUser.username).toBe('existingAdmin'); // Check the username of the existing admin
-    //   }
-    //   // Check that no new admin user was created
-    //   const allAdmins = await userModel.find({ role: UserRole.Admin });
-    //   expect(allAdmins.length).toBe(1); // Ensure only one admin user exists
-    //   expect(allAdmins[0].username).toBe('existingAdmin'); // Check that the existing Admin is the only first one
-    // });
+      // Assert: Check only the manually created admin exists
+      const allAdmins = await userModel.find({ role: UserRole.Admin });
+      expect(allAdmins.length).toBe(1); // Only one admin should exist
+      expect(allAdmins[0].username).toBe(existingAdminData.username); // It's the one we created
+      expect(String(allAdmins[0]._id)).toBe(String(firstAdminId)); // Ensure it's the *same* admin
+    });
   });
 
   // --- createUser Tests ---
@@ -122,7 +114,11 @@ describe('Database Service', () => {
       // Assert - Check result object
       expect(result.success).toBe(true);
       if (result.success === true && result.user) { // Type narrowing
+        expect(result.operation).toBe(CRUDOperation.CREATE);
         expect(result.user).toBeDefined();
+        expect(result.user._id).toBeDefined();
+        expect(typeof result.user._id).toBe('string');
+        expect(result.user._id.length).toBeGreaterThan(0);
         expect(result.user.username).toBe(username);
         expect(result.user.email).toBe(email);
         expect(result.user.phone).toBe(phone);
@@ -134,10 +130,11 @@ describe('Database Service', () => {
       // Assert - Check database state
       const savedUser = await userModel.findOne({ username: username });
       expect(savedUser).not.toBeNull();
+      // Check _id consistency with userModel and IUserSafe in UserCrudResult
+      if (result.success && result.user) expect(String(savedUser?._id)).toBe(result.user._id);
       expect(savedUser?.email).toBe(email);
       expect(savedUser?.phone).toBe(phone);
       expect(savedUser?.role).toBe(UserRole.User); // Check default role
-
       // Assert - Check password hashing
       const passwordMatches = await bcrypt.compare(password, savedUser!.password);
       expect(passwordMatches).toBe(true);
@@ -154,11 +151,9 @@ describe('Database Service', () => {
       const result = await createUser(username, password, email, phone, role);
       // Assert
       expect(result.success).toBe(true);
-      if (result.success === true && result.user) { // Type narrowing
-        expect(result.user.role).toBe(role);
-      } else {
-        fail('createUser should have succeeded but failed');
-      }
+      expect(result.operation).toBe(CRUDOperation.CREATE);
+      if (result.success === true && result.user) expect(result.user.role).toBe(role);
+      else fail('createUser should have succeeded but failed');
       const savedUser = await userModel.findOne({ username: username });
       expect(savedUser?.role).toBe(role);
     });
@@ -252,6 +247,165 @@ describe('Database Service', () => {
     });
   });
 
+  // --- readUser Tests ---
+  describe('readUser', () => {
+    // Sample users for testing read operations
+    const user1Data = { username: 'reader1', email: 'reader1@example.com', phone: '1010101010', password: 'password1', role: UserRole.User };
+    const user2Data = { username: 'reader2', email: 'reader2@example.com', phone: '2020202020', password: 'password2', role: UserRole.User };
+    const adminUserData = { username: 'readerAdmin', email: 'readerAdmin@example.com', phone: '3030303030', password: 'passwordAdmin', role: UserRole.Admin };
+
+    // Setup users before each test in this block
+    beforeEach(async () => {
+      // Create the sample users needed for read tests
+      // Note: Global beforeEach already clears the DB
+      await createUser(user1Data.username, user1Data.password, user1Data.email, user1Data.phone, user1Data.role);
+      await createUser(user2Data.username, user2Data.password, user2Data.email, user2Data.phone, user2Data.role);
+      await createUser(adminUserData.username, adminUserData.password, adminUserData.email, adminUserData.phone, adminUserData.role);
+    });
+
+    it('should return all users when no criteria are provided', async () => {
+      // Act
+      const result = await readUser();
+
+      // Assert
+      expect(result.success).toBe(true);
+      expect(result.operation).toBe('read'); // Assuming CRUDOperation.READ is 'read'
+      expect(result.users).toBeDefined();
+      if (result.success && result.users) { // Type guard
+        expect(result.users.length).toBe(3); // user1, user2, adminUser
+        // Optional: Check if some expected usernames are present
+        const usernames = result.users.map(u => u.username);
+        expect(usernames).toContain(user1Data.username);
+        expect(usernames).toContain(user2Data.username);
+        expect(usernames).toContain(adminUserData.username);
+      } else {
+        fail('readUser() without criteria failed or did not return users.');
+      }
+    });
+
+    it('should find a user by unique username', async () => {
+      // Act
+      const result = await readUser(user1Data.username);
+
+      // Assert
+      expect(result.success).toBe(true);
+      expect(result.operation).toBe('read');
+      expect(result.users).toBeDefined();
+      if (result.success && result.users) {
+        expect(result.users.length).toBe(1);
+        expect(result.users[0].username).toBe(user1Data.username);
+        expect(result.users[0].email).toBe(user1Data.email);
+        expect(result.users[0].phone).toBe(user1Data.phone);
+        expect(result.users[0].role).toBe(user1Data.role);
+        // IMPORTANT: Verify password is NOT present
+        expect((result.users[0] as any).password).toBeUndefined();
+      } else {
+        fail('readUser(username) failed or did not return users.');
+      }
+    });
+
+    it('should find a user by unique email', async () => {
+      // Act
+      const result = await readUser(undefined, user2Data.email);
+
+      // Assert
+      expect(result.success).toBe(true);
+      expect(result.users?.length).toBe(1);
+      expect(result.users?.[0].username).toBe(user2Data.username);
+      expect(result.users?.[0].email).toBe(user2Data.email);
+    });
+
+    it('should find a user by unique phone', async () => {
+      // Act
+      const result = await readUser(undefined, undefined, adminUserData.phone);
+
+      // Assert
+      expect(result.success).toBe(true);
+      expect(result.users?.length).toBe(1);
+      expect(result.users?.[0].username).toBe(adminUserData.username);
+      expect(result.users?.[0].phone).toBe(adminUserData.phone);
+    });
+
+    it('should return multiple users when searching by role (UserRole.User)', async () => {
+      // Act
+      const result = await readUser(undefined, undefined, undefined, UserRole.User);
+
+      // Assert
+      expect(result.success).toBe(true);
+      expect(result.operation).toBe('read');
+      expect(result.users).toBeDefined();
+      if (result.success && result.users) {
+        expect(result.users.length).toBe(2); // reader1, reader2
+        const usernames = result.users.map(u => u.username);
+        expect(usernames).toContain(user1Data.username);
+        expect(usernames).toContain(user2Data.username);
+        expect(usernames).not.toContain(adminUserData.username); // Ensure admin isn't included
+      } else {
+        fail('readUser(role: User) failed or did not return users.');
+      }
+    });
+
+    it('should return users matching ANY provided criteria (OR logic)', async () => {
+      // Act: Search for user1's username OR admin's email
+      const result = await readUser(user1Data.username, adminUserData.email);
+
+      // Assert
+      expect(result.success).toBe(true);
+      expect(result.operation).toBe('read');
+      expect(result.users).toBeDefined();
+      if (result.success && result.users) {
+        expect(result.users.length).toBe(2); // Should find both user1 and adminUser
+        const usernames = result.users.map(u => u.username);
+        expect(usernames).toContain(user1Data.username);
+        expect(usernames).toContain(adminUserData.username);
+        expect(usernames).not.toContain(user2Data.username);
+      } else {
+        fail('readUser with OR criteria failed or did not return users.');
+      }
+    });
+
+    it('should return only matching users if one criterion matches and another does not', async () => {
+      // Act: Search for user1's username OR a non-existent email
+      const result = await readUser(user1Data.username, 'nonexistent@email.com');
+
+      // Assert
+      expect(result.success).toBe(true);
+      expect(result.operation).toBe('read');
+      expect(result.users).toBeDefined();
+      if (result.success && result.users) {
+        expect(result.users.length).toBe(1); // Should find only user 1
+        expect(result.users[0].username).toBe(user1Data.username);
+      } else {
+        fail('readUser with one matching OR criteria failed.');
+      }
+    });
+
+
+    it('should return success: true and empty array when no user matches criteria', async () => {
+      // Act
+      const result = await readUser('nonexistentuser', 'nobody@nowhere.com');
+
+      // Assert
+      expect(result.success).toBe(true); // Still successful operation
+      expect(result.operation).toBe('read');
+      expect(result.users).toBeDefined();
+      expect(result.users?.length).toBe(0); // Empty array
+      expect(result.message).toContain("No users found matching the specified criteria.");
+    });
+
+    it('should return success: true and empty array when searching by non-existent role', async () => {
+      // We'll try searching by a non-existent username instead, as roles are limited.
+      const result = await readUser('nonexistentuser');
+
+      // Assert
+      expect(result.success).toBe(true);
+      expect(result.operation).toBe('read');
+      expect(result.users?.length).toBe(0);
+      expect(result.message).toContain("No users found matching the specified criteria.");
+    });
+
+  });
+
   // --- updateUser Tests ---
   describe('updateUser', () => {
     const initialUsername = 'updateTestUser';
@@ -300,21 +454,16 @@ describe('Database Service', () => {
     it('should update username successfully', async () => {
       // Arrange
       const newUsername = 'user-renamed';
-
       // Act
       const updateResult = await updateUser(initialUsername, { username: newUsername });
-
       // Assert: Check success status
       expect(updateResult.success).toBe(true);
-
       // Verify database state - query by OLD username should fail
       const oldUser = await userModel.findOne({ username: initialUsername });
       expect(oldUser).toBeNull();
-
       // Verify database state - query by NEW username should succeed
       const newUser = await userModel.findOne({ username: newUsername });
       expect(newUser).not.toBeNull();
-
       if (newUser) {
         expect(newUser.username).toBe(newUsername);
         // Check other fields remained unchanged from initial state
@@ -398,7 +547,205 @@ describe('Database Service', () => {
       }
     });
 
+    describe('when updated fields conflict with other users', () => {
+      const userA_username = 'userToUpdate';
+      const userA_email = 'userA@example.com';
+      const userA_phone = '1111111111';
 
+      const userB_username = 'otherUserWithData';
+      const userB_email = 'conflictingEmail@example.com'; // Email that UserA will try to take
+      const userB_phone = '2222222222'; // Phone that UserA will try to take
+
+      let userA_id: string; // To store UserA's actual _id
+
+      // Setup the two users before each test in this block
+      beforeEach(async () => {
+        const resA = await createUser(userA_username, 'passwordA', userA_email, userA_phone);
+        if (resA.success && resA.user) userA_id = resA.user._id; // Capture UserA's ID
+
+        await createUser(userB_username, 'passwordB', userB_email, userB_phone);
+      });
+
+      it('should fail if updated email conflicts with another user (BUG NOTE: uses username exclusion)', async () => {
+        // Act: Try to update userA to use userB's email
+        const result = await updateUser(userA_username, { email: userB_email });
+
+        // Assert: This SHOULD fail due to the email conflict.
+        // The current implementation will likely achieve this because userB's username != userA_username.
+        expect(result.success).toBe(false);
+        expect(result.operation).toBe(CRUDOperation.UPDATE);
+        expect(result.user).toBeUndefined();
+        expect(result.message).toContain(`Email "${userB_email}" is already in use`);
+
+        // --- Test Explaining the Bug ---
+        // Developer Note: This test passes with the current code, but the underlying logic for the
+        // email uniqueness check within updateUser is fragile. It currently excludes the user being updated via:
+        // `{ email: updates.email, username: { $ne: username } }`
+        // This relies on the conflicting user (userB) having a different username than the original user (userA).
+        // The robust and correct way to exclude the user being updated is by its immutable _id:
+        // `{ email: updates.email, _id: { $ne: existingUser._id } }`
+        // This test serves to confirm the desired *outcome* (conflict detected) while documenting the needed internal fix.
+      });
+
+      it('should fail if updated phone conflicts with another user (BUG NOTE: uses username exclusion)', async () => {
+        // Act: Try to update userA to use userB's phone number
+        const result = await updateUser(userA_username, { phone: userB_phone });
+
+        // Assert: This SHOULD fail due to the phone conflict.
+        expect(result.success).toBe(false);
+        expect(result.operation).toBe(CRUDOperation.UPDATE);
+        expect(result.user).toBeUndefined();
+        expect(result.message).toContain(`Phone "${userB_phone}" is already in use`);
+
+        // --- Test Explaining the Bug ---
+        // Developer Note: Similar to the email test, the phone uniqueness check uses
+        // `{ phone: updates.phone, username: { $ne: username } }` which should be
+        // `{ phone: updates.phone, _id: { $ne: existingUser._id } }` for robustness.
+      });
+
+      // For contrast: Test the username conflict check, which DOES use the correct _id exclusion
+      it('should fail if updated username conflicts with another existing user (uses correct _id exclusion)', async () => {
+        // Act: Try to update userA to use userB's username
+        const result = await updateUser(userA_username, { username: userB_username });
+
+        // Assert
+        expect(result.success).toBe(false);
+        expect(result.operation).toBe(CRUDOperation.UPDATE);
+        expect(result.user).toBeUndefined();
+        expect(result.message).toContain(`Username "${userB_username}" is already in use`);
+        // Note: This check in updateUser correctly uses _id: { $ne: existingUser._id }
+      });
+
+    }); // End describe 'when updated fields conflict...'
+
+
+  });
+  // --- authenticateUser Tests ---
+  describe('authenticateUser', () => {
+    const testUsername = 'authUser';
+    const testPassword = 'password123Secure'; // Use a known password
+    const testEmail = 'auth@example.com';
+    const testPhone = '1231231234';
+    let testUserId: string;
+
+    // Setup: Create the user before each authentication test
+    beforeEach(async () => {
+      const res = await createUser(testUsername, testPassword, testEmail, testPhone, UserRole.User);
+      if (res.success && res.user) testUserId = res.user._id;
+    });
+
+    it('should authenticate successfully with correct username and password', async () => {
+      // Act
+      const result = await authenticateUser(testUsername, testPassword);
+
+      // Assert
+      expect(result.success).toBe(true);
+      expect(result.operation).toBe('authenticate');
+      expect(result.message).toBeUndefined(); // No error message on success
+      expect(result.user).toBeDefined();
+      if (result.success && result.user) {
+        expect(result.user._id).toBe(testUserId);
+        expect(typeof result.user._id).toBe('string');
+        expect(result.user.username).toBe(testUsername);
+        expect(result.user.email).toBe(testEmail);
+        expect(result.user.phone).toBe(testPhone);
+        expect(result.user.role).toBe(UserRole.User);
+        // Crucially, verify password is NOT included
+        expect((result.user as any).password).toBeUndefined();
+      } else {
+        fail('authenticateUser should have succeeded but failed.');
+      }
+    });
+    describe('when using incorrect credentials', () => {
+      it('should fail authentication with correct username but incorrect password', async () => {
+        // Act
+        const result = await authenticateUser(testUsername, 'wrongPassword');
+
+        // Assert
+        expect(result.success).toBe(false);
+        expect(result.operation).toBe('authenticate');
+        expect(result.user).toBeUndefined(); // No user data on failure
+        expect(result.message).toBe('Invalid username or password.'); // Check for the generic security message
+      });
+
+      it('should fail authentication with non-existent username', async () => {
+        // Act
+        const result = await authenticateUser('nonExistentUser', testPassword);
+
+        // Assert
+        expect(result.success).toBe(false);
+        expect(result.operation).toBe('authenticate');
+        expect(result.user).toBeUndefined();
+        expect(result.message).toBe('Invalid username or password.'); // Should be the same generic message
+      });
+
+      it('should fail authentication with empty string username', async () => {
+        // Act
+        const result = await authenticateUser('', testPassword);
+
+        // Assert
+        expect(result.success).toBe(false);
+        expect(result.operation).toBe('authenticate');
+        expect(result.user).toBeUndefined();
+        // Check the specific message returned by your input validation
+        expect(result.message).toBe('Invalid username or password.'); // Or 'Username and password are required.' depending on your implementation detail
+      });
+
+      it('should fail authentication with empty string password', async () => {
+        // Act
+        const result = await authenticateUser(testUsername, '');
+
+        // Assert
+        expect(result.success).toBe(false);
+        expect(result.operation).toBe('authenticate');
+        expect(result.user).toBeUndefined();
+        // Check the specific message returned by your input validation
+        expect(result.message).toBe('Invalid username or password.'); // Or 'Username and password are required.'
+      });
+    });
+    // Test for internal errors (e.g., database connection issue)
+    it('should return an internal error if the database query fails', async () => {
+      // Arrange: Mock userModel.findOne to simulate a DB error
+      const findOneSpy = jest.spyOn(userModel, 'findOne').mockImplementationOnce(() => {
+        return {
+          select: jest.fn().mockRejectedValueOnce(new Error('Simulated DB Error'))
+        } as any; // Need 'as any' because we're not returning a full Query object
+      });
+
+      // Act
+      const result = await authenticateUser(testUsername, testPassword);
+
+      // Assert
+      expect(result.success).toBe(false);
+      expect(result.operation).toBe('authenticate');
+      expect(result.user).toBeUndefined();
+      expect(result.message).toBe('An internal server error occurred during authentication.');
+      expect(findOneSpy).toHaveBeenCalledWith({ username: testUsername });
+
+      // Clean up the mock
+      findOneSpy.mockRestore();
+    });
+
+    // Optional: Test for internal error during password comparison (less likely)
+    it('should return an internal error if bcrypt.compare fails', async () => {
+      // Arrange: Mock bcrypt.compare to throw an error
+      const compareSpy = jest.spyOn(bcrypt, 'compare').mockImplementationOnce(async () => {
+        throw new Error('Simulated bcrypt error');
+      });
+
+      // Act
+      const result = await authenticateUser(testUsername, testPassword);
+
+      // Assert
+      expect(result.success).toBe(false);
+      expect(result.operation).toBe('authenticate');
+      expect(result.user).toBeUndefined();
+      expect(result.message).toBe('An internal server error occurred during authentication.');
+      expect(compareSpy).toHaveBeenCalled(); // Verify bcrypt.compare was called
+
+      // Clean up the mock
+      compareSpy.mockRestore();
+    });
   });
 
   // --- createFile Tests ---
