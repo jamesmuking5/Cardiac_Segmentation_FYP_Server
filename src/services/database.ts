@@ -33,10 +33,18 @@ const adminPass: string = process.env.ADMIN_PASS || "admin"; // Default to "admi
 // Connect to MongoDB (called in index.ts)
 // Added parameter so can be used in test files to connect to a different database if needed, but default is the environment variable
 /**
- * Connects to the MongoDB database using Mongoose. Logs success or failure messages.
- * @returns {Promise<void>} - A promise that resolves when the connection is established.
- * @throws {Error} - Throws an error if the connection fails.
- * 
+ * Connects to the MongoDB database using the Mongoose library and the connection URI
+ * specified by the `DB_URI` environment variable (or a default local URI).
+ * Ensures that a connection is established if one does not already exist.
+ * Upon successful connection, it ensures a default admin user exists by calling `createAdminUser`.
+ * Logs the connection status and any potential errors.
+ *
+ * @async
+ * @function connectToDatabase
+ * @returns {Promise<void>} A promise that resolves when the database connection is established
+ * and the admin user check is complete.
+ * @throws {Error} Throws an error if the connection to the MongoDB database fails,
+ * wrapping the original Mongoose connection error.
  */
 const connectToDatabase = async (): Promise<void> => {
   try {
@@ -58,9 +66,10 @@ const connectToDatabase = async (): Promise<void> => {
 /* Interfaces */
 // Enumeration for user roles
 /**
- * UserRole enum defines the different roles a user can have in the system.
- * - User: Regular user with standard permissions.
- * - Admin: User with elevated permissions for administrative tasks.
+ * Defines the possible roles a user can have within the application.
+ * @enum {string}
+ * @property {string} User - Represents a standard user with basic permissions.
+ * @property {string} Admin - Represents an administrator with elevated privileges.
  */
 enum UserRole {
   User = "user",
@@ -68,13 +77,13 @@ enum UserRole {
 }
 
 /**
- * IUser interface defines the structure of a user object in the system.
- * It includes properties for:
- * - {string} username - The unique username of the user.
- * - {string} password - The hashed password of the user.
- * - {string} email - The email address of the user.
- * - {string} phone - The phone number of the user.
- * - {UserRole} role - The role of the user, which can be either "user" or "admin".
+ * Defines the structure for a user object as stored in the database, including sensitive information.
+ * @interface IUser
+ * @property {string} username - The unique username for the user.
+ * @property {string} password - The user's hashed password.
+ * @property {string} email - The user's unique email address.
+ * @property {string} phone - The user's unique phone number.
+ * @property {UserRole} role - The role assigned to the user (e.g., User, Admin).
  */
 interface IUser {
   username: string;
@@ -85,13 +94,14 @@ interface IUser {
 }
 
 /**
- * IUserSafe interface defines the structure of a santized user object that is safe for public use.
- * It includes properties for:
- * - {string} _id - The unique identifier of the user, converted to a string.
- * - {string} username - The unique username of the user.
- * - {string} email - The email address of the user.
- * - {string} phone - The phone number of the user.
- * - {UserRole} role - The role of the user, which can be either "user" or "admin".
+ * Defines the structure for a user object that is safe to expose publicly or send to clients.
+ * It omits sensitive information like the password hash.
+ * @interface IUserSafe
+ * @property {string} _id - The unique MongoDB document ID for the user, represented as a string.
+ * @property {string} username - The unique username of the user.
+ * @property {string} email - The email address of the user.
+ * @property {string} phone - The phone number of the user.
+ * @property {UserRole} role - The role of the user (e.g., User, Admin).
  */
 interface IUserSafe {
   /**
@@ -105,7 +115,16 @@ interface IUserSafe {
 }
 // User Model Interface (single user document in the database)
 interface IUserDocument extends IUser, Document { }
-// Convert IUserDocument to IUserSafe for public use
+
+/**
+ * Converts a Mongoose user document (`IUserDocument`) into a safe user object (`IUserSafe`)
+ * by selecting specific fields and converting the `_id` to a string.
+ * This is used to prepare user data for responses, removing sensitive information like the password.
+ *
+ * @function toIUserSafe
+ * @param {IUserDocument} user - The Mongoose user document to convert.
+ * @returns {IUserSafe} A new object containing only the safe-to-expose user properties.
+ */
 function toIUserSafe(user: IUserDocument): IUserSafe {
   return {
     _id: String(user._id),
@@ -117,6 +136,18 @@ function toIUserSafe(user: IUserDocument): IUserSafe {
 }
 
 // File Interface - Defines a saved file record in the database
+/**
+ * Defines the structure for a file record stored in the database.
+ * @interface IFile
+ * @property {string} filename - The original name of the uploaded file.
+ * @property {string} filepath - The storage path of the file (could be local or a remote URI like S3).
+ * @property {string} filetype - The MIME type of the file (e.g., "image/nifti", "application/dicom").
+ * @property {string} filehash - A hash (e.g., SHA-256) of the file content for integrity checking and deduplication.
+ * @property {number} filesize - The size of the file in bytes.
+ * @property {Date} createdAt - The timestamp when the file record was created.
+ * @property {string} createdBy - The identifier (e.g., username or user ID) of the user who uploaded the file.
+ * @property {string} description - An optional description for the file.
+ */
 interface IFile {
   filename: string;
   filepath: string; // Could be local or S3 path
@@ -142,7 +173,19 @@ const userSchema = new Schema<IUserDocument>({
 // Create the model with proper typing
 const userModel = model<IUserDocument, Model<IUserDocument>>("User", userSchema);
 
-// Create a default admin user if it doesn't exist
+/**
+ * Checks if an administrator user exists in the database. If not, creates a default
+ * administrator account with predefined credentials ("admin" username, password from
+ * `ADMIN_PASS` environment variable or "admin" default, default email/phone).
+ * This function is typically called internally during database initialization (`connectToDatabase`).
+ * It logs information about whether an admin exists or if a default one is created.
+ * A warning is logged upon successful creation of the default admin, advising password change.
+ *
+ * @async
+ * @function createAdminUser
+ * @returns {Promise<void>} A promise that resolves once the check and potential creation are complete.
+ * @throws {Error} Logs an error via `LogError` if any database operation fails during the process.
+ */
 const createAdminUser = async (): Promise<void> => {
   // Check if an admin user exists
   // Cannot use IUserDocument ONLY here because it may return null if no admins exist.
@@ -197,39 +240,60 @@ const fileSchema = new Schema<IFileDocument>({
 const fileModel = model<IFileDocument, Model<IFileDocument>>("File", fileSchema);
 
 /* Database Functions */
+/**
+ * Enumerates the types of CRUD (Create, Read, Update, Delete) operations,
+ * plus an 'AUTHENTICATE' operation specific to user login.
+ * Used in the result objects of database functions to indicate the action performed.
+ * @enum {string}
+ */
 enum CRUDOperation {
   CREATE = "create",
   READ = "read",
   UPDATE = "update",
   DELETE = "delete",
   /**
-   * AUTHENTICATE is used for user authentication operations and is not a CRUD operation but is required by PassportJS.
+   * AUTHENTICATE is used for user authentication operations and is not a standard CRUD operation,
+   * but it is included here for consistency in reporting operation types, especially for PassportJS integration.
    */
   AUTHENTICATE = "authenticate",
 }
 
 // User Functions
 // Define result type for user CRUD operations
+/**
+ * Defines the standard structure for the result object returned by user-related database operations
+ * (create, read, update, delete, authenticate).
+ * @interface UserCrudResult
+ * @property {boolean} success - Indicates whether the operation completed successfully.
+ * @property {CRUDOperation} operation - The type of operation that was performed (e.g., CREATE, READ).
+ * @property {IUserSafe} [user] - The resulting user object (sanitized), typically included on successful CREATE, UPDATE, or AUTHENTICATE operations.
+ * @property {IUserSafe[]} [users] - An array of user objects (sanitized), typically included on successful READ operations. Can be empty if no users match the criteria.
+ * @property {string} [message] - An optional message providing more details, especially in case of failure (e.g., validation error, user not found) or warnings.
+ */
 interface UserCrudResult {
-  success: boolean; // Indicates whether the operation was successful 
+  success: boolean; // Indicates whether the operation was successful
   operation: CRUDOperation; // The type of operation performed (CREATE, READ, UPDATE, DELETE)
   user?: IUserSafe; // The created or updated user document (applicable for CREATE and UPDATE operations)
   users?: IUserSafe[]; // Array of user documents (applicable for READ operation)
   message?: string; // Message if error/warning occurred (applicable for all operations)
 }
 
-// Function to create a new user given a username, password, email, and phone number
 /**
- * @param username {string} - The username of the user to create
- * @param password {string} - The password of the user to create
- * @param email {string} - The email of the user to create
- * @param phone {string} - The phone number of the user to create
- * @param role {UserRole} (Optional) The role of the user. Defaults to UserRole.User. Can also be UserRole.Admin.
- * @returns {UserCrudResult} - A promise that resolves to an object indicating success or failure.
- * If successful, it returns the created user document.
- * If the user already exists, it returns an error message.
- * If the user does not exist, it returns an error message.
- * If the user is created successfully, it returns the created user document.
+ * Creates a new user record in the database with the provided details.
+ * Hashes the password using bcrypt before storing it.
+ * Checks for uniqueness constraints on username, email, and phone number.
+ *
+ * @async
+ * @function createUser
+ * @param {string} username - The desired username for the new user (must be unique).
+ * @param {string} password - The plain-text password for the new user.
+ * @param {string} email - The email address for the new user (must be unique).
+ * @param {string} phone - The phone number for the new user (must be unique).
+ * @param {UserRole} [role=UserRole.User] - The role to assign to the user. Defaults to `UserRole.User`.
+ * @returns {Promise<UserCrudResult>} A promise that resolves to a `UserCrudResult` object.
+ * - On success: `{ success: true, operation: CRUDOperation.CREATE, user: IUserSafe }` containing the sanitized created user.
+ * - On validation failure (duplicate username/email/phone): `{ success: false, operation: CRUDOperation.CREATE, message: string }` detailing the conflict.
+ * - On other errors: `{ success: false, operation: CRUDOperation.CREATE, message: "Error creating user." }`.
  */
 const createUser = async (
   username: string,
@@ -237,7 +301,6 @@ const createUser = async (
   email: string,
   phone: string,
   role: UserRole = UserRole.User, // Default role is "user" unless specified otherwise
-  // Default role is "user" unless specified otherwise
 ): Promise<UserCrudResult> => {
   try {
     // Use a single query with $or to check all unique constraints
@@ -279,19 +342,30 @@ const createUser = async (
 };
 
 
-// Function to read user or users based on property of IUser
 /**
- * Searches/Finds/Reads for users in the database. If no criteria is provided, it returns all users.
- * @param username {string} - The username of the user to read (optional)
- * @param email {string} - The email of the user to read (optional)
- * @param phone {string} - The phone number of the user to read (optional)
- * @param role {UserRole} - The role of the user to read (optional)
- * @returns {UserCrudResult} - A promise that resolves to an object indicating success or failure.
- * @example If only require username search, use readUser("username")
- * @example If only require email search, use readUser(undefined, "email")
- * @example If only require phone search, use readUser(undefined, undefined, "phone")
- * @example If only require role search, use readUser(undefined, undefined, undefined, UserRole.Admin)
- * @description If no criteria is provided, it returns all users
+ * Reads user records from the database based on optional search criteria.
+ * If multiple criteria (username, email, phone, role) are provided, users matching *any* of the criteria (`$or` logic) are returned.
+ * If no criteria are provided, all users in the database are returned.
+ *
+ * @async
+ * @function readUser
+ * @param {string} [username] - Optional. The username to search for.
+ * @param {string} [email] - Optional. The email address to search for.
+ * @param {string} [phone] - Optional. The phone number to search for.
+ * @param {UserRole} [role] - Optional. The user role to filter by.
+ * @returns {Promise<UserCrudResult>} A promise that resolves to a `UserCrudResult` object.
+ * - On success (users found): `{ success: true, operation: CRUDOperation.READ, users: IUserSafe[] }` containing an array of matching sanitized users.
+ * - On success (no users found): `{ success: true, operation: CRUDOperation.READ, users: [], message: "No users found..." }`. Finding no users is considered a successful operation.
+ * - On error: `{ success: false, operation: CRUDOperation.READ, message: "Error reading user." }`.
+ * @example
+ * // Find a specific user by username
+ * await readUser("johndoe");
+ * // Find all admin users
+ * await readUser(undefined, undefined, undefined, UserRole.Admin);
+ * // Find users by email OR phone
+ * await readUser(undefined, "john@example.com", "1234567890");
+ * // Read all users
+ * await readUser();
  */
 const readUser = async (
   username?: string,
@@ -350,19 +424,28 @@ const readUser = async (
   }
 }
 
-// Function to update a user, given a user ID and an object with the new data
 /**
- * Updates a user in the database with the provided username and updates object.
- * @param username - The username of the user to update
- * @param updates - An object containing the fields to update. At least one field must be provided:
- * @param updates.username - The new username of the user (optional).
- * @param updates.password - The new password of the user (optional).
- * @param updates.email - The new email of the user (optional).
- * @param updates.phone - The new phone number of the user (optional).
- * @param updates.role - The new role of the user (optional).
- * @returns {UserCrudResult} - A promise that resolves to an object indicating success or failure. 
- * If successful, it returns the updated user document.
- * If any field conflicts with existing users, it returns an error message.
+ * Updates an existing user's record in the database.
+ * The user to update is identified by their current `username`.
+ * The `updates` object specifies which fields to change. At least one valid field must be provided for an update to occur.
+ * If `password` is provided, it will be hashed before saving.
+ * Checks for uniqueness conflicts if `username`, `email`, or `phone` are being changed, ensuring the new value isn't already used by *another* user.
+ *
+ * @async
+ * @function updateUser
+ * @param {string} username - The current username of the user to update. This is used for the initial lookup.
+ * @param {object} updates - An object containing the fields to update. All properties are optional.
+ * @param {string} [updates.username] - The new username.
+ * @param {string} [updates.password] - The new plain-text password.
+ * @param {string} [updates.email] - The new email address.
+ * @param {string} [updates.phone] - The new phone number.
+ * @param {UserRole} [updates.role] - The new role for the user.
+ * @returns {Promise<UserCrudResult>} A promise that resolves to a `UserCrudResult` object.
+ * - On success: `{ success: true, operation: CRUDOperation.UPDATE, user: IUserSafe }` containing the sanitized, updated user.
+ * - On failure (user not found): `{ success: false, operation: CRUDOperation.UPDATE, message: "User ... does not exist." }`.
+ * - On failure (no changes provided): `{ success: false, operation: CRUDOperation.UPDATE, message: "No fields to update..." }`.
+ * - On failure (uniqueness conflict): `{ success: false, operation: CRUDOperation.UPDATE, message: "Username/Email/Phone ... already in use..." }`.
+ * - On other errors: `{ success: false, operation: CRUDOperation.UPDATE, message: "Error updating user." }`.
  */
 const updateUser = async (
   username: string,
@@ -489,14 +572,18 @@ const updateUser = async (
 // Unit test should just check if the user is deleted with this function, by using readUser to check if the user exists after deletion since they read from  same collection.
 // This should also delete any files associated with the user, but that is not implemented yet. (TODO: Implement file deletion)
 /**
-  * Function to delete a user from the database given a username.
-  * @param username - The username of the user to delete
-  * @returns { Promise<UserCrudResult> } - A promise that resolves to an object indicating success or failure.
-  * - If successful, it returns a success message.
-  * - If the user does not exist, it returns an error message.
-  * - If the user is an admin and this is the last admin, it returns an error message.
-  * - If the user is deleted successfully, it returns a success message.
-  * - If the user is not deleted successfully, it returns an error message.
+ * Deletes a user from the database, identified by their username.
+ * Includes a safety check to prevent deletion of the last remaining administrator account.
+ * TODO: Implement deletion of files associated with the user.
+ *
+ * @async
+ * @function deleteUser
+ * @param {string} username - The username of the user to delete.
+ * @returns {Promise<UserCrudResult>} A promise that resolves to a `UserCrudResult` object.
+ * - On success: `{ success: true, operation: CRUDOperation.DELETE, message: "User ... deleted successfully." }`.
+ * - On failure (user not found): `{ success: false, operation: CRUDOperation.DELETE, message: "User ... does not exist." }`.
+ * - On failure (attempting to delete last admin): `{ success: false, operation: CRUDOperation.DELETE, message: "Cannot delete the last administrator account" }`.
+ * - On failure (deletion confirmation failed or other error): `{ success: false, operation: CRUDOperation.DELETE, message: "Error when deleting user." / "User ... was not deleted successfully." }`.
  */
 const deleteUser = async (username: string): Promise<UserCrudResult> => {
   const operation = CRUDOperation.DELETE;
@@ -522,6 +609,8 @@ const deleteUser = async (username: string): Promise<UserCrudResult> => {
     // Check if the user was deleted successfully using readUser function
     const deletedUserResult = await readUser(username);
     if (deletedUserResult.success && deletedUserResult.users && deletedUserResult.users.length > 0) {
+      // This condition should ideally not be met if deleteOne succeeded without error,
+      // but it's kept as a safeguard based on the original code's logic.
       logger.warn(`Database: User ${username} was not deleted successfully.`);
       return { success: false, operation, message: `User ${username} was not deleted successfully.` };
     }
@@ -536,15 +625,22 @@ const deleteUser = async (username: string): Promise<UserCrudResult> => {
 };
 
 // Auxiliary User functions
-// Function to authenticate a user given a username and password
 /**
- * Authenticates a user given a username and password.
- * @param {string} username - The username of the user to authenticate. Must be non-empty.
- * @param {string} passwordAttempt - The plain-text password provided by the user to authenticate. Must be non-empty.
- * @returns {Promise<UserCrudResult>} - A promise resolving to an object indicating success or failure.
- * If successful, `success` is true and `user` contains the sanitized authenticated user document.
- * If authentication fails (user not found, password mismatch, invalid input), `success` is false and `message` provides a generic error ("Invalid username or password.").
- * If an internal error occurs (DB issue, bcrypt error), `success` is false and `message` indicates an internal error.
+ * Authenticates a user by verifying the provided username and password against the database records.
+ * Performs basic input validation (non-empty username and password).
+ * Compares the provided password attempt against the stored hash using bcrypt.
+ * Returns a generic error message for common failure scenarios (user not found, incorrect password)
+ * to avoid leaking information.
+ *
+ * @async
+ * @function authenticateUser
+ * @param {string} username - The username provided for authentication. Must be a non-empty string.
+ * @param {string} passwordAttempt - The plain-text password provided for authentication. Must not be null, undefined, or empty.
+ * @returns {Promise<UserCrudResult>} A promise that resolves to a `UserCrudResult` object.
+ * - On successful authentication: `{ success: true, operation: CRUDOperation.AUTHENTICATE, user: IUserSafe }` containing the sanitized authenticated user.
+ * - On authentication failure (invalid input, user not found, password mismatch): `{ success: false, operation: CRUDOperation.AUTHENTICATE, message: "Invalid username or password." }`.
+ * - On failure due to account configuration issue (e.g., missing password hash in DB): `{ success: false, operation: CRUDOperation.AUTHENTICATE, message: "Authentication failed due to an account configuration issue." }`.
+ * - On internal server error (database issue, bcrypt error): `{ success: false, operation: CRUDOperation.AUTHENTICATE, message: "An internal server error occurred..." }`.
  */
 const authenticateUser = async (
   username: string,
@@ -603,11 +699,35 @@ const authenticateUser = async (
 
 // File Functions
 // Define result type for createFile function
+/**
+ * Defines the structure for the result object returned specifically by the `createFile` function.
+ * @typedef {object} FileCrudResult
+ * @property {boolean} success - Indicates whether the file record creation was successful.
+ * @property {IFileDocument} [file] - The created file document, included only on success.
+ * @property {string} [error] - An error message detailing the reason for failure, included only on failure (e.g., duplicate file, database error).
+ */
 type FileCrudResult =
   | { success: true; file: IFileDocument } // Successful file creation
   | { success: false; error: string }; // File already exists or other error
 
-// Function to create a new file record in the database
+/**
+ * Creates a new file metadata record in the database.
+ * Checks if a file with the same `filename` OR the same `filehash` already exists to prevent duplicates.
+ *
+ * @async
+ * @function createFile
+ * @param {string} filename - The original name of the file.
+ * @param {string} filepath - The path where the file is stored (local or remote).
+ * @param {string} filetype - The MIME type of the file.
+ * @param {string} filehash - A hash of the file's content.
+ * @param {number} filesize - The size of the file in bytes.
+ * @param {string} createdBy - The identifier (username or ID) of the user creating the record.
+ * @param {string} [description] - An optional description for the file. Defaults to `undefined`.
+ * @returns {Promise<FileCrudResult>} A promise that resolves to a `FileCrudResult` object.
+ * - On success: `{ success: true, file: IFileDocument }` containing the newly created file document.
+ * - On failure (duplicate filename/hash): `{ success: false, error: string }` detailing the conflict.
+ * - On other errors: `{ success: false, error: "Error creating file." }`.
+ */
 const createFile = async (
   filename: string,
   filepath: string,
@@ -658,4 +778,4 @@ const createFile = async (
 
 // Using ES modules instead of CommonJS which is module.exports = {connectToDatabase, User};
 // ONLY unit tests should use userModel, fileModel directly, otherwise use the created functions to create users/files.
-export { connectToDatabase, userModel, fileModel, createUser, readUser, updateUser, deleteUser, authenticateUser, createFile, UserRole, IUserSafe, UserCrudResult, CRUDOperation };
+export { connectToDatabase, userModel, fileModel, createUser, readUser, updateUser, deleteUser, authenticateUser, createFile, UserRole, IUserSafe, UserCrudResult, CRUDOperation, FileCrudResult, IFileDocument, IUserDocument }; // Added FileCrudResult, IFileDocument, IUserDocument for potential external use/typing
