@@ -1,7 +1,7 @@
 // File: __tests__/database.test.ts
 // Description: This file contains unit tests for the database service functions.
 import { MongoMemoryServer } from 'mongodb-memory-server';
-import mongoose, { ConnectOptions } from 'mongoose';
+import mongoose from 'mongoose';
 import {
   connectToDatabase,
   userModel,
@@ -30,16 +30,19 @@ let dbUri: string;
 
 // Setup in-memory MongoDB server
 beforeAll(async () => {
-  mongoServer = await MongoMemoryServer.create();
-  dbUri = mongoServer.getUri();
-  // Connect only once here
-  await mongoose.connect(dbUri);
+  if (mongoose.connection.readyState !== 1) {
+    mongoServer = await MongoMemoryServer.create();
+    dbUri = mongoServer.getUri();
+    await mongoose.connect(dbUri);
+  }
 });
 
 // Clean up after tests
 afterAll(async () => {
   await mongoose.disconnect();
-  await mongoServer.stop();
+  if (mongoServer) {
+     await mongoServer.stop();
+  }
 });
 
 // Clear data between tests for all describe blocks
@@ -49,8 +52,6 @@ beforeEach(async () => {
   for (const key in collections) {
     await collections[key].deleteMany({});
   }
-  // Optional: Re-ensure admin user logic if connectToDatabase test becomes more complex
-  // For now, assume connect in beforeAll handles initial setup if needed.
 });
 
 // --- Main Test Suite ---
