@@ -9,6 +9,7 @@ import {
   createUser,
   readUser,
   updateUser,
+  deleteUser,
   authenticateUser,
   createFile,
   UserRole,
@@ -41,7 +42,7 @@ beforeAll(async () => {
 afterAll(async () => {
   await mongoose.disconnect();
   if (mongoServer) {
-     await mongoServer.stop();
+    await mongoServer.stop();
   }
 });
 
@@ -608,6 +609,107 @@ describe('Database Service', () => {
         fail('updateUser should have failed (phone conflict) but succeeded');
       }
     });
+  });
+
+  // --- deleteUser Tests ---
+  describe('deleteUser', () => {
+    // Sample user for testing delete operation
+    const testUsername = 'authUser';
+    const testPassword = 'password123Secure'; // Use a known password
+    const testEmail = 'auth@example.com';
+    const testPhone = '1231231234';
+    let testUserId: string;
+
+    // Setup: Create the user before each authentication test
+    beforeEach(async () => {
+      // Clear the database before each test
+      await userModel.deleteMany({}); // Clear all users
+      // Create the user to be deleted
+      const res = await createUser(testUsername, testPassword, testEmail, testPhone, UserRole.User);
+      if (res.success && res.user) testUserId = res.user._id;
+    });
+
+    it('should delete a user successfully', async () => {
+      const res = await deleteUser(testUsername);
+      expect(res.success).toBe(true);
+      expect(res.operation).toBe(CRUDOperation.DELETE);
+      expect(res.user).toBe(undefined); // No user data on delete
+      expect(res.message).toContain('deleted successfully');
+      expect(res.message).toContain(testUsername);
+      expect(res.message).not.toContain('error'); // No error message on success
+      // Try looking with readUser to confirm deletion
+      const readResult = await readUser(testUsername);
+      expect(readResult.success).toBe(true); // Should still be successful even if no users found
+      expect(readResult.users).toBeDefined();
+      if (readResult.success && readResult.users) {
+        expect(readResult.users.length).toBe(0); // No users should be found
+        expect(readResult.message).toContain('No users found matching the specified criteria.');
+      }
+    });
+
+    it('should fail to delete a non-existent user', async () => {
+      const res = await deleteUser('nonExistentUser');
+      expect(res.success).toBe(false);
+      expect(res.operation).toBe(CRUDOperation.DELETE);
+      expect(res.user).toBe(undefined); // No user data on failure
+      expect(res.message).toContain('does not exist'); // Check for the specific error message
+      expect(res.message).not.toContain('deleted successfully'); // Ensure success message is not present
+    });
+
+    it('should fail to delete a user with an empty username', async () => {
+      const res = await deleteUser('');
+      expect(res.success).toBe(false);
+      expect(res.operation).toBe(CRUDOperation.DELETE);
+      expect(res.user).toBe(undefined); // No user data on failure
+      expect(res.message).toContain('does not exist'); // Check for the specific error message
+    });
+
+    it('should fail to delete the last admin user', async () => {
+      // Create a default admin
+      await connectToDatabase();
+      // Check admin count for this unit test
+      const adminCount = await userModel.countDocuments({ role: UserRole.Admin });
+      expect(adminCount).toEqual(1); // This unit test should have exactly one admin
+      // Attempt to delete the admin user
+      const res = await deleteUser('admin'); // Assuming 'admin' is the default admin username
+      expect(res.success).toBe(false);
+      expect(res.operation).toBe(CRUDOperation.DELETE);
+      expect(res.message).toContain('Cannot delete the last administrator account'); // Check for the specific error message
+      expect(res.message).not.toContain('deleted successfully'); // Ensure success message is not present
+      expect(res.user).toBe(undefined); // No user data on failure
+    });
+
+    it('should delete an admin if there are other admins', async () => {
+      // Arrange: Create another admin user
+      const adminUsername = 'admin2';
+      const adminPassword = 'admin2Password123';
+      const adminEmail = 'admin2@example.com';
+      const adminPhone = '12345';
+
+      await connectToDatabase(); // Use this to create a default admin in the empty database
+      const createResult = await createUser(adminUsername, adminPassword, adminEmail, adminPhone, UserRole.Admin);
+      expect(createResult.message).toBe(undefined);
+      expect(createResult.success).toBe(true);
+      expect(createResult.operation).toBe(CRUDOperation.CREATE);
+      expect(createResult.message).toBe(undefined);
+      expect(createResult.user).toBeDefined();
+      if (createResult.success && createResult.user) {
+        expect(createResult.user.username).toBe(adminUsername);
+        expect(createResult.user.role).toBe(UserRole.Admin);
+      }
+      // Use direct database access to check admin count
+      const adminCount = await userModel.countDocuments({ role: UserRole.Admin });
+      expect(adminCount).toEqual(2); // This unit test should have exactly two admins
+
+      // Act: Attempt to delete the first admin user
+      const res = await deleteUser('admin'); // The default admin username created with connectToDatabase
+      expect(res.success).toBe(true);
+      expect(res.operation).toBe(CRUDOperation.DELETE);
+      expect(res.user).toBe(undefined); // No user data on delete
+      expect(res.message).toContain('deleted successfully');
+      expect(res.message).toContain('admin'); // Check for the specific username in the message
+    });
+
   });
 
   // --- authenticateUser Tests ---
