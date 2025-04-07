@@ -28,13 +28,17 @@ router.post("/login",
         logger.error(err);
         res.status(500).json({ message: "Internal error" });
       }
-      if (!user) res.status(401).json({ login: false, message: info?.message });
+      if (!user) {
+        res.status(401).json({ login: false, message: info?.message });
+        return; // added return to prevent further execution
+      }
 
       // If user is found, log them in
       req.logIn(user, (loginErr) => {
         if (loginErr) {
           logger.error(loginErr);
           res.status(500).json({ message: "Internal error during login." });
+          return; // added return to prevent further execution
         }
         // Successful login, send user info back to client
         logger.info(`User ${user.username} logged in successfully.`);
