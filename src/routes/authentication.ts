@@ -30,7 +30,7 @@ router.post("/login",
       }
       if (!user) {
         res.status(401).json({ login: false, message: info?.message });
-        return; // added return to prevent further execution
+        return; // Stop further execution
       }
 
       // If user is found, log them in
@@ -38,7 +38,7 @@ router.post("/login",
         if (loginErr) {
           logger.error(loginErr);
           res.status(500).json({ message: "Internal error during login." });
-          return; // added return to prevent further execution
+          return; // Stop further execution
         }
         // Successful login, send user info back to client
         logger.info(`User ${user.username} logged in successfully.`);
@@ -75,14 +75,17 @@ router.post("/register",
 
 router.post("/logout", (req: Request, res: Response): void => {
   // Check if the user is authenticated before logging out
-  if (!req.isAuthenticated()) res.status(401).json({ message: "User not logged in" });
+  if (!req.isAuthenticated()) {
+    res.status(401).json({ message: "User not logged in" });
+    return; // Stop further execution
+  }
   // Logout the user and destroy the session
   req.logout((err: Error | null) => {
     if (err) {
       logger.error(err);
       res.status(500).json({ message: "Internal error when logging out." });
     }
-    res.status(200).json({ message: "Logout successful" });
+    res.status(200).json({ message: "Logout successful." });
   });
 });
 
