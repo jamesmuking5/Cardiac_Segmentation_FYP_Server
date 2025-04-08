@@ -1,6 +1,4 @@
-import axios from 'axios';
-import { wrapper } from 'axios-cookiejar-support';
-import { CookieJar } from 'tough-cookie';           
+import axios from 'axios';   
 import { app } from '../src/services/express_app';
 import mongoose from "mongoose";
 import { MongoMemoryServer } from 'mongodb-memory-server';
@@ -20,8 +18,6 @@ let baseURL: string;
 
 let axiosInstance: any; // Declare axiosInstance globally
 
-const cookieJar = new CookieJar();
-
 beforeAll(async () => {
   // Setup in-memory MongoDB server
   if (mongoose.connection.readyState !== 1) {
@@ -38,10 +34,7 @@ beforeAll(async () => {
   const instance = axios.create({
     baseURL,
     withCredentials: true,
-    jar: cookieJar, // <- MUST be here
   });
-
-  axiosInstance = wrapper(instance); // <- wrap it to enable cookie tracking
 });
 
 // Clean up after tests
@@ -51,9 +44,8 @@ afterAll(async () => {
     await mongoServer.stop();
   }
   if (server) {
-    server.close();
+    await new Promise((resolve) => server.close(resolve)); // Ensure server is fully closed
   }
-  axiosInstance = null; // Clear axiosInstance after tests
 });
 
 // Clear data between tests for all describe blocks
@@ -130,19 +122,19 @@ describe('Authentication Tests', () => {
 
     it('should register and log in successfully', async () => {
       // Step 1: Register the user
-      const registerResponse = await axiosInstance.post('/auth/register', {
+      const response = await axios.post(`${baseURL}/auth/register`, {
         username: 'testuser',
         password: 'password123',
         email: 'testuser@example.com',
-        phone: '1234567890',
+        phone: '1234345654345690',
       });
-    
-      expect(registerResponse.status).toBe(201); 
-      expect(registerResponse.data.message).toContain("Registration successful");
-      expect(registerResponse.data.username).toBe('testuser'); 
+
+      expect(response.status).toBe(201); 
+      expect(response.data.message).toContain("Registration successful");
+      expect(response.data.username).toBe('testuser'); // Ensure the username is returned correctly
     
       // Step 2: Log in with the registered user
-      const loginResponse = await axiosInstance.post('/auth/login', {
+      const loginResponse = await axios.post(`${baseURL}/auth/login`, {
         username: 'testuser',
         password: 'password123',
       });
@@ -153,18 +145,18 @@ describe('Authentication Tests', () => {
       expect(loginResponse.data.message).toContain("Login successful.");
     });
   });
-  
+
   describe('Logout Functionality', () => {
-    it('should fail to log out when no session is found', async () => {
+    it('it should not log out successfully as there is no session', async () => {
       try {
-        // Attempt to log out without being logged in
-        await axiosInstance.post('/auth/logout');
+        await axios.post(`${baseURL}/auth/logout`, {
+          username: 'testuser',
+          password: 'password123',
+        });
       } catch (error: any) {
-        // Ensure the response status is 401 (Unauthorized)
         expect(error.response.status).toBe(401);
-        // Ensure the error message matches the expected output
-        expect(error.response.data.message).toContain("User not logged in");
+        expect(error.response.data.message).toContain("User not logged in.");
       }
-    }, 10000);
+    });
   });
 });
