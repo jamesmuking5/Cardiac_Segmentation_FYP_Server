@@ -1,4 +1,4 @@
-// File: src/controllers/uploadController.ts
+// File: src/controllers/uploadcontroller.ts
 // Description: Controller to handle file upload requests and process them using the upload service.
 
 import { Request, Response } from "express";
