@@ -2,6 +2,7 @@ import express, { Request, Response } from 'express';
 import session from 'express-session';
 import passport from 'passport';
 import authenticationRoute from '../routes/authentication';
+import uploadRouter from '../routes/uploadroutes';
 import logger from './logger';
 
 // Create express app instance
@@ -10,6 +11,7 @@ const app = express();
 /* Middleware */
 // Apply essential middleware like parsing JSON bodies
 app.use(express.json());
+
 // Configure express-session
 // Note: Ensure SESSION_SECRET is loaded before this runs (e.g., via dotenv in index.ts)
 app.use(
@@ -24,6 +26,7 @@ app.use(
     },
   })
 );
+
 // Initialize Passport.js
 app.use(passport.initialize());
 app.use(passport.session()); // Enable persistent login sessions
@@ -31,6 +34,8 @@ app.use(passport.session()); // Enable persistent login sessions
 /* Routes */
 // Mount authentication routes
 app.use('/auth', authenticationRoute);
+// Mount file upload routes
+app.use('/api', uploadRouter); // Prefix with /api for better API structure
 
 // Root Route
 app.get('/', (req: Request, res: Response) => { // Use _req if req is unused
