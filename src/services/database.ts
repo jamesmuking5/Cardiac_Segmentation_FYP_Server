@@ -232,7 +232,7 @@ const userSchema = new Schema<IUserDocument>({
   email: { type: String, required: true, unique: true },
   phone: { type: String, required: true, unique: true },
   role: { type: String, required: true, enum: Object.values(UserRole), default: UserRole.User },
-});
+}, { timestamps: true }); // Automatically add createdAt and updatedAt timestamps
 // Create the model with proper typing
 const userModel = model<IUserDocument, Model<IUserDocument>>("User", userSchema);
 
@@ -274,11 +274,7 @@ const createAdminUser = async (): Promise<void> => {
       await admin.save();
       // Check if the admin user was created successfully
       const createdAdmin = await userModel.findOne({ username: "admin" });
-      if (createdAdmin) {
-        logger.warn(
-          `Database: WARNING: Default admin account created successfully with ID:${createdAdmin._id}. Please change the password IMMEDIATELY.`
-        );
-      }
+      if (createdAdmin) logger.warn(`Database: WARNING: Default admin account created successfully with ID:${createdAdmin._id}. Please change the password IMMEDIATELY.`);
     } else {
       logger.info(`Database: Admin account(s) already exists.`);
       return;
@@ -289,17 +285,18 @@ const createAdminUser = async (): Promise<void> => {
 };
 
 // File Collection
+// Assume this is a Nifti based file. Dicom will need work later on
+// If Nifti, there will be a parent file and a child file (segmentations)
+
 const fileSchema = new Schema<IFileDocument>({
-  filename: { type: String, required: true },
-  filepath: { type: String, required: true },
+  filename: { type: String, required: true }, // What the user wants to name it, does not have to be unique
+  filepath: { type: String, required: true }, // Where the file is stored (local or S3)
   filetype: { type: String, required: true },
-  filehash: { type: String, required: true },
+  filehash: { type: String, required: true, unique: true }, // Hash of the file 
   filesize: { type: Number, required: true },
-  createdAt: { type: Date, default: Date.now },
-  updatedAt: { type: Date, default: Date.now },
   createdBy: { type: String, required: true },
-  description: { type: String, required: false },
-});
+  description: { type: String, required: false }, // Given by the user
+}, { timestamps: true }); // Automatically add createdAt and updatedAt timestamps
 // Create the model with proper typing
 const fileModel = model<IFileDocument, Model<IFileDocument>>("File", fileSchema);
 
