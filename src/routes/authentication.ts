@@ -116,22 +116,15 @@ router.post("/guest", async (req: Request, res: Response) => {
   }
 });
 
-const sayHi = (req: Request, res: Response): void => {
-  logger.info("Hello from the authentication route!");
-}
-
-router.post("/logout",sayHi,isAuth,
-  (req: Request, res: Response): void => {
-  // Check if the user is authenticated before logging out
-  logger.warn('1');
+router.post("/logout", isAuth, (req: Request, res: Response): void => {
   // Logout the user and destroy the session
   req.logout((err: Error | null) => {
-    logger.warn('2');
     if (err) {
       logger.error(err);
       res.status(500).json({ message: "Internal error when logging out." });
+    } else {
+      res.status(200).json({ message: "Logout successful." });
     }
-    res.status(200).json({ message: "Logout successful." });
   });
 });
 
