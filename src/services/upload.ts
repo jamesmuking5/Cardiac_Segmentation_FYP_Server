@@ -6,6 +6,7 @@ import fs from "fs";
 import crypto from "crypto";
 import { createFile } from "./database"; // Handles database insert for file metadata
 import { Express } from "express";
+import { uploadToS3 } from "../middleware/uploadmiddleware"; // For S3 uploads
 
 /**
  * Processes uploaded files by generating hashes and saving metadata.
@@ -20,23 +21,34 @@ export const processUpload = async (
 ) => {
   const uploadedFilesDetails = [];
 
-  for (const file of files) {
-    const localPath = file.path;
+  // Check if the environment is set to use local or S3 storage
+  const storageMode = process.env.STORAGE_MODE;
 
+  for (const file of files) {
+    const { originalname, mimetype, size } = file;
+    let storedPath = "";
+    
     try {
-      // Read the file from disk
-      const fileBuffer = fs.readFileSync(localPath);
+      // Read the file from disk (if necessary)
+      const fileBuffer = fs.readFileSync(file.path);
 
       // Generate a SHA-256 hash for integrity tracking
       const fileHash = crypto.createHash("sha256").update(fileBuffer).digest("hex");
 
-      const { originalname, mimetype, size } = file;
+      // Depending on the storage mode, either save locally or upload to S3
+      if (storageMode === "s3") {
+        // If using S3, upload to the bucket and get the URL
+        storedPath = await uploadToS3(file);  // Assuming this function uploads the file and returns the S3 URL
+      } else {
+        // Save locally (static storage)
+        storedPath = file.path;  // This assumes you already configured disk storage
+      }
 
       // Save file metadata to the database
       const result = await createFile(
         originalname,  // Original filename
-        localPath,     // Server-side file path
-        mimetype,      // File MIME type
+        storedPath,    // File storage path (either local path or S3 URL)
+        mimetype,      // MIME type
         fileHash,      // Content hash
         size,          // File size in bytes
         createdBy,     // User or guest ID
@@ -51,9 +63,9 @@ export const processUpload = async (
       // Push file details to the response array
       uploadedFilesDetails.push({
         originalName: originalname,
-        storedAs: file.filename,
+        storedAs: storedPath, // Local path or S3 URL
         size: file.size,
-        path: localPath
+        path: storedPath
       });
 
     } catch (error) {
