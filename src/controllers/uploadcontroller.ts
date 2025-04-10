@@ -4,7 +4,7 @@
 import { Request, Response } from "express";
 import { processUpload } from "../services/upload";
 
-//Controller to handle file upload requests.
+// Controller to handle file upload requests.
 export const handleUpload = async (req: Request, res: Response) => {
   const files = req.files as Express.Multer.File[];
 
