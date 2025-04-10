@@ -42,10 +42,8 @@ passport.serializeUser((user: IUserSafe, done) => {
 
 // Use the stored username to read the user
 passport.deserializeUser(async (username: string, done) => {
-  logger.info('is me pr11111oblem?');
   try {
-    const result = await readUser(username); // ← always fetch by username
-    logger.info('is me 123456789?');
+    const result = await readUser(username); // always fetch by username
     if (!result.success) {  
       logger.warn(`${serviceLocation}: Deserialization failed for user: ${username}`);
       return done(null, false);
@@ -61,11 +59,9 @@ passport.deserializeUser(async (username: string, done) => {
   }
 });
 
-
 // Middleware to check if the user is authenticated/logged in
 const isAuth = (req: Request, res: Response, next: NextFunction): void => {
-  logger.info('is me probleoiuytm?');
-  if (req.isAuthenticated()) next();
+  if (req.isAuthenticated()) return next();
   res.status(401).json({ message: "Unauthorized. Please log in." });
 }
 
