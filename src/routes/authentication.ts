@@ -4,9 +4,10 @@
 import express, { Request, Response, NextFunction } from "express";
 import passport from "passport";
 import { IUserSafe, createUser } from "../services/database"; // CRUD + Auth functions for User
-import { isAuthenticated, isAuthAndAdmin } from "../services/passportjs"; // Import Passport.js middleware
+import { isAuth, isAuthAndAdmin } from "../services/passportjs"; // Import Passport.js middleware
 import logger from "../services/logger"; // Import logger
 import { body, validationResult } from 'express-validator'; // Import express-validator for input validation
+import { v4 as uuidv4 } from 'uuid'; // Import UUID for generating unique guest IDs
 
 const router = express.Router();
 
@@ -73,14 +74,59 @@ router.post("/register",
     }
   });
 
-router.post("/logout", (req: Request, res: Response): void => {
-  // Check if the user is authenticated before logging out
-  if (!req.isAuthenticated()) {
-    res.status(401).json({ message: "User not logged in" });
-    return; // Stop further execution
+// Guest login route
+router.post("/guest", async (req: Request, res: Response) => {
+  try {
+    const guestID = uuidv4();
+    const username = `guest_${guestID}`;
+    const password = `pass_${uuidv4()}`;
+    const email = `${guestID}@guestmail.com`;
+    const phone = `000-${Math.floor(10000000 + Math.random() * 90000000)}`;
+
+    const result = await createUser(username, password, email, phone);
+
+    if (!result.success || !result.user) {
+      logger.error(`Guest registration failed: ${result.message}`);
+      return res.status(500).json({ login: false, message: "Failed to create guest account." });
+    }
+
+    if (!result.user) {
+      logger.error("Guest login failed: User is undefined.");
+      return res.status(500).json({ message: "Guest login failed." });
+    }
+
+    return req.logIn(result.user, (err) => {
+      if (err) {
+        logger.error(`Guest login error: ${err}`);
+        return res.status(500).json({ message: "Guest login failed." });
+      }
+
+      logger.info(`Guest user ${result.user!.username} logged in successfully.`);
+      return res.status(200).json({
+        login: true,
+        guest: true,
+        username: result.user!.username,
+        role: result.user!.role,
+        message: "Logged in as guest.",
+      });
+    });
+  } catch (error: any) {
+    logger.error(`Unexpected guest login error: ${error.message}`);
+    return res.status(500).json({ message: "Unexpected error during guest login." });
   }
+});
+
+const sayHi = (req: Request, res: Response): void => {
+  logger.info("Hello from the authentication route!");
+}
+
+router.post("/logout",sayHi,isAuth,
+  (req: Request, res: Response): void => {
+  // Check if the user is authenticated before logging out
+  logger.warn('1');
   // Logout the user and destroy the session
   req.logout((err: Error | null) => {
+    logger.warn('2');
     if (err) {
       logger.error(err);
       res.status(500).json({ message: "Internal error when logging out." });
@@ -91,7 +137,7 @@ router.post("/logout", (req: Request, res: Response): void => {
 
 // Middleware-protected route
 // This route is only accessible to users who are logged in (i.e., authenticated users). It acts as a basic protected endpoint.
-router.get("/protected", isAuthenticated, (req: Request, res: Response) => {
+router.get("/protected", isAuth, (req: Request, res: Response) => {
   res.status(200).json({ message: "You are authenticated!" });
 });
 
