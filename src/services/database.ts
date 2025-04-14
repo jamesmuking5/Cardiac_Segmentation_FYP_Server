@@ -1,6 +1,6 @@
 // File: src/services/database.ts
 // Description: Database Service for the VisHeart Server
-import mongoose, { Schema, Document, model, Model } from "mongoose";
+import mongoose, { Schema, model, Model } from "mongoose";
 import path from "path";
 import dotenv from "dotenv";
 import logger from "./logger";
@@ -10,9 +10,8 @@ import * as bcrypt from "bcrypt";
 import LogError from "../utils/error_logger"; // Import the error logging utility
 const serviceLocation = "Database"; // Service location for error logging
 
-// TODO: File check script to check if the file exists and is readable before loading it
-// TODO: Read and Delete User and CRUD Files functions
-// TODO: Clean up files and users when deleting a user
+// Import Types
+import { IUser, IUserDocument, IUserSafe, UserRole, IProject, CRUDOperation } from "../types/database_types"; // Import the user types
 
 // Load environment variables from .env file
 try {
@@ -24,8 +23,7 @@ try {
 
 // Database connection URL and name
 const DB_NAME = "visheart";
-const DB_URI: string =
-  process.env.MONGODB_URI || "mongodb://127.0.0.1:27017/visheart";
+const DB_URI: string = process.env.MONGODB_URI || "mongodb://127.0.0.1:27017/visheart";
 
 // Fetch default admin password
 const adminPass: string = process.env.ADMIN_PASS || "admin"; // Default to "admin" if not set
@@ -34,11 +32,6 @@ const adminPass: string = process.env.ADMIN_PASS || "admin"; // Default to "admi
 // Added parameter so can be used in test files to connect to a different database if needed, but default is the environment variable
 /**
  * Connects to the MongoDB database using the Mongoose library and the connection URI
- * specified by the `DB_URI` environment variable (or a default local URI).
- * Ensures that a connection is established if one does not already exist.
- * Upon successful connection, it ensures a default admin user exists by calling `createAdminUser`.
- * Logs the connection status and any potential errors.
- *
  * @async
  * @function connectToDatabase
  * @returns {Promise<void>} A promise that resolves when the database connection is established
@@ -63,59 +56,6 @@ const connectToDatabase = async (): Promise<void> => {
   }
 };
 
-/* Interfaces */
-// Enumeration for user roles
-/**
- * Defines the possible roles a user can have within the application.
- * @enum {string}
- * @property {string} User - Represents a standard user with basic permissions.
- * @property {string} Admin - Represents an administrator with elevated privileges.
- */
-enum UserRole {
-  User = "user",
-  Admin = "admin",
-}
-
-/**
- * Defines the structure for a user object as stored in the database, including sensitive information.
- * @interface IUser
- * @property {string} username - The unique username for the user.
- * @property {string} password - The user's hashed password.
- * @property {string} email - The user's unique email address.
- * @property {string} phone - The user's unique phone number.
- * @property {UserRole} role - The role assigned to the user (e.g., User, Admin).
- */
-interface IUser {
-  username: string;
-  password: string;
-  email: string;
-  phone: string;
-  role: UserRole; // Default to "user" unless specified otherwise
-}
-
-/**
- * Defines the structure for a user object that is safe to expose publicly or send to clients.
- * It omits sensitive information like the password hash.
- * @interface IUserSafe
- * @property {string} _id - The unique MongoDB document ID for the user, represented as a string.
- * @property {string} username - The unique username of the user.
- * @property {string} email - The email address of the user.
- * @property {string} phone - The phone number of the user.
- * @property {UserRole} role - The role of the user (e.g., User, Admin).
- */
-interface IUserSafe {
-  /**
-   * _id is taken from the MongoDB document ID and converted to a string.
-   */
-  _id: string;
-  username: string;
-  email: string;
-  phone: string;
-  role: UserRole; // Default to "user" unless specified otherwise
-}
-// User Model Interface (single user document in the database)
-interface IUserDocument extends IUser, Document { }
-
 /**
  * Converts a Mongoose user document (`IUserDocument`) into a safe user object (`IUserSafe`)
  * by selecting specific fields and converting the `_id` to a string.
@@ -132,95 +72,6 @@ function toIUserSafe(user: IUserDocument): IUserSafe {
     email: user.email,
     phone: user.phone,
     role: user.role,
-  };
-}
-
-// File Interface - Defines a saved file record in the database
-// File types
-// Enumeration for File MIME types
-/**
- * Defines the possible roles a user can have within the application.
- * @enum {string}
- * @property {string} User - Represents a standard user with basic permissions.
- * @property {string} Admin - Represents an administrator with elevated privileges.
- */
-enum FileType {
-  NIFTI = "image/nifti", // .nii
-  NIFTI_GZ = "image/nifti-gz", // .nii.gz
-  DICOM = "application/dicom", // .dcm
-}
-/**
- * Defines the structure for a file record stored in the database.
- * @interface IFile
- * @property {string} filename - The original name of the uploaded file.
- * @property {string} filepath - The storage path of the file (could be local or a remote URI like S3).
- * @property {FileType} filetype - The MIME type of the file (e.g., "image/nifti", "application/dicom").
- * @property {string} filehash - A hash (e.g., SHA-256) of the file content for integrity checking and deduplication.
- * @property {number} filesize - The size of the file in bytes.
- * @property {Date} createdAt - The timestamp when the file record was created.
- * @property {Date} updatedAt - The timestamp when the file record was last updated.
- * @property {IUserDocumnent._id} createdBy - The identifier (e.g., user ID) of the user who uploaded the file.
- * @property {string} description - An optional description for the file.
- */
-interface IFile {
-  filename: string;
-  filepath: string; // Could be local or S3 path
-  filetype: FileType; // enum of the MIME types in the format (type/subtype) see the FileType enum
-  filehash: string;
-  filesize: number; // In bytes (helps enforce file size limits)
-  createdAt: Date;
-  updatedAt: Date; // Timestamp when the file record was last updated
-  createdBy: string; // Reference to the user who uploaded the file
-  description?: string;
-}
-/**
- * Defines the structure for a file record that is safe to expose publicly or send to clients.
- * This represents a file document that has been retrieved from the database, including its MongoDB document ID.
- * Used for API responses and client-side representations of file metadata.
- * 
- * @interface IFileSafe
- * @property {string} _id - The unique MongoDB document ID for the file record, represented as a string.
- * @property {string} filename - The original name of the uploaded file.
- * @property {string} filepath - The storage path of the file (could be local or a remote URI like S3).
- * @property {FileType} filetype - The MIME type of the file (e.g., "image/nifti", "application/dicom").
- * @property {string} filehash - A hash (e.g., SHA-256) of the file content for integrity checking and deduplication.
- * @property {number} filesize - The size of the file in bytes.
- * @property {Date} createdAt - The timestamp when the file record was created.
- * @property {Date} updatedAt - The timestamp when the file record was last updated.
- * @property {string} createdBy - The identifier (user ID) of the user who uploaded the file.
- * @property {string} [description] - An optional description for the file.
- */
-interface IFileSafe {
-  _id: string;
-  filename: string;
-  filepath: string;
-  filetype: FileType;
-  filehash: string;
-  filesize: number; // In bytes (helps enforce file size limits)
-  createdAt: Date;
-  updatedAt: Date; // Timestamp when the file record was last updated
-  createdBy: string; // Reference to the user who uploaded the file
-  description?: string;
-}
-// File Model Interface (single file document in the database)
-interface IFileDocument extends IFile, Document { }
-/**
- * 
- * @param file - The Mongoose file document to convert.
- * @returns A new object containing a stringified id and other file properties.
- */
-function toIFileSafe(file: IFileDocument): IFileSafe {
-  return {
-    _id: String(file._id),
-    filename: file.filename,
-    filepath: file.filepath,
-    filetype: file.filetype,
-    filehash: file.filehash,
-    filesize: file.filesize,
-    createdAt: file.createdAt,
-    updatedAt: file.updatedAt,
-    createdBy: file.createdBy,
-    description: file.description,
   };
 }
 
@@ -284,40 +135,6 @@ const createAdminUser = async (): Promise<void> => {
   }
 };
 
-// File Collection
-// Assume this is a Nifti based file. Dicom will need work later on
-// If Nifti, there will be a parent file and a child file (segmentations)
-
-const fileSchema = new Schema<IFileDocument>({
-  filename: { type: String, required: true }, // What the user wants to name it, does not have to be unique
-  filepath: { type: String, required: true }, // Where the file is stored (local or S3)
-  filetype: { type: String, required: true },
-  filehash: { type: String, required: true, unique: true }, // Hash of the file 
-  filesize: { type: Number, required: true },
-  createdBy: { type: String, required: true },
-  description: { type: String, required: false }, // Given by the user
-}, { timestamps: true }); // Automatically add createdAt and updatedAt timestamps
-// Create the model with proper typing
-const fileModel = model<IFileDocument, Model<IFileDocument>>("File", fileSchema);
-
-/* Database Functions */
-/**
- * Enumerates the types of CRUD (Create, Read, Update, Delete) operations,
- * plus an 'AUTHENTICATE' operation specific to user login.
- * Used in the result objects of database functions to indicate the action performed.
- * @enum {string}
- */
-enum CRUDOperation {
-  CREATE = "create",
-  READ = "read",
-  UPDATE = "update",
-  DELETE = "delete",
-  /**
-   * AUTHENTICATE is used for user authentication operations and is not a standard CRUD operation,
-   * but it is included here for consistency in reporting operation types, especially for PassportJS integration.
-   */
-  AUTHENTICATE = "authenticate",
-}
 
 // User Functions
 // Define result type for user CRUD operations
@@ -753,269 +570,270 @@ const authenticateUser = async (
   }
 };
 
-// File Functions
-// Define result type for createFile function
-/**
- * Defines the structure for the result object returned specifically by the `createFile` function.
- * @typedef {object} FileCrudResult
- * @property {boolean} success - Indicates whether the file CRUD result operation was successful
- * @property {IFileDocument} [file] - The created file document, depending on the CRUD operation performed.
- * @property {string} [error] - An error message detailing the reason for failure, included only on failure (e.g., duplicate file, database error).
- */
-interface FileCrudResult {
-  success: boolean; // Indicates whether the operation was successful
-  operation: CRUDOperation; // The type of operation performed (CREATE, READ)
-  file?: IFileSafe; // The created file document (applicable for CREATE operation)
-  files?: IFileSafe[]; // Array of file documents (applicable for READ operation)
-  message?: string; // Message if the operation failed
-}
-
-/**
- * Creates a new file metadata record in the database.
- * Checks if a file with the same `filename` OR the same `filehash` already exists to prevent duplicates.
- *
- * @async
- * @function createFile
- * @param {string} filename - The original name of the file.
- * @param {string} filepath - The path where the file is stored (local or remote).
- * @param {FileType} filetype - The MIME type of the file based on the FileType enum.
- * @param {string} filehash - A hash of the file's content.
- * @param {number} filesize - The size of the file in bytes.
- * @param {IUserSafe._id} createdBy - The identifier (ID) of the user creating the record.
- * @param {string} [description] - An optional description for the file. Defaults to `undefined`.
- * @returns {Promise<FileCrudResult>} A promise that resolves to a `FileCrudResult` object.
- * - On success: `{ success: true, file: IFileDocument }` containing the newly created file document.
- * - On failure (duplicate filename/hash): `{ success: false, error: string }` detailing the conflict.
- * - On other errors: `{ success: false, error: "Error creating file." }`.
- */
-const createFile = async (
-  filename: string,
-  filepath: string,
-  filetype: FileType,
-  filehash: string,
-  filesize: number, // In bytes
-  createdBy: string,
-  description: string | undefined = undefined
-): Promise<FileCrudResult> => {
-  try {
-    // Check if file exists with name, hash
-    const existingFile = await fileModel.findOne({
-      $or: [{ filename: filename }, { filehash: filehash }],
-    });
-    if (existingFile) {
-      let reasons = `File already exists: `;
-      if (existingFile.filename === filename) {
-        reasons += `Filename "${filename}" already exists. `;
-      }
-      if (existingFile.filehash === filehash) {
-        reasons += `File hash "${filehash}" already exists. `;
-      }
-      logger.warn(`Database: Error creating file: ${reasons}`);
-      return { success: false, operation: CRUDOperation.CREATE, message: reasons };
-    }
-    // Create a new file instance
-    const newFile: IFileDocument = new fileModel({
-      filename: filename,
-      filepath: filepath,
-      filetype: filetype,
-      filehash: filehash,
-      filesize: filesize,
-      createdBy: createdBy,
-      description: description,
-    });
-    // Save the new file to the database
-    await newFile.save();
-    // Fetch the file and get the id to convert into IFileSafe
-    const savedFile = await fileModel.findById(newFile._id);
-    if (!savedFile) {
-      logger.warn(`Database: File ${filename} was not saved successfully.`);
-      return { success: false, operation: CRUDOperation.CREATE, message: "File was not saved successfully." };
-    }
-    // Convert to IFileSafe for public use
-    const safeFile = toIFileSafe(savedFile);
-    logger.info(`Database: File ${filename} created successfully with name: ${safeFile.filename} and id ${safeFile._id}`);
-    return { success: true, operation: CRUDOperation.CREATE, file: safeFile };
-  }
-  catch (error: unknown) {
-    LogError(error as Error, serviceLocation, `Error creating file ${filename}.`);
-    return { success: false, operation: CRUDOperation.CREATE, message: "Error creating file." };
-  }
-};
-
-/**
- * Reads file records from the database based on optional search criteria.
- * If muliple criteria (filename, filepath, filetype, filehash, filesize, createdBy) are provided,
- * files matching *any* of the criteria (`$or` logic) are returned.
- * If no criteria are provided, all files in the database are returned.
- * NOTE: Only admin users can read all files. Normal users should ONLY READ THEIR OWN FILES. MAKE
- * SURE TO USE THE `createdBy` field to filter files for normal users.
- * 
- * @param {string} filename - The original name of the uploaded file.
- * @param {string} filepath - The path where the file is stored (local or remote).
- * @param {FileType} filetype - The MIME type of the file.
- * @param {string} filehash - A hash (e.g., SHA-256) of the file content for integrity checking and deduplication.
- * @param {number} filesize - Size of the file in bytes (e.g., 1024 for 1KB).
- * @param {Date} createdAt - The date when the file was created. Can be used to filter files created within a specific time range. 
- * @param {IUserDocumnent._id} createdBy - The identifier (ID) of the user who created the file record. Can be fetch with readUser(). If normal user, must be in session and only read their own files.
- * @param {string} description - Optional description for the file. Defaults to `undefined`.
- * @returns {Promise<FileCrudResult>} A promise that resolves to a `FileCrudResult` object.
- * - On success: `{ success: true, operation: CRUDOperation.READ, files: IFileDocument[] }` containing an array of matching file documents.
- * - On success (no files found): `{ success: true, operation: CRUDOperation.READ, files: [], message: "No files found..." }`. Finding no files is considered a successful operation.
- * - On failure (error): `{ success: false, operation: CRUDOperation.READ, message: "Error reading file." }`.
- */
-const readFile = async (
-  fileID?: string,
-  filename?: string,
-  filepath?: string,
-  filetype?: string,
-  filehash?: string,
-  filesize?: number,
-  createdAt?: Date,
-  createdBy?: IUserSafe["_id"], // If normal user, must be in session
-  description?: string | undefined, // Should be if includes when search via Mongo
-): Promise<FileCrudResult> => {
-  try {
-
-    const searchConditions: object[] = [];
-    if (fileID) searchConditions.push({ _id: fileID });
-    if (filename) searchConditions.push({ filename: filename });
-    if (filepath) searchConditions.push({ filepath: filepath });
-    if (filetype) searchConditions.push({ filetype: filetype });
-    if (filehash) searchConditions.push({ filehash: filehash });
-    if (filesize) searchConditions.push({ filesize: filesize });
-    if (createdBy) searchConditions.push({ createdBy: createdBy });
-    if (description) searchConditions.push({ description: description });
-
-    // String representation for logging purposes
-    const filterCriteriaString = searchConditions.length > 0 ? searchConditions.map(cond => JSON.stringify(cond)).join(' OR ') : 'all files';
-    try {
-      let foundFiles: IFileDocument[];
-      // If no search conditions are provided, find all files
-      if (searchConditions.length === 0) {
-        logger.info(`Database: Reading all files.`);
-        foundFiles = await fileModel.find({});
-      } else {
-        // If search conditions ARE provided, use $or logic
-        const query = { $or: searchConditions };
-        logger.info(`Database: Reading files matching ANY of: ${filterCriteriaString}`);
-        foundFiles = await fileModel.find(query);
-      }
-      if (foundFiles.length === 0) {
-        logger.info(`Database: No files found matching criteria: ${filterCriteriaString}`);
-        return { success: true, operation: CRUDOperation.READ, files: [], message: "No files found matching the specified criteria." };
-      }
-      // Return results (no need sanitize)
-      logger.info(`Database: Successfully read ${foundFiles.length} file(s) matching criteria: ${filterCriteriaString}`);
-      // Convert found files to IFileSafe for stringified id
-      const safeFiles: IFileSafe[] = foundFiles.map(toIFileSafe); // Simplified map usage
-      return { success: true, operation: CRUDOperation.READ, files: safeFiles, };
-    } catch (error: unknown) {
-      LogError(error as Error, serviceLocation, `Error reading file ${filename}.`);
-      return { success: false, operation: CRUDOperation.READ, message: "Error reading file." }; // to work on
-    }
-  }
-  catch (error: unknown) {
-    LogError(error as Error, serviceLocation, `Error while reading file(s).`);
-    return { success: false, operation: CRUDOperation.READ, message: "Error looking for the file." };
-  }
-}
+// // File Functions
+// // Define result type for createFile function
+// /**
+//  * Defines the structure for the result object returned specifically by the `createFile` function.
+//  * @typedef {object} FileCrudResult
+//  * @property {boolean} success - Indicates whether the file CRUD result operation was successful
+//  * @property {IFileDocument} [file] - The created file document, depending on the CRUD operation performed.
+//  * @property {string} [error] - An error message detailing the reason for failure, included only on failure (e.g., duplicate file, database error).
+//  */
+// interface FileCrudResult {
+//   success: boolean; // Indicates whether the operation was successful
+//   operation: CRUDOperation; // The type of operation performed (CREATE, READ)
+//   file?: IFileSafe; // The created file document (applicable for CREATE operation)
+//   files?: IFileSafe[]; // Array of file documents (applicable for READ operation)
+//   message?: string; // Message if the operation failed
+// }
 
 // /**
-//  * File identifier object that requires at least one identification property.
-//  * Used to uniquely identify a file for update operations.
+//  * Creates a new file metadata record in the database.
+//  * Checks if a file with the same `filename` OR the same `filehash` already exists to prevent duplicates.
+//  *
+//  * @async
+//  * @function createFile
+//  * @param {string} filename - The original name of the file.
+//  * @param {string} filepath - The path where the file is stored (local or remote).
+//  * @param {FileType} filetype - The MIME type of the file based on the FileType enum.
+//  * @param {string} filehash - A hash of the file's content.
+//  * @param {number} filesize - The size of the file in bytes.
+//  * @param {IUserSafe._id} createdBy - The identifier (ID) of the user creating the record.
+//  * @param {string} [description] - An optional description for the file. Defaults to `undefined`.
+//  * @returns {Promise<FileCrudResult>} A promise that resolves to a `FileCrudResult` object.
+//  * - On success: `{ success: true, file: IFileDocument }` containing the newly created file document.
+//  * - On failure (duplicate filename/hash): `{ success: false, error: string }` detailing the conflict.
+//  * - On other errors: `{ success: false, error: "Error creating file." }`.
 //  */
-// type FileIdentifier =
-//   | { fileId: string }
-//   | { filename: string }
-//   | { filehash: string }
-//   | { filename: string; filetype: FileType }
-//   | { createdBy: string; filename: string };
+// const createFile = async (
+//   filename: string,
+//   filepath: string,
+//   filetype: FileType,
+//   filehash: string,
+//   filesize: number, // In bytes
+//   createdBy: string,
+//   description: string | undefined = undefined
+// ): Promise<FileCrudResult> => {
+//   try {
+//     // Check if file exists with name, hash
+//     const existingFile = await fileModel.findOne({
+//       $or: [{ filename: filename }, { filehash: filehash }],
+//     });
+//     if (existingFile) {
+//       let reasons = `File already exists: `;
+//       if (existingFile.filename === filename) {
+//         reasons += `Filename "${filename}" already exists. `;
+//       }
+//       if (existingFile.filehash === filehash) {
+//         reasons += `File hash "${filehash}" already exists. `;
+//       }
+//       logger.warn(`Database: Error creating file: ${reasons}`);
+//       return { success: false, operation: CRUDOperation.CREATE, message: reasons };
+//     }
+//     // Create a new file instance
+//     const newFile: IFileDocument = new fileModel({
+//       filename: filename,
+//       filepath: filepath,
+//       filetype: filetype,
+//       filehash: filehash,
+//       filesize: filesize,
+//       createdBy: createdBy,
+//       description: description,
+//     });
+//     // Save the new file to the database
+//     await newFile.save();
+//     // Fetch the file and get the id to convert into IFileSafe
+//     const savedFile = await fileModel.findById(newFile._id);
+//     if (!savedFile) {
+//       logger.warn(`Database: File ${filename} was not saved successfully.`);
+//       return { success: false, operation: CRUDOperation.CREATE, message: "File was not saved successfully." };
+//     }
+//     // Convert to IFileSafe for public use
+//     const safeFile = toIFileSafe(savedFile);
+//     logger.info(`Database: File ${filename} created successfully with name: ${safeFile.filename} and id ${safeFile._id}`);
+//     return { success: true, operation: CRUDOperation.CREATE, file: safeFile };
+//   }
+//   catch (error: unknown) {
+//     LogError(error as Error, serviceLocation, `Error creating file ${filename}.`);
+//     return { success: false, operation: CRUDOperation.CREATE, message: "Error creating file." };
+//   }
+// };
+
+// /**
+//  * Reads file records from the database based on optional search criteria.
+//  * If muliple criteria (filename, filepath, filetype, filehash, filesize, createdBy) are provided,
+//  * files matching *any* of the criteria (`$or` logic) are returned.
+//  * If no criteria are provided, all files in the database are returned.
+//  * NOTE: Only admin users can read all files. Normal users should ONLY READ THEIR OWN FILES. MAKE
+//  * SURE TO USE THE `createdBy` field to filter files for normal users.
+//  * 
+//  * @param {string} filename - The original name of the uploaded file.
+//  * @param {string} filepath - The path where the file is stored (local or remote).
+//  * @param {FileType} filetype - The MIME type of the file.
+//  * @param {string} filehash - A hash (e.g., SHA-256) of the file content for integrity checking and deduplication.
+//  * @param {number} filesize - Size of the file in bytes (e.g., 1024 for 1KB).
+//  * @param {Date} createdAt - The date when the file was created. Can be used to filter files created within a specific time range. 
+//  * @param {IUserDocumnent._id} createdBy - The identifier (ID) of the user who created the file record. Can be fetch with readUser(). If normal user, must be in session and only read their own files.
+//  * @param {string} description - Optional description for the file. Defaults to `undefined`.
+//  * @returns {Promise<FileCrudResult>} A promise that resolves to a `FileCrudResult` object.
+//  * - On success: `{ success: true, operation: CRUDOperation.READ, files: IFileDocument[] }` containing an array of matching file documents.
+//  * - On success (no files found): `{ success: true, operation: CRUDOperation.READ, files: [], message: "No files found..." }`. Finding no files is considered a successful operation.
+//  * - On failure (error): `{ success: false, operation: CRUDOperation.READ, message: "Error reading file." }`.
+//  */
+// const readFile = async (
+//   fileID?: string,
+//   filename?: string,
+//   filepath?: string,
+//   filetype?: string,
+//   filehash?: string,
+//   filesize?: number,
+//   createdAt?: Date,
+//   createdBy?: IUserSafe["_id"], // If normal user, must be in session
+//   description?: string | undefined, // Should be if includes when search via Mongo
+// ): Promise<FileCrudResult> => {
+//   try {
+
+//     const searchConditions: object[] = [];
+//     if (fileID) searchConditions.push({ _id: fileID });
+//     if (filename) searchConditions.push({ filename: filename });
+//     if (filepath) searchConditions.push({ filepath: filepath });
+//     if (filetype) searchConditions.push({ filetype: filetype });
+//     if (filehash) searchConditions.push({ filehash: filehash });
+//     if (filesize) searchConditions.push({ filesize: filesize });
+//     if (createdBy) searchConditions.push({ createdBy: createdBy });
+//     if (description) searchConditions.push({ description: description });
+
+//     // String representation for logging purposes
+//     const filterCriteriaString = searchConditions.length > 0 ? searchConditions.map(cond => JSON.stringify(cond)).join(' OR ') : 'all files';
+//     try {
+//       let foundFiles: IFileDocument[];
+//       // If no search conditions are provided, find all files
+//       if (searchConditions.length === 0) {
+//         logger.info(`Database: Reading all files.`);
+//         foundFiles = await fileModel.find({});
+//       } else {
+//         // If search conditions ARE provided, use $or logic
+//         const query = { $or: searchConditions };
+//         logger.info(`Database: Reading files matching ANY of: ${filterCriteriaString}`);
+//         foundFiles = await fileModel.find(query);
+//       }
+//       if (foundFiles.length === 0) {
+//         logger.info(`Database: No files found matching criteria: ${filterCriteriaString}`);
+//         return { success: true, operation: CRUDOperation.READ, files: [], message: "No files found matching the specified criteria." };
+//       }
+//       // Return results (no need sanitize)
+//       logger.info(`Database: Successfully read ${foundFiles.length} file(s) matching criteria: ${filterCriteriaString}`);
+//       // Convert found files to IFileSafe for stringified id
+//       const safeFiles: IFileSafe[] = foundFiles.map(toIFileSafe); // Simplified map usage
+//       return { success: true, operation: CRUDOperation.READ, files: safeFiles, };
+//     } catch (error: unknown) {
+//       LogError(error as Error, serviceLocation, `Error reading file ${filename}.`);
+//       return { success: false, operation: CRUDOperation.READ, message: "Error reading file." }; // to work on
+//     }
+//   }
+//   catch (error: unknown) {
+//     LogError(error as Error, serviceLocation, `Error while reading file(s).`);
+//     return { success: false, operation: CRUDOperation.READ, message: "Error looking for the file." };
+//   }
+// }
+
+// // /**
+// //  * File identifier object that requires at least one identification property.
+// //  * Used to uniquely identify a file for update operations.
+// //  */
+// // type FileIdentifier =
+// //   | { fileId: string }
+// //   | { filename: string }
+// //   | { filehash: string }
+// //   | { filename: string; filetype: FileType }
+// //   | { createdBy: string; filename: string };
 
 
-// Update file function - should be similar to updateUser, but for files. 
-// Should be able to identify the one file by filename, id or hash, and then update the fields in the fileModel.
-// Should be able to update any field in the fileModel, but not the _id field.
-const updateFile = async (
-  // Identifying parameters
-  fileId?: string, // no need to convert to MongoDocument ID
-  filename?: string,
-  filetype?: FileType, // Keeping this here in case same file is uploaded in different formats.
-  filehash?: string,
-  // Updates object
-  updates?: {
-    filename?: string;
-    filepath?: string;
-    filetype?: string;
-    filehash?: string;
-    filesize?: number;
-    createdBy?: IUserSafe["_id"];
-    description?: string;
-  }
-): Promise<FileCrudResult> => {
-  try {
-    // Check if update object exists
-    if (!updates) {
-      logger.warn(`Database: No updates provided for file update.`);
-      return { success: false, operation: CRUDOperation.UPDATE, message: "No updates provided." };
-    }
+// // Update file function - should be similar to updateUser, but for files. 
+// // Should be able to identify the one file by filename, id or hash, and then update the fields in the fileModel.
+// // Should be able to update any field in the fileModel, but not the _id field.
+// const updateFile = async (
+//   // Identifying parameters
+//   fileId?: string, // no need to convert to MongoDocument ID
+//   filename?: string,
+//   filetype?: FileType, // Keeping this here in case same file is uploaded in different formats.
+//   filehash?: string,
+//   // Updates object
+//   updates?: {
+//     filename?: string;
+//     filepath?: string;
+//     filetype?: string;
+//     filehash?: string;
+//     filesize?: number;
+//     createdBy?: IUserSafe["_id"];
+//     description?: string;
+//   }
+// ): Promise<FileCrudResult> => {
+//   try {
+//     // Check if update object exists
+//     if (!updates) {
+//       logger.warn(`Database: No updates provided for file update.`);
+//       return { success: false, operation: CRUDOperation.UPDATE, message: "No updates provided." };
+//     }
 
-    // Check if the file exists using search conditions
-    const searchConditions: object[] = [];
-    if (fileId) searchConditions.push({ _id: fileId });
-    if (filename) searchConditions.push({ filename: filename });
-    if (filetype) searchConditions.push({ filetype: filetype });
-    if (filehash) searchConditions.push({ filehash: filehash });
+//     // Check if the file exists using search conditions
+//     const searchConditions: object[] = [];
+//     if (fileId) searchConditions.push({ _id: fileId });
+//     if (filename) searchConditions.push({ filename: filename });
+//     if (filetype) searchConditions.push({ filetype: filetype });
+//     if (filehash) searchConditions.push({ filehash: filehash });
 
-    if (searchConditions.length === 0) {
-      logger.warn(`Database: No search conditions provided for file update.`);
-      return { success: false, operation: CRUDOperation.UPDATE, message: "No search conditions provided." };
-    }
-    const existingFile = await fileModel.findOne({ $or: searchConditions });
-    if (!existingFile) {
-      logger.warn(`Database: File not found with provided criteria.`);
-      return { success: false, operation: CRUDOperation.UPDATE, message: "File not found." };
-    }
-    // Create update object and track what fields are being updated
-    const updateData: Partial<IFileDocument> = {};
-    const unchangedFields: string[] = [];
+//     if (searchConditions.length === 0) {
+//       logger.warn(`Database: No search conditions provided for file update.`);
+//       return { success: false, operation: CRUDOperation.UPDATE, message: "No search conditions provided." };
+//     }
+//     const existingFile = await fileModel.findOne({ $or: searchConditions });
+//     if (!existingFile) {
+//       logger.warn(`Database: File not found with provided criteria.`);
+//       return { success: false, operation: CRUDOperation.UPDATE, message: "File not found." };
+//     }
+//     // Create update object and track what fields are being updated
+//     const updateData: Partial<IFileDocument> = {};
+//     const unchangedFields: string[] = [];
 
-    // For simple file fields that don't need special handling
-    const simpleFields: (keyof typeof updates)[] = [
-      'filename', 'filepath', 'filetype', 'filehash',
-      'filesize', 'createdBy', 'description'
-    ];
+//     // For simple file fields that don't need special handling
+//     const simpleFields: (keyof typeof updates)[] = [
+//       'filename', 'filepath', 'filetype', 'filehash',
+//       'filesize', 'createdBy', 'description'
+//     ];
 
-    // Process each field in a loop
-    for (const field of simpleFields) {
-      if (updates[field] !== undefined) {
-        if (updates[field] === existingFile[field]) {
-          unchangedFields.push(field);
-        } else {
-          // Need to cast to any due to TypeScript's limitations with dynamic property access
-          (updateData as any)[field] = updates[field];
-        }
-      }
-    }
+//     // Process each field in a loop
+//     for (const field of simpleFields) {
+//       if (updates[field] !== undefined) {
+//         if (updates[field] === existingFile[field]) {
+//           unchangedFields.push(field);
+//         } else {
+//           // Need to cast to any due to TypeScript's limitations with dynamic property access
+//           (updateData as any)[field] = updates[field];
+//         }
+//       }
+//     }
 
-    // Return if no fields were updated at all
-    if (Object.keys(updateData).length === 0) {
-      logger.warn(`Database: No fields to update for file ${filename}. Unchanged fields: ${unchangedFields.join(", ")}`);
-      return { success: false, operation: CRUDOperation.UPDATE, message: `No fields to update for file ${filename}.` };
-    }
+//     // Return if no fields were updated at all
+//     if (Object.keys(updateData).length === 0) {
+//       logger.warn(`Database: No fields to update for file ${filename}. Unchanged fields: ${unchangedFields.join(", ")}`);
+//       return { success: false, operation: CRUDOperation.UPDATE, message: `No fields to update for file ${filename}.` };
+//     }
 
-    // Update the file in database
-    const updatedFile = existingFile.set(updateData);
-    await updatedFile.save();
-    logger.info(`Database: File ${filename} updated successfully. Updated fields: ${Object.keys(updateData).join(", ")}`);
-    // Convert to IFileSafe for public use
-    const safeFile = toIFileSafe(updatedFile);
-    return { success: true, operation: CRUDOperation.UPDATE, file: safeFile };
-  } catch (error: unknown) {
-    LogError(error as Error, serviceLocation, `Error updating file ${filename}.`);
-    return { success: false, operation: CRUDOperation.UPDATE, message: "Error updating file." };
-  }
-}
+//     // Update the file in database
+//     const updatedFile = existingFile.set(updateData);
+//     await updatedFile.save();
+//     logger.info(`Database: File ${filename} updated successfully. Updated fields: ${Object.keys(updateData).join(", ")}`);
+//     // Convert to IFileSafe for public use
+//     const safeFile = toIFileSafe(updatedFile);
+//     return { success: true, operation: CRUDOperation.UPDATE, file: safeFile };
+//   } catch (error: unknown) {
+//     LogError(error as Error, serviceLocation, `Error updating file ${filename}.`);
+//     return { success: false, operation: CRUDOperation.UPDATE, message: "Error updating file." };
+//   }
+// }
 
 // Using ES modules instead of CommonJS which is module.exports = {connectToDatabase, User};
 // ONLY unit tests should use userModel, fileModel directly, otherwise use the created functions to create users/files.
-export { connectToDatabase, userModel, fileModel, createUser, readUser, updateUser, deleteUser, authenticateUser, createFile, readFile, updateFile, UserRole, IUserSafe, UserCrudResult, CRUDOperation, FileCrudResult, IFileDocument, IUserDocument }; // Added FileCrudResult, IFileDocument, IUserDocument for potential external use/typing
+export { connectToDatabase, userModel, fileModel, createUser, readUser, updateUser, deleteUser, authenticateUser, UserRole, IUserSafe, UserCrudResult, CRUDOperation, FileCrudResult, IFileDocument, IUserDocument };
+// createFile, readFile, updateFile,
