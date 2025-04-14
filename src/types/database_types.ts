@@ -1,4 +1,4 @@
-import { Document } from "mongoose";
+import { Document, ObjectId } from "mongoose";
 
 /* Interfaces */
 // Enumeration for user roles
@@ -35,17 +35,14 @@ export interface IUser {
  * Defines the structure for a user object that is safe to expose publicly or send to clients.
  * It omits sensitive information like the password hash.
  * @interface IUserSafe
- * @property {string} _id - The unique MongoDB document ID for the user, represented as a string.
+ * @property {(ObjectId|string)} _id - The unique MongoDB document ID for the user, represented as a string.
  * @property {string} username - The unique username of the user.
  * @property {string} email - The email address of the user.
  * @property {string} phone - The phone number of the user.
  * @property {UserRole} role - The role of the user (e.g., User, Admin).
  */
 export interface IUserSafe {
-    /**
-     * _id is taken from the MongoDB document ID and converted to a string.
-     */
-    _id: string;
+    _id: ObjectId | string; // MongoDB Object ID of the user
     username: string;
     email: string;
     phone: string;
@@ -53,7 +50,6 @@ export interface IUserSafe {
 }
 // User Model Interface (single user document in the database)
 export interface IUserDocument extends IUser, Document { }
-
 
 // File Interface - Defines a saved file record in the database
 // File types
@@ -71,13 +67,15 @@ export enum FileType {
     DICOM = "application/dicom", // .dcm
 }
 
-
 /**
  * Defines the structure for a project record stored in the database.
  */
 export interface IProject {
-    userid: string; // MongoDB User ID of the user who uploaded the file
+    // Identifiers
+    // _id: ObjectId | string; // MongoDB Object ID of the project, commented out if extended with mongoose.Document
+    userid: ObjectId | string; // MongoDB User ID of the user who uploaded the file
     // User inputs
+    name: string; // Name of the project
     originalfilename: string;
     description?: string;
     // File properties
@@ -105,15 +103,43 @@ export interface IProject {
         slices: number; // Depth/Slices of the image in pixels (for 3D images)
         frames?: number; // Time/Frames dimension (optional, for 4D images)
     }
+    // DB to DB tracking
+    // All segmentations in this project
+    segmentationmaskids?: string[]; // Array of MongoDB Object IDs for segmentation masks associated with this project
+
+    // Gemini suggestion
+    /** Physical size of one voxel (usually in mm). From NIfTI pixdim[1,2,3,4]. */
+    voxelSize?: { x: number; y: number; z: number; t?: number; };
+    /** Spatial orientation mapping voxel indices to physical space. From NIfTI qform/sform. */
+    orientation?: {
+        qform_code?: number;
+        sform_code?: number;
+        quaternion?: { b: number; c: number; d: number; }; // If qform valid
+        qoffset?: { x: number; y: number; z: number; }; // If qform valid
+        qfac?: number; // Handedness if qform valid
+        sform_matrix?: number[][]; // 4x4 matrix if sform valid
+    };
+}
+
+/**
+ * Defines the structure for a project's segmentation masks.
+ * This should be a child of IProject.
+ * This interface is used to store the segmentation masks for a project.
+ * @interface IProjectSegmentationMask
+ */
+export interface IProjectSegmentationMask {
+    // Identifiers
+    // _id: ObjectId | string; // MongoDB Object ID of the segmentation mask
+    projectid: ObjectId | string; // MongoDB Project ID of the project to which the segmentation mask belongs
+    // User inputs
+    description?: string; // Description of the segmentation mask
     // Properties of the extracted folder + location tracking
     // Note - index are 0-based
     frames: {
         frameIndex: number;
-
         slices: {
             sliceIndex: number;
             slicePath: string; // Path to the slice image (e.g., S3 bucket URL)
-
             wholeboundingBoxes?: {
                 class: number;
                 x_center: number;
@@ -134,18 +160,6 @@ export interface IProject {
             }
         }[];
     }[];
-    // Gemini suggestion
-    /** Physical size of one voxel (usually in mm). From NIfTI pixdim[1,2,3,4]. */
-    voxelSize?: { x: number; y: number; z: number; t?: number; };
-    /** Spatial orientation mapping voxel indices to physical space. From NIfTI qform/sform. */
-    orientation?: {
-        qform_code?: number;
-        sform_code?: number;
-        quaternion?: { b: number; c: number; d: number; }; // If qform valid
-        qoffset?: { x: number; y: number; z: number; }; // If qform valid
-        qfac?: number; // Handedness if qform valid
-        sform_matrix?: number[][]; // 4x4 matrix if sform valid
-    };
 }
 
 
