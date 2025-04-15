@@ -105,7 +105,7 @@ export interface IProject {
     }
     // DB to DB tracking
     // All segmentations in this project
-    segmentationmaskids?: string[]; // Array of MongoDB Object IDs for segmentation masks associated with this project
+    segmentationmaskids?: ObjectId[]|string[]; // Array of MongoDB Object IDs for segmentation masks associated with this project
 
     // Gemini suggestion
     /** Physical size of one voxel (usually in mm). From NIfTI pixdim[1,2,3,4]. */
@@ -132,6 +132,7 @@ export interface IProjectSegmentationMask {
     // _id: ObjectId | string; // MongoDB Object ID of the segmentation mask
     projectid: ObjectId | string; // MongoDB Project ID of the project to which the segmentation mask belongs
     // User inputs
+    name: string; // Name of the segmentation mask
     description?: string; // Description of the segmentation mask
     // Properties of the extracted folder + location tracking
     // Note - index are 0-based
@@ -154,14 +155,13 @@ export interface IProjectSegmentationMask {
                 w_norm: number;
                 h_norm: number;
             }[];
-            segmentationmasks?: {
+            segmentationmasks?: { // 3 CSV(?) per class mask
                 path: string; // Path to the segmentation mask csv(?) (e.g., S3 bucket URL)
                 isRLE: boolean; // Indicates if the mask is in RLE format
-            }
+            }[];
         }[];
     }[];
 }
-
 
 /* Database Functions */
 /**
