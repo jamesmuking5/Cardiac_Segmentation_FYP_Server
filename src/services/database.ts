@@ -219,8 +219,6 @@ const createUser = async (
   }
 };
 
-// Todo - user identifier
-
 /**
  * Reads user records from the database based on optional search criteria.
  * If multiple criteria (username, email, phone, role) are provided, users matching *any* of the criteria (`$or` logic) are returned.
