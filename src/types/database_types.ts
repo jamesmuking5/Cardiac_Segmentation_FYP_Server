@@ -99,7 +99,6 @@ export enum FileType {
  * @property {number} voxelSize.y - The size in the y-dimension.
  * @property {number} voxelSize.z - The size in the z-dimension (optional).
  * @property {number} voxelSize.t - The size in the t-dimension (optional).
- * @property {string} segmentationmaskids - An array of MongoDB Object IDs for segmentation masks associated with this project.
  */
 export interface IProject {
     // Identifiers

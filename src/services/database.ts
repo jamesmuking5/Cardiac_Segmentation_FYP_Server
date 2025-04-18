@@ -683,6 +683,12 @@ projectSegmentationMaskSchema.pre('save', async function(next) {
   next();
 });
 
+// When a project is deleted, delete all associated segmentation masks
+projectSchema.pre('deleteOne', { document: true, query: false }, async function(next) {
+  await projectSegmentationMaskModel.deleteMany({ projectid: this._id });
+  next();
+});
+
 // Using ES modules instead of CommonJS which is module.exports = {connectToDatabase, User};
 // ONLY unit tests should use userModel, fileModel directly, otherwise use the created functions to create users/files.
 export { connectToDatabase, userModel, createUser, readUser, updateUser, deleteUser, authenticateUser, UserRole, IUserSafe, UserCrudResult, CRUDOperation, IUserDocument, IProject, IProjectSegmentationMask, projectModel, projectSegmentationMaskModel };
