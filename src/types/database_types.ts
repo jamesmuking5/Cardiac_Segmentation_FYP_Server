@@ -169,9 +169,9 @@ export enum ComponentBoundingBoxesClass {
  * @property {object[]} frames - An array of frame objects, each containing slice information.
  * @property {number} frameIndex - The index of the frame (0-based).
  * @property {object[]} slices - An array of slice objects, each containing segmentation mask information.
- * @property {number} sliceIndex - The index of the slice (0-based).
- * @property {string} slicePath - The path to the slice image (e.g., S3 bucket URL).
- * @property {object[]} componentboundingBoxes - An array of component bounding box objects.
+ * @property {number} sliceindex - The index of the slice (0-based).
+ * @property {string} slicepath - The path to the slice image (e.g., S3 bucket URL).
+ * @property {object[]} componentboundingboxes - An array of component bounding box objects.
  * @property {string} class - The class of the component (e.g., rv, myo, lvc).
  * @property {number} x_min - The X coordinate of the minimum bounding box corner.
  * @property {number} y_min - The Y coordinate of the minimum bounding box corner.
@@ -194,9 +194,9 @@ export interface IProjectSegmentationMask {
     frames: {
         frameIndex: number;
         slices: {
-            sliceIndex: number;
-            slicePath: string; // Path to the slice image (e.g., S3 bucket URL)
-            componentboundingBoxes?: {
+            sliceindex: number;
+            slicepath: string; // Path to the slice image (e.g., S3 bucket URL)
+            componentboundingboxes?: {
                 class: ComponentBoundingBoxesClass; // Class of the component (e.g., rv, myo, lvc)
                 x_min: number; // X coordinate of the minimum bounding box corner
                 y_min: number; // Y coordinate of the minimum bounding box corner

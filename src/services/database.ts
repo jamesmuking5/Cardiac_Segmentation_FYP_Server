@@ -645,9 +645,9 @@ const projectSegmentationMasksSliceSegmentationMasksLocationSchema = new Schema(
 
 // Create slice schema (Nest Depth: 2)
 const projectSegmentationMaskSliceSchema = new Schema({
-  sliceIndex: { type: Number, required: true }, // Index of the slice (0-based)
-  slicePath: { type: String, required: true }, // Path to the slice image (e.g., S3 bucket URL)
-  componentboundingboxes: [{ type: projectSegmentationMaskSliceComponentBoundingBoxesSchema, required: false }], // Path to the whole bounding box image (e.g., S3 bucket URL)
+  sliceindex: { type: Number, required: true }, // Index of the slice (0-based)
+  slicepath: { type: String, required: true }, // Path to the slice image (e.g., S3 bucket URL)
+  componentboundingboxes: [{ type: projectSegmentationMaskSliceComponentBoundingBoxesSchema, required: false }], // Array of component bounding boxes for the slice
   segmentationmaskslocation: [{ type: projectSegmentationMasksSliceSegmentationMasksLocationSchema, required: false }], // Path to the segmentation mask image (e.g., S3 bucket URL) - assume CSV? or RLE?
 }, { _id: false }); // Disable automatic creation of an _id field for this subdocument
 
