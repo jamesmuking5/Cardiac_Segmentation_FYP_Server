@@ -585,7 +585,7 @@ const projectDimensionSchema = new Schema({
   width: { type: Number, required: true }, // X dimension of the image
   height: { type: Number, required: true }, // Y dimension of the image
   slices: { type: Number, required: true }, // Z dimension of the image (if applicable)
-  frames: { type: Number, required: true }, // T dimension of the image (if applicable)
+  frames: { type: Number, required: false }, // T dimension of the image (if applicable)
 }, { _id: false }); // Disable automatic creation of an _id field for this subdocument
 
 // Create voxel size schema for use in project schema (Nest Depth: 1)
@@ -670,6 +670,18 @@ const projectSegmentationMaskSchema = new Schema<IProjectSegmentationMask>({
 }, { timestamps: true }); // Automatically add createdAt and updatedAt timestamps
 // Create the model with proper typing
 const projectSegmentationMaskModel = model<IProjectSegmentationMask, Model<IProjectSegmentationMask>>("Segmentation Masks", projectSegmentationMaskSchema);
+
+// Add an index to improve query performance
+projectSegmentationMaskSchema.index({ projectid: 1 });
+
+// Add validation to ensure projectid exists before saving
+projectSegmentationMaskSchema.pre('save', async function(next) {
+  const projectExists = await projectModel.exists({ _id: this.projectid });
+  if (!projectExists) {
+    throw new Error('Referenced project does not exist');
+  }
+  next();
+});
 
 // Using ES modules instead of CommonJS which is module.exports = {connectToDatabase, User};
 // ONLY unit tests should use userModel, fileModel directly, otherwise use the created functions to create users/files.
