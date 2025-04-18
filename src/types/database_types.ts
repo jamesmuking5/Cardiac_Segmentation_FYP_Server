@@ -54,13 +54,7 @@ export interface IUserDocument extends IUser, Document { }
 // File Interface - Defines a saved file record in the database
 // File types
 // Enumeration for File MIME types
-/**
- * Defines the possible roles a user can have within the application.
- * @enum {string}
- * @property {string} User - Represents a standard user with basic permissions.
- * @property {string} Admin - Represents an administrator with elevated privileges.
- * @property {string} Guest - Represents a temporary user with limited access.
- */
+
 export enum FileType {
     NIFTI = "image/nifti", // .nii
     NIFTI_GZ = "image/nifti-gz", // .nii.gz
@@ -107,7 +101,7 @@ export interface IProject {
     segmentationmaskids?: string[]; // Array of MongoDB Object IDs for segmentation masks associated with this project
 
     /** Physical size of one voxel (usually in mm). From NIfTI pixdim[1,2,3,4]. */
-    voxelSize?: { x: number; y: number; z: number; t?: number; };
+    voxelSize?: { x: number; y: number; z?: number; t?: number; };
 }
 
 // Enumeration for component bounding box classes
@@ -140,6 +134,7 @@ export interface IProjectSegmentationMask {
     description?: string; // Description of the segmentation mask
     // Properties of the extracted folder + location tracking
     // Note - index are 0-based
+    // If the segmentation mask is a single frame, there will be only one entry in the frames array
     frames: {
         frameIndex: number;
         slices: {
