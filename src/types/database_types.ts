@@ -51,10 +51,17 @@ export interface IUserSafe {
 // User Model Interface (single user document in the database)
 export interface IUserDocument extends IUser, Document { }
 
-// File Interface - Defines a saved file record in the database
-// File types
-// Enumeration for File MIME types
 
+/*==================================== Project Section begins here =============================================*/
+// Enumeration for file types
+/**
+ * Defines the possible file types for uploaded files.
+ * This is used to specify the MIME type of the file.
+ * @enum {string}
+ * @property {string} NIFTI - Represents a NIfTI file (.nii).
+ * @property {string} NIFTI_GZ - Represents a compressed NIfTI file (.nii.gz).
+ * @property {string} DICOM - Represents a DICOM file (.dcm).
+ */
 export enum FileType {
     NIFTI = "image/nifti", // .nii
     NIFTI_GZ = "image/nifti-gz", // .nii.gz
@@ -63,6 +70,36 @@ export enum FileType {
 
 /**
  * Defines the structure for a project record stored in the database.
+ * This interface is used to represent a project that contains files and their metadata.
+ * @interface IProject
+ * @property {string} userid - The unique MongoDB user ID of the user who uploaded the file.
+ * @property {string} name - The name of the project.
+ * @property {string} originalfilename - The original filename of the uploaded file.
+ * @property {string} description - A description of the project (optional).
+ * @property {string} filename - The server-renamed filename of the uploaded file.
+ * @property {FileType} filetype - The MIME type of the file (e.g., image/nifti, application/dicom).
+ * @property {number} filesize - The size of the renamed file in bytes.
+ * @property {string} filehash - The SHA256 hash of the renamed file.
+ * @property {string} basepath - The base path for the file storage (e.g., S3 bucket URL).
+ * @property {string} originalfilepath - The original file location (e.g., S3 bucket URL).
+ * @property {string} extractedfolderpath - The folder where all the extracted JPEGs from NIfTI are saved.
+ * @property {boolean} status.upload - Indicates if the file upload was successful.
+ * @property {boolean} status.extract - Indicates if the file extraction was successful.
+ * @property {boolean} status.component_bounding_box - Indicates if the component bounding box extraction was successful.
+ * @property {boolean} status.segmentation - Indicates if the segmentation was successful.
+ * @property {string} datatype - The data type of the image (e.g., uint8, float32).
+ * @property {object} dimensions - The dimensions of the image.
+ * @property {number} dimensions.width - The width of the image in pixels.
+ * @property {number} dimensions.height - The height of the image in pixels.
+ * @property {number} dimensions.slices - The depth/slices of the image in pixels (for 3D images).
+ * @property {number} dimensions.frames - The time/frames dimension (optional, for 4D images).
+ * @property {string[]} segmentationmaskids - An array of MongoDB Object IDs for segmentation masks associated with this project.
+ * @property {object} voxelSize - The physical size of one voxel, usually in mm.
+ * @property {number} voxelSize.x - The size in the x-dimension.
+ * @property {number} voxelSize.y - The size in the y-dimension.
+ * @property {number} voxelSize.z - The size in the z-dimension (optional).
+ * @property {number} voxelSize.t - The size in the t-dimension (optional).
+ * @property {string} segmentationmaskids - An array of MongoDB Object IDs for segmentation masks associated with this project.
  */
 export interface IProject {
     // Identifiers
@@ -81,7 +118,7 @@ export interface IProject {
     basepath: string // Base path for the file storage (e.g., S3 bucket URL)
     originalfilepath: string; // Original (nifti/dicom) file location (e.g., S3 bucket URL)
     extractedfolderpath: string; // Saves the folder where all the extracted jpeg from nifti are saved. Use naming convention for each extracted jpeg as filename_slice_frame.jpeg
-    // Processing status
+    // Processing status (might be issue since >1 bounding box and segmentation mask)
     status: {
         upload: boolean; // File upload status
         extract: boolean; // File extraction status
@@ -100,7 +137,9 @@ export interface IProject {
     // All segmentations in this project
     segmentationmaskids?: string[]; // Array of MongoDB Object IDs for segmentation masks associated with this project
 
-    /** Physical size of one voxel (usually in mm). From NIfTI pixdim[1,2,3,4]. */
+    /** Physical size of one voxel (usually in mm). 
+     * From NIfTI pixdim = [?, 0.5, 0.5, 1.0, 2.0, 0, 0, 0], first ? and last 3 zeroes are not used,
+     * but the 4 numbers are in mm, mm, mm and seconds. */
     voxelSize?: { x: number; y: number; z?: number; t?: number; };
 }
 
@@ -118,12 +157,29 @@ export enum ComponentBoundingBoxesClass {
     lvc = "lvc",
 }
 
-
 /**
  * Defines the structure for a project's segmentation masks.
- * This should be a child of IProject.
+ * This is a child of IProject and references back to the project it belongs to.
+ * Stores the segmentation masks for a project as well as the component bounding boxes used to input into MedSAM for segmentation.
  * This interface is used to store the segmentation masks for a project.
  * @interface IProjectSegmentationMask
+ * @property {string} projectid - The unique MongoDB project ID of the project to which the segmentation mask belongs.
+ * @property {string} name - The name of the segmentation mask.
+ * @property {string} description - A description of the segmentation mask (optional).
+ * @property {object[]} frames - An array of frame objects, each containing slice information.
+ * @property {number} frameIndex - The index of the frame (0-based).
+ * @property {object[]} slices - An array of slice objects, each containing segmentation mask information.
+ * @property {number} sliceIndex - The index of the slice (0-based).
+ * @property {string} slicePath - The path to the slice image (e.g., S3 bucket URL).
+ * @property {object[]} componentboundingBoxes - An array of component bounding box objects.
+ * @property {string} class - The class of the component (e.g., rv, myo, lvc).
+ * @property {number} x_min - The X coordinate of the minimum bounding box corner.
+ * @property {number} y_min - The Y coordinate of the minimum bounding box corner.
+ * @property {number} x_max - The X coordinate of the maximum bounding box corner.
+ * @property {number} y_max - The Y coordinate of the maximum bounding box corner.
+ * @property {object[]} segmentationmaskslocation - An array of segmentation mask location objects.
+ * @property {string} path - The path to the segmentation mask CSV (e.g., S3 bucket URL).
+ * @property {boolean} isRLE - Indicates if the mask is in RLE format.
  */
 export interface IProjectSegmentationMask {
     // Identifiers
@@ -147,7 +203,7 @@ export interface IProjectSegmentationMask {
                 x_max: number; // X coordinate of the maximum bounding box corner
                 y_max: number; // Y coordinate of the maximum bounding box corner
             }[];
-            segmentationmasks?: { // 3 CSV(?) per class mask
+            segmentationmaskslocation?: { // 3 CSV(?) per class mask
                 path: string; // Path to the segmentation mask csv(?) (e.g., S3 bucket URL)
                 isRLE: boolean; // Indicates if the mask is in RLE format
             }[];
@@ -156,13 +212,21 @@ export interface IProjectSegmentationMask {
 }
 
 
-
 /* Database Functions */
 /**
  * Enumerates the types of CRUD (Create, Read, Update, Delete) operations,
  * plus an 'AUTHENTICATE' operation specific to user login.
  * Used in the result objects of database functions to indicate the action performed.
  * @enum {string}
+ * General CRUD operations:
+ * @property {string} CREATE - Represents a create operation.
+ * @property {string} READ - Represents a read operation.
+ * @property {string} UPDATE - Represents an update operation.
+ * @property {string} DELETE - Represents a delete operation.
+ * Auxiliary operations:
+ * User:
+ * @property {string} AUTHENTICATE - Represents an authentication operation. Specifically for PassportJS integration.
+ * Project:
  */
 export enum CRUDOperation {
     CREATE = "create",
@@ -174,5 +238,5 @@ export enum CRUDOperation {
      * but it is included here for consistency in reporting operation types, especially for PassportJS integration.
      */
     AUTHENTICATE = "authenticate",
-
+    // Project specific operations
 }

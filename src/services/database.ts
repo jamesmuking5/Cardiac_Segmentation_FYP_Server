@@ -572,7 +572,7 @@ const authenticateUser = async (
 /*==================================== Project Section begins here =============================================*/
 
 /* Project Collection Creation */
-// Create status schema for use in project schema
+// Create status schema for use in project schema (Nest Depth: 1)
 const projectStatusSchema = new Schema({
   upload: { type: Boolean, default: false, required: true }, // Indicates if the file has been uploaded
   extract: { type: Boolean, default: false, required: true }, // Indicates if the file has been extracted
@@ -580,6 +580,7 @@ const projectStatusSchema = new Schema({
   segmentation: { type: Boolean, default: false, required: true }, // Indicates if the segmentation has been performed
 }, { _id: false }); // Disable automatic creation of an _id field for this subdocument
 
+// Create dimension schema for use in project schema (Nest Depth: 1)
 const projectDimensionSchema = new Schema({
   width: { type: Number, required: true }, // X dimension of the image
   height: { type: Number, required: true }, // Y dimension of the image
@@ -587,6 +588,7 @@ const projectDimensionSchema = new Schema({
   frames: { type: Number, required: true }, // T dimension of the image (if applicable)
 }, { _id: false }); // Disable automatic creation of an _id field for this subdocument
 
+// Create voxel size schema for use in project schema (Nest Depth: 1)
 const projectVoxelSizeSchema = new Schema({
   x: { type: Number, required: true }, // Voxel size in the X dimension
   y: { type: Number, required: true }, // Voxel size in the Y dimension
@@ -594,7 +596,7 @@ const projectVoxelSizeSchema = new Schema({
   t: { type: Number, required: false }, // Voxel size in the T dimension (if applicable)
 }, { _id: false }); // Disable automatic creation of an _id field for this subdocument
 
-// Project Collection
+// Project Collection (Nest Depth: 0)
 const projectSchema = new Schema<IProject>({
   // Identifiers
   // _id:  string; // MongoDB Object ID of the project
@@ -620,7 +622,7 @@ const projectSchema = new Schema<IProject>({
   // Segmentation masks
   segmentationmaskids: [{ type: String, ref: "Segmentation Masks", required: false }], // Array of segmentation mask IDs associated with the project
   // Voxel size (future proofing for 3D segmentation)
-  voxelSize: { type: projectVoxelSizeSchema, required: true }, // Voxel size of the image (e.g., x, y, z, t dimensions)
+  voxelSize: { type: projectVoxelSizeSchema, required: false }, // Voxel size of the image (e.g., x, y, z, t dimensions) - check for errors in the future (stored in nifti as pixdim = [?, 0.5, 0.5, 1.0, 2.0, 0, 0, 0])
 }, { timestamps: true }); // Automatically add createdAt and updatedAt timestamps
 // Create the model with proper typing
 const projectModel = model<IProject, Model<IProject>>("Project", projectSchema);
@@ -628,7 +630,7 @@ const projectModel = model<IProject, Model<IProject>>("Project", projectSchema);
 // Project Segmentation Mask Collection
 // Create bounding box schema for use in project segmentation mask schema's slice schema (Nest Depth: 3)
 const projectSegmentationMaskSliceComponentBoundingBoxesSchema = new Schema({
-  class: { type: String, required: true, enum: Object.values(ComponentBoundingBoxesClass) }, // Class of the bounding box (e.g., "heart", "lung")
+  class: { type: String, required: true, enum: Object.values(ComponentBoundingBoxesClass) }, // Class of the bounding box (rv, myo, lvc)
   x_min: { type: Number, required: true }, // Minimum X coordinate of the bounding box
   y_min: { type: Number, required: true }, // Minimum Y coordinate of the bounding box
   x_max: { type: Number, required: true }, // Maximum X coordinate of the bounding box
@@ -645,8 +647,8 @@ const projectSegmentationMasksSliceSegmentationMasksLocationSchema = new Schema(
 const projectSegmentationMaskSliceSchema = new Schema({
   sliceIndex: { type: Number, required: true }, // Index of the slice (0-based)
   slicePath: { type: String, required: true }, // Path to the slice image (e.g., S3 bucket URL)
-  componentboundingboxes: [{ type: projectSegmentationMaskSliceComponentBoundingBoxesSchema, required: true }], // Path to the whole bounding box image (e.g., S3 bucket URL)
-  segmentationmasks: [{ type: projectSegmentationMasksSliceSegmentationMasksLocationSchema, required: true }], // Path to the segmentation mask image (e.g., S3 bucket URL)
+  componentboundingboxes: [{ type: projectSegmentationMaskSliceComponentBoundingBoxesSchema, required: false }], // Path to the whole bounding box image (e.g., S3 bucket URL)
+  segmentationmaskslocation: [{ type: projectSegmentationMasksSliceSegmentationMasksLocationSchema, required: false }], // Path to the segmentation mask image (e.g., S3 bucket URL) - assume CSV? or RLE?
 }, { _id: false }); // Disable automatic creation of an _id field for this subdocument
 
 // Create frames schema (Nest Depth: 1)
