@@ -1,4 +1,4 @@
-import { Document, ObjectId } from "mongoose";
+import { Document } from "mongoose";
 
 /* Interfaces */
 // Enumeration for user roles
@@ -35,14 +35,14 @@ export interface IUser {
  * Defines the structure for a user object that is safe to expose publicly or send to clients.
  * It omits sensitive information like the password hash.
  * @interface IUserSafe
- * @property {(ObjectId|string)} _id - The unique MongoDB document ID for the user, represented as a string.
+ * @property {string} _id - The unique MongoDB document ID for the user, represented as a string.
  * @property {string} username - The unique username of the user.
  * @property {string} email - The email address of the user.
  * @property {string} phone - The phone number of the user.
  * @property {UserRole} role - The role of the user (e.g., User, Admin).
  */
 export interface IUserSafe {
-    _id: ObjectId | string; // MongoDB Object ID of the user
+    _id: string; // MongoDB Object ID of the user
     username: string;
     email: string;
     phone: string;
@@ -72,8 +72,8 @@ export enum FileType {
  */
 export interface IProject {
     // Identifiers
-    // _id: ObjectId | string; // MongoDB Object ID of the project, commented out if extended with mongoose.Document
-    userid: ObjectId | string; // MongoDB User ID of the user who uploaded the file
+    // _id:  string; // MongoDB Object ID of the project, commented out if extended with mongoose.Document
+    userid: string; // MongoDB User ID of the user who uploaded the file
     // User inputs
     name: string; // Name of the project
     originalfilename: string;
@@ -129,8 +129,8 @@ export interface IProject {
  */
 export interface IProjectSegmentationMask {
     // Identifiers
-    // _id: ObjectId | string; // MongoDB Object ID of the segmentation mask
-    projectid: ObjectId | string; // MongoDB Project ID of the project to which the segmentation mask belongs
+    // _id:  string; // MongoDB Object ID of the segmentation mask
+    projectid: string; // MongoDB Project ID of the project to which the segmentation mask belongs
     // User inputs
     description?: string; // Description of the segmentation mask
     // Properties of the extracted folder + location tracking
