@@ -590,8 +590,8 @@ const projectDimensionSchema = new Schema({
 const projectVoxelSizeSchema = new Schema({
   x: { type: Number, required: true }, // Voxel size in the X dimension
   y: { type: Number, required: true }, // Voxel size in the Y dimension
-  z: { type: Number, required: true }, // Voxel size in the Z dimension (if applicable)
-  t: { type: Number, required: true }, // Voxel size in the T dimension (if applicable)
+  z: { type: Number, required: false }, // Voxel size in the Z dimension (if applicable)
+  t: { type: Number, required: false }, // Voxel size in the T dimension (if applicable)
 }, { _id: false }); // Disable automatic creation of an _id field for this subdocument
 
 // Project Collection
@@ -618,7 +618,7 @@ const projectSchema = new Schema<IProject>({
   datatype: { type: String, required: true }, // Data type of the image (e.g., uint8, float32)
   dimensions: { type: projectDimensionSchema, required: true }, // Dimensions of the image (e.g., width, height, slices, frames)
   // Segmentation masks
-  segmentationmaskids: [{ type: String, ref: "projectSegmentationMaskModel", required: false }], // Array of segmentation mask IDs associated with the project
+  segmentationmaskids: [{ type: String, ref: "Segmentation Masks", required: false }], // Array of segmentation mask IDs associated with the project
   // Voxel size (future proofing for 3D segmentation)
   voxelSize: { type: projectVoxelSizeSchema, required: true }, // Voxel size of the image (e.g., x, y, z, t dimensions)
 }, { timestamps: true }); // Automatically add createdAt and updatedAt timestamps
@@ -667,11 +667,9 @@ const projectSegmentationMaskSchema = new Schema<IProjectSegmentationMask>({
   frames: [{ type: projectSegmentationMaskFramesSchema, required: true }], // Array of frames for the segmentation mask
 }, { timestamps: true }); // Automatically add createdAt and updatedAt timestamps
 // Create the model with proper typing
-const projectSegmentationMaskModel = model<IProjectSegmentationMask, Model<IProjectSegmentationMask>>("Project", projectSegmentationMaskSchema);
-
-
+const projectSegmentationMaskModel = model<IProjectSegmentationMask, Model<IProjectSegmentationMask>>("Segmentation Masks", projectSegmentationMaskSchema);
 
 // Using ES modules instead of CommonJS which is module.exports = {connectToDatabase, User};
 // ONLY unit tests should use userModel, fileModel directly, otherwise use the created functions to create users/files.
-export { connectToDatabase, userModel, createUser, readUser, updateUser, deleteUser, authenticateUser, UserRole, IUserSafe, UserCrudResult, CRUDOperation, IUserDocument };
+export { connectToDatabase, userModel, createUser, readUser, updateUser, deleteUser, authenticateUser, UserRole, IUserSafe, UserCrudResult, CRUDOperation, IUserDocument, IProject, IProjectSegmentationMask, projectModel, projectSegmentationMaskModel };
 // createFile, readFile, updateFile,
