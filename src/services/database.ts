@@ -11,7 +11,8 @@ import LogError from "../utils/error_logger"; // Import the error logging utilit
 const serviceLocation = "Database"; // Service location for error logging
 
 // Import Types
-import { IUser, IUserDocument, IUserSafe, UserRole, IProject, CRUDOperation } from "../types/database_types"; // Import the user types
+import { IUser, IUserDocument, IUserSafe, UserRole, CRUDOperation } from "../types/database_types"; // Import the user types
+import { FileType, ComponentBoundingBoxesClass, IProject, IProjectSegmentationMask } from "../types/database_types"; // Import the project types
 
 // Load environment variables from .env file
 try {
@@ -75,7 +76,7 @@ function toIUserSafe(user: IUserDocument): IUserSafe {
   };
 }
 
-/* Collection Creation */
+/* User Collection Creation */
 // User Collection
 const userSchema = new Schema<IUserDocument>({
   username: { type: String, required: true, unique: true },
@@ -568,270 +569,109 @@ const authenticateUser = async (
   }
 };
 
-// // File Functions
-// // Define result type for createFile function
-// /**
-//  * Defines the structure for the result object returned specifically by the `createFile` function.
-//  * @typedef {object} FileCrudResult
-//  * @property {boolean} success - Indicates whether the file CRUD result operation was successful
-//  * @property {IFileDocument} [file] - The created file document, depending on the CRUD operation performed.
-//  * @property {string} [error] - An error message detailing the reason for failure, included only on failure (e.g., duplicate file, database error).
-//  */
-// interface FileCrudResult {
-//   success: boolean; // Indicates whether the operation was successful
-//   operation: CRUDOperation; // The type of operation performed (CREATE, READ)
-//   file?: IFileSafe; // The created file document (applicable for CREATE operation)
-//   files?: IFileSafe[]; // Array of file documents (applicable for READ operation)
-//   message?: string; // Message if the operation failed
-// }
+/*==================================== Project Section begins here =============================================*/
 
-// /**
-//  * Creates a new file metadata record in the database.
-//  * Checks if a file with the same `filename` OR the same `filehash` already exists to prevent duplicates.
-//  *
-//  * @async
-//  * @function createFile
-//  * @param {string} filename - The original name of the file.
-//  * @param {string} filepath - The path where the file is stored (local or remote).
-//  * @param {FileType} filetype - The MIME type of the file based on the FileType enum.
-//  * @param {string} filehash - A hash of the file's content.
-//  * @param {number} filesize - The size of the file in bytes.
-//  * @param {IUserSafe._id} createdBy - The identifier (ID) of the user creating the record.
-//  * @param {string} [description] - An optional description for the file. Defaults to `undefined`.
-//  * @returns {Promise<FileCrudResult>} A promise that resolves to a `FileCrudResult` object.
-//  * - On success: `{ success: true, file: IFileDocument }` containing the newly created file document.
-//  * - On failure (duplicate filename/hash): `{ success: false, error: string }` detailing the conflict.
-//  * - On other errors: `{ success: false, error: "Error creating file." }`.
-//  */
-// const createFile = async (
-//   filename: string,
-//   filepath: string,
-//   filetype: FileType,
-//   filehash: string,
-//   filesize: number, // In bytes
-//   createdBy: string,
-//   description: string | undefined = undefined
-// ): Promise<FileCrudResult> => {
-//   try {
-//     // Check if file exists with name, hash
-//     const existingFile = await fileModel.findOne({
-//       $or: [{ filename: filename }, { filehash: filehash }],
-//     });
-//     if (existingFile) {
-//       let reasons = `File already exists: `;
-//       if (existingFile.filename === filename) {
-//         reasons += `Filename "${filename}" already exists. `;
-//       }
-//       if (existingFile.filehash === filehash) {
-//         reasons += `File hash "${filehash}" already exists. `;
-//       }
-//       logger.warn(`Database: Error creating file: ${reasons}`);
-//       return { success: false, operation: CRUDOperation.CREATE, message: reasons };
-//     }
-//     // Create a new file instance
-//     const newFile: IFileDocument = new fileModel({
-//       filename: filename,
-//       filepath: filepath,
-//       filetype: filetype,
-//       filehash: filehash,
-//       filesize: filesize,
-//       createdBy: createdBy,
-//       description: description,
-//     });
-//     // Save the new file to the database
-//     await newFile.save();
-//     // Fetch the file and get the id to convert into IFileSafe
-//     const savedFile = await fileModel.findById(newFile._id);
-//     if (!savedFile) {
-//       logger.warn(`Database: File ${filename} was not saved successfully.`);
-//       return { success: false, operation: CRUDOperation.CREATE, message: "File was not saved successfully." };
-//     }
-//     // Convert to IFileSafe for public use
-//     const safeFile = toIFileSafe(savedFile);
-//     logger.info(`Database: File ${filename} created successfully with name: ${safeFile.filename} and id ${safeFile._id}`);
-//     return { success: true, operation: CRUDOperation.CREATE, file: safeFile };
-//   }
-//   catch (error: unknown) {
-//     LogError(error as Error, serviceLocation, `Error creating file ${filename}.`);
-//     return { success: false, operation: CRUDOperation.CREATE, message: "Error creating file." };
-//   }
-// };
+/* Project Collection Creation */
+// Create status schema for use in project schema
+const projectStatusSchema = new Schema({
+  upload: { type: Boolean, default: false, required: true }, // Indicates if the file has been uploaded
+  extract: { type: Boolean, default: false, required: true }, // Indicates if the file has been extracted
+  component_bounding_box: { type: Boolean, default: false, required: true }, // Indicates if the component bounding box has been extracted
+  segmentation: { type: Boolean, default: false, required: true }, // Indicates if the segmentation has been performed
+}, { _id: false }); // Disable automatic creation of an _id field for this subdocument
 
-// /**
-//  * Reads file records from the database based on optional search criteria.
-//  * If muliple criteria (filename, filepath, filetype, filehash, filesize, createdBy) are provided,
-//  * files matching *any* of the criteria (`$or` logic) are returned.
-//  * If no criteria are provided, all files in the database are returned.
-//  * NOTE: Only admin users can read all files. Normal users should ONLY READ THEIR OWN FILES. MAKE
-//  * SURE TO USE THE `createdBy` field to filter files for normal users.
-//  * 
-//  * @param {string} filename - The original name of the uploaded file.
-//  * @param {string} filepath - The path where the file is stored (local or remote).
-//  * @param {FileType} filetype - The MIME type of the file.
-//  * @param {string} filehash - A hash (e.g., SHA-256) of the file content for integrity checking and deduplication.
-//  * @param {number} filesize - Size of the file in bytes (e.g., 1024 for 1KB).
-//  * @param {Date} createdAt - The date when the file was created. Can be used to filter files created within a specific time range. 
-//  * @param {IUserDocumnent._id} createdBy - The identifier (ID) of the user who created the file record. Can be fetch with readUser(). If normal user, must be in session and only read their own files.
-//  * @param {string} description - Optional description for the file. Defaults to `undefined`.
-//  * @returns {Promise<FileCrudResult>} A promise that resolves to a `FileCrudResult` object.
-//  * - On success: `{ success: true, operation: CRUDOperation.READ, files: IFileDocument[] }` containing an array of matching file documents.
-//  * - On success (no files found): `{ success: true, operation: CRUDOperation.READ, files: [], message: "No files found..." }`. Finding no files is considered a successful operation.
-//  * - On failure (error): `{ success: false, operation: CRUDOperation.READ, message: "Error reading file." }`.
-//  */
-// const readFile = async (
-//   fileID?: string,
-//   filename?: string,
-//   filepath?: string,
-//   filetype?: string,
-//   filehash?: string,
-//   filesize?: number,
-//   createdAt?: Date,
-//   createdBy?: IUserSafe["_id"], // If normal user, must be in session
-//   description?: string | undefined, // Should be if includes when search via Mongo
-// ): Promise<FileCrudResult> => {
-//   try {
+const projectDimensionSchema = new Schema({
+  width: { type: Number, required: true }, // X dimension of the image
+  height: { type: Number, required: true }, // Y dimension of the image
+  slices: { type: Number, required: true }, // Z dimension of the image (if applicable)
+  frames: { type: Number, required: true }, // T dimension of the image (if applicable)
+}, { _id: false }); // Disable automatic creation of an _id field for this subdocument
 
-//     const searchConditions: object[] = [];
-//     if (fileID) searchConditions.push({ _id: fileID });
-//     if (filename) searchConditions.push({ filename: filename });
-//     if (filepath) searchConditions.push({ filepath: filepath });
-//     if (filetype) searchConditions.push({ filetype: filetype });
-//     if (filehash) searchConditions.push({ filehash: filehash });
-//     if (filesize) searchConditions.push({ filesize: filesize });
-//     if (createdBy) searchConditions.push({ createdBy: createdBy });
-//     if (description) searchConditions.push({ description: description });
+const projectVoxelSizeSchema = new Schema({
+  x: { type: Number, required: true }, // Voxel size in the X dimension
+  y: { type: Number, required: true }, // Voxel size in the Y dimension
+  z: { type: Number, required: true }, // Voxel size in the Z dimension (if applicable)
+  t: { type: Number, required: true }, // Voxel size in the T dimension (if applicable)
+}, { _id: false }); // Disable automatic creation of an _id field for this subdocument
 
-//     // String representation for logging purposes
-//     const filterCriteriaString = searchConditions.length > 0 ? searchConditions.map(cond => JSON.stringify(cond)).join(' OR ') : 'all files';
-//     try {
-//       let foundFiles: IFileDocument[];
-//       // If no search conditions are provided, find all files
-//       if (searchConditions.length === 0) {
-//         logger.info(`Database: Reading all files.`);
-//         foundFiles = await fileModel.find({});
-//       } else {
-//         // If search conditions ARE provided, use $or logic
-//         const query = { $or: searchConditions };
-//         logger.info(`Database: Reading files matching ANY of: ${filterCriteriaString}`);
-//         foundFiles = await fileModel.find(query);
-//       }
-//       if (foundFiles.length === 0) {
-//         logger.info(`Database: No files found matching criteria: ${filterCriteriaString}`);
-//         return { success: true, operation: CRUDOperation.READ, files: [], message: "No files found matching the specified criteria." };
-//       }
-//       // Return results (no need sanitize)
-//       logger.info(`Database: Successfully read ${foundFiles.length} file(s) matching criteria: ${filterCriteriaString}`);
-//       // Convert found files to IFileSafe for stringified id
-//       const safeFiles: IFileSafe[] = foundFiles.map(toIFileSafe); // Simplified map usage
-//       return { success: true, operation: CRUDOperation.READ, files: safeFiles, };
-//     } catch (error: unknown) {
-//       LogError(error as Error, serviceLocation, `Error reading file ${filename}.`);
-//       return { success: false, operation: CRUDOperation.READ, message: "Error reading file." }; // to work on
-//     }
-//   }
-//   catch (error: unknown) {
-//     LogError(error as Error, serviceLocation, `Error while reading file(s).`);
-//     return { success: false, operation: CRUDOperation.READ, message: "Error looking for the file." };
-//   }
-// }
+// Project Collection
+const projectSchema = new Schema<IProject>({
+  // Identifiers
+  // _id:  string; // MongoDB Object ID of the project
+  userid: { type: String, required: true }, // MongoDB User ID of the user to whom the project belongs
+  // User inputs
+  name: { type: String, required: true }, // Name of the project
+  originalfilename: { type: String, required: true }, // Original filename of the uploaded file
+  description: { type: String, required: false }, // Description of the project
+  // File properties
+  filename: { type: String, required: true }, // Server rename - e.g., userid_projid.nii - use new mongoose.Types.ObjectId() to pregenerate before creating document in DB
+  filetype: { type: String, required: true, enum: Object.values(FileType) }, // MIME type of the file
+  filesize: { type: Number, required: true }, // Size of the file in bytes
+  filehash: { type: String, required: true }, // SHA256 hash of the file
+  // Location-tracking
+  basepath: { type: String, required: true }, // Base path for the file storage (e.g., S3 bucket URL)
+  originalfilepath: { type: String, required: true }, // Original (nifti/dicom) file location (e.g., S3 bucket URL)
+  extractedfolderpath: { type: String, required: true }, // Folder path for the extracted files (e.g., S3 bucket URL)
+  // Processing status
+  status: { type: projectStatusSchema, required: true, default: {} }, // Status of the project processing, default: {} tells mongoose to use the default values defined in the statusSchema
+  // File specifics
+  datatype: { type: String, required: true }, // Data type of the image (e.g., uint8, float32)
+  dimensions: { type: projectDimensionSchema, required: true }, // Dimensions of the image (e.g., width, height, slices, frames)
+  // Segmentation masks
+  segmentationmaskids: [{ type: String, ref: "projectSegmentationMaskModel", required: false }], // Array of segmentation mask IDs associated with the project
+  // Voxel size (future proofing for 3D segmentation)
+  voxelSize: { type: projectVoxelSizeSchema, required: true }, // Voxel size of the image (e.g., x, y, z, t dimensions)
+}, { timestamps: true }); // Automatically add createdAt and updatedAt timestamps
+// Create the model with proper typing
+const projectModel = model<IProject, Model<IProject>>("Project", projectSchema);
 
-// // /**
-// //  * File identifier object that requires at least one identification property.
-// //  * Used to uniquely identify a file for update operations.
-// //  */
-// // type FileIdentifier =
-// //   | { fileId: string }
-// //   | { filename: string }
-// //   | { filehash: string }
-// //   | { filename: string; filetype: FileType }
-// //   | { createdBy: string; filename: string };
+// Project Segmentation Mask Collection
+// Create bounding box schema for use in project segmentation mask schema's slice schema (Nest Depth: 3)
+const projectSegmentationMaskSliceComponentBoundingBoxesSchema = new Schema({
+  class: { type: String, required: true, enum: Object.values(ComponentBoundingBoxesClass) }, // Class of the bounding box (e.g., "heart", "lung")
+  x_min: { type: Number, required: true }, // Minimum X coordinate of the bounding box
+  y_min: { type: Number, required: true }, // Minimum Y coordinate of the bounding box
+  x_max: { type: Number, required: true }, // Maximum X coordinate of the bounding box
+  y_max: { type: Number, required: true }, // Maximum Y coordinate of the bounding box
+}, { _id: false }); // Disable automatic creation of an _id field for this subdocument
+
+// Create Segmentation Mask Location Schema (Nest Depth: 3)
+const projectSegmentationMasksSliceSegmentationMasksLocationSchema = new Schema({
+  path: { type: String, required: true }, // Path to the segmentation mask image (e.g., S3 bucket URL)
+  isRLE: { type: Boolean, required: true }, // Indicates if the segmentation mask is in RLE format
+}, { _id: false }); // Disable automatic creation of an _id field for this subdocument
+
+// Create slice schema (Nest Depth: 2)
+const projectSegmentationMaskSliceSchema = new Schema({
+  sliceIndex: { type: Number, required: true }, // Index of the slice (0-based)
+  slicePath: { type: String, required: true }, // Path to the slice image (e.g., S3 bucket URL)
+  componentboundingboxes: [{ type: projectSegmentationMaskSliceComponentBoundingBoxesSchema, required: true }], // Path to the whole bounding box image (e.g., S3 bucket URL)
+  segmentationmasks: [{ type: projectSegmentationMasksSliceSegmentationMasksLocationSchema, required: true }], // Path to the segmentation mask image (e.g., S3 bucket URL)
+}, { _id: false }); // Disable automatic creation of an _id field for this subdocument
+
+// Create frames schema (Nest Depth: 1)
+const projectSegmentationMaskFramesSchema = new Schema({
+  frameIndex: { type: Number, required: true }, // Index of the frame (0-based)
+  slices: { type: [projectSegmentationMaskSliceSchema], required: true }, // Array of slices for the frame
+}, { _id: false }); // Disable automatic creation of an _id field for this subdocument
+
+// Create Segmentation mask schema (Nest Depth: 0)
+const projectSegmentationMaskSchema = new Schema<IProjectSegmentationMask>({
+  // Identifiers
+  projectid: { type: String, required: true }, // MongoDB Project ID of the project to which the segmentation mask belongs
+  // User inputs
+  name: { type: String, required: true }, // Name of the segmentation mask
+  description: { type: String, required: false }, // Description of the segmentation mask
+  // Properties of extracted folder + location tracking
+  // Index should be 0 based
+  frames: [{ type: projectSegmentationMaskFramesSchema, required: true }], // Array of frames for the segmentation mask
+}, { timestamps: true }); // Automatically add createdAt and updatedAt timestamps
+// Create the model with proper typing
+const projectSegmentationMaskModel = model<IProjectSegmentationMask, Model<IProjectSegmentationMask>>("Project", projectSegmentationMaskSchema);
 
 
-// // Update file function - should be similar to updateUser, but for files. 
-// // Should be able to identify the one file by filename, id or hash, and then update the fields in the fileModel.
-// // Should be able to update any field in the fileModel, but not the _id field.
-// const updateFile = async (
-//   // Identifying parameters
-//   fileId?: string, // no need to convert to MongoDocument ID
-//   filename?: string,
-//   filetype?: FileType, // Keeping this here in case same file is uploaded in different formats.
-//   filehash?: string,
-//   // Updates object
-//   updates?: {
-//     filename?: string;
-//     filepath?: string;
-//     filetype?: string;
-//     filehash?: string;
-//     filesize?: number;
-//     createdBy?: IUserSafe["_id"];
-//     description?: string;
-//   }
-// ): Promise<FileCrudResult> => {
-//   try {
-//     // Check if update object exists
-//     if (!updates) {
-//       logger.warn(`Database: No updates provided for file update.`);
-//       return { success: false, operation: CRUDOperation.UPDATE, message: "No updates provided." };
-//     }
-
-//     // Check if the file exists using search conditions
-//     const searchConditions: object[] = [];
-//     if (fileId) searchConditions.push({ _id: fileId });
-//     if (filename) searchConditions.push({ filename: filename });
-//     if (filetype) searchConditions.push({ filetype: filetype });
-//     if (filehash) searchConditions.push({ filehash: filehash });
-
-//     if (searchConditions.length === 0) {
-//       logger.warn(`Database: No search conditions provided for file update.`);
-//       return { success: false, operation: CRUDOperation.UPDATE, message: "No search conditions provided." };
-//     }
-//     const existingFile = await fileModel.findOne({ $or: searchConditions });
-//     if (!existingFile) {
-//       logger.warn(`Database: File not found with provided criteria.`);
-//       return { success: false, operation: CRUDOperation.UPDATE, message: "File not found." };
-//     }
-//     // Create update object and track what fields are being updated
-//     const updateData: Partial<IFileDocument> = {};
-//     const unchangedFields: string[] = [];
-
-//     // For simple file fields that don't need special handling
-//     const simpleFields: (keyof typeof updates)[] = [
-//       'filename', 'filepath', 'filetype', 'filehash',
-//       'filesize', 'createdBy', 'description'
-//     ];
-
-//     // Process each field in a loop
-//     for (const field of simpleFields) {
-//       if (updates[field] !== undefined) {
-//         if (updates[field] === existingFile[field]) {
-//           unchangedFields.push(field);
-//         } else {
-//           // Need to cast to any due to TypeScript's limitations with dynamic property access
-//           (updateData as any)[field] = updates[field];
-//         }
-//       }
-//     }
-
-//     // Return if no fields were updated at all
-//     if (Object.keys(updateData).length === 0) {
-//       logger.warn(`Database: No fields to update for file ${filename}. Unchanged fields: ${unchangedFields.join(", ")}`);
-//       return { success: false, operation: CRUDOperation.UPDATE, message: `No fields to update for file ${filename}.` };
-//     }
-
-//     // Update the file in database
-//     const updatedFile = existingFile.set(updateData);
-//     await updatedFile.save();
-//     logger.info(`Database: File ${filename} updated successfully. Updated fields: ${Object.keys(updateData).join(", ")}`);
-//     // Convert to IFileSafe for public use
-//     const safeFile = toIFileSafe(updatedFile);
-//     return { success: true, operation: CRUDOperation.UPDATE, file: safeFile };
-//   } catch (error: unknown) {
-//     LogError(error as Error, serviceLocation, `Error updating file ${filename}.`);
-//     return { success: false, operation: CRUDOperation.UPDATE, message: "Error updating file." };
-//   }
-// }
 
 // Using ES modules instead of CommonJS which is module.exports = {connectToDatabase, User};
 // ONLY unit tests should use userModel, fileModel directly, otherwise use the created functions to create users/files.
-export { connectToDatabase, userModel, fileModel, createUser, readUser, updateUser, deleteUser, authenticateUser, UserRole, IUserSafe, UserCrudResult, CRUDOperation, FileCrudResult, IFileDocument, IUserDocument };
+export { connectToDatabase, userModel, createUser, readUser, updateUser, deleteUser, authenticateUser, UserRole, IUserSafe, UserCrudResult, CRUDOperation, IUserDocument };
 // createFile, readFile, updateFile,

@@ -85,13 +85,12 @@ export interface IProject {
     filehash: string; // SHA256 hash of the renamed file
     // Location tracking
     basepath: string // Base path for the file storage (e.g., S3 bucket URL)
-    origfilepath: string; // Original (nifti/dicom) file location (e.g., S3 bucket URL)
+    originalfilepath: string; // Original (nifti/dicom) file location (e.g., S3 bucket URL)
     extractedfolderpath: string; // Saves the folder where all the extracted jpeg from nifti are saved. Use naming convention for each extracted jpeg as filename_slice_frame.jpeg
     // Processing status
     status: {
         upload: boolean; // File upload status
         extract: boolean; // File extraction status
-        whole_bounding_box: boolean; // Whole image bounding box extraction status
         component_bounding_box: boolean; // Component bounding box extraction status
         segmentation: boolean; // Segmentation status
     }
@@ -105,21 +104,26 @@ export interface IProject {
     }
     // DB to DB tracking
     // All segmentations in this project
-    segmentationmaskids?: ObjectId[]|string[]; // Array of MongoDB Object IDs for segmentation masks associated with this project
+    segmentationmaskids?: string[]; // Array of MongoDB Object IDs for segmentation masks associated with this project
 
-    // Gemini suggestion
     /** Physical size of one voxel (usually in mm). From NIfTI pixdim[1,2,3,4]. */
     voxelSize?: { x: number; y: number; z: number; t?: number; };
-    /** Spatial orientation mapping voxel indices to physical space. From NIfTI qform/sform. */
-    orientation?: {
-        qform_code?: number;
-        sform_code?: number;
-        quaternion?: { b: number; c: number; d: number; }; // If qform valid
-        qoffset?: { x: number; y: number; z: number; }; // If qform valid
-        qfac?: number; // Handedness if qform valid
-        sform_matrix?: number[][]; // 4x4 matrix if sform valid
-    };
 }
+
+// Enumeration for component bounding box classes
+/**
+ * Defines the possible classes for component bounding boxes in segmentation masks.
+ * @enum {string}
+ * @property {string} rv - Represents the right ventricle.
+ * @property {string} myo - Represents the myocardium.
+ * @property {string} lvc - Represents the left ventricle cavity.
+ */
+export enum ComponentBoundingBoxesClass {
+    rv = "rv",
+    myo = "myo",
+    lvc = "lvc",
+}
+
 
 /**
  * Defines the structure for a project's segmentation masks.
@@ -141,19 +145,12 @@ export interface IProjectSegmentationMask {
         slices: {
             sliceIndex: number;
             slicePath: string; // Path to the slice image (e.g., S3 bucket URL)
-            wholeboundingBoxes?: {
-                class: number;
-                x_center: number;
-                y_center: number;
-                w_norm: number;
-                h_norm: number;
-            }[];
             componentboundingBoxes?: {
-                class: number;
-                x_center: number;
-                y_center: number;
-                w_norm: number;
-                h_norm: number;
+                class: ComponentBoundingBoxesClass; // Class of the component (e.g., rv, myo, lvc)
+                x_min: number; // X coordinate of the minimum bounding box corner
+                y_min: number; // Y coordinate of the minimum bounding box corner
+                x_max: number; // X coordinate of the maximum bounding box corner
+                y_max: number; // Y coordinate of the maximum bounding box corner
             }[];
             segmentationmasks?: { // 3 CSV(?) per class mask
                 path: string; // Path to the segmentation mask csv(?) (e.g., S3 bucket URL)
@@ -162,6 +159,8 @@ export interface IProjectSegmentationMask {
         }[];
     }[];
 }
+
+
 
 /* Database Functions */
 /**
@@ -180,4 +179,5 @@ export enum CRUDOperation {
      * but it is included here for consistency in reporting operation types, especially for PassportJS integration.
      */
     AUTHENTICATE = "authenticate",
+
 }
