@@ -112,7 +112,6 @@ export enum FileDataType {
  * @property {number} dimensions.height - The height of the image in pixels.
  * @property {number} dimensions.slices - The depth/slices of the image in pixels (for 3D images).
  * @property {number} dimensions.frames - The time/frames dimension (optional, for 4D images).
- * @property {string[]} segmentationmaskids - An array of MongoDB Object IDs for segmentation masks associated with this project.
  * @property {object} voxelSize - The physical size of one voxel, usually in mm.
  * @property {number} voxelSize.x - The size in the x-dimension.
  * @property {number} voxelSize.y - The size in the y-dimension.
@@ -133,7 +132,7 @@ export interface IProject {
     filesize: number; // Size of the renamed file in bytes
     filehash: string; // SHA256 hash of the renamed file
     // Location tracking
-    basepath: string // Base path for the file storage (e.g., S3 bucket URL)
+    basepath: string // Base path for the file storage (e.g., S3 bucket URL + user + filehash)
     originalfilepath: string; // Original (nifti/dicom) file location (e.g., S3 bucket URL)
     extractedfolderpath: string; // Saves the folder where all the extracted jpeg from nifti are saved. Use naming convention for each extracted jpeg as filename_slice_frame.jpeg
     // Processing status (might be issue since >1 bounding box and segmentation mask)
@@ -149,9 +148,6 @@ export interface IProject {
         slices: number; // Depth/Slices of the image in pixels (for 3D images)
         frames?: number; // Time/Frames dimension (optional, for 4D images)
     }
-    // DB to DB tracking
-    // All segmentations in this project
-    segmentationmaskids?: string[]; // Array of MongoDB Object IDs for segmentation masks associated with this project
 
     /** Physical size of one voxel (usually in mm). 
      * From NIfTI pixdim = [?, 0.5, 0.5, 1.0, 2.0, 0, 0, 0], first ? and last 3 zeroes are not used,

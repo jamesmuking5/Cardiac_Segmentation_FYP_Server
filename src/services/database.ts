@@ -138,8 +138,6 @@ const createAdminUser = async (): Promise<void> => {
 
 
 // User Functions
-
-
 /**
  * Creates a new user record in the database with the provided details.
  * Hashes the password using bcrypt before storing it.
@@ -460,7 +458,7 @@ const deleteUser = async (username: string): Promise<UserCrudResult> => {
       return { success: false, operation, message: `User ${username} does not exist.` };
     }
     // Delete the user
-    await userModel.deleteOne({ username: username });
+    await existingUser.deleteOne();
     // Check if the user was deleted successfully using readUser function
     const deletedUserResult = await readUser(username);
     if (deletedUserResult.success && deletedUserResult.users && deletedUserResult.users.length > 0) {
@@ -600,8 +598,6 @@ const projectSchema = new Schema<IProject>({
   // File specifics
   datatype: { type: String, required: true }, // Data type of the image (e.g., uint8, float32)
   dimensions: { type: projectDimensionSchema, required: true }, // Dimensions of the image (e.g., width, height, slices, frames)
-  // Segmentation masks
-  segmentationmaskids: [{ type: String, ref: "Segmentation Masks", required: false }], // Array of segmentation mask IDs associated with the project
   // Voxel size (future proofing for 3D segmentation)
   voxelSize: { type: projectVoxelSizeSchema, required: false }, // Voxel size of the image (e.g., x, y, z, t dimensions) - check for errors in the future (stored in nifti as pixdim = [?, 0.5, 0.5, 1.0, 2.0, 0, 0, 0])
 }, { timestamps: true }); // Automatically add createdAt and updatedAt timestamps
@@ -653,7 +649,19 @@ const projectSegmentationMaskSchema = new Schema<IProjectSegmentationMask>({
 const projectSegmentationMaskModel = model<IProjectSegmentationMask, Model<IProjectSegmentationMask>>("Segmentation Masks", projectSegmentationMaskSchema);
 
 // Add an index to improve query performance
+projectSchema.index({ userid: 1, name: 1 }, { unique: true }); // Unique index on userid and name
 projectSegmentationMaskSchema.index({ projectid: 1 });
+
+/* ========================================= MongoDB Hooks ========================================== */
+
+// Add validation to ensure userid exists before saving the project
+projectSchema.pre('save', async function (next) {
+  const userExists = await userModel.exists({ _id: this.userid });
+  if (!userExists) {
+    throw new Error('Referenced user does not exist');
+  }
+  next();
+});
 
 // Add validation to ensure projectid exists before saving
 projectSegmentationMaskSchema.pre('save', async function (next) {
@@ -665,16 +673,49 @@ projectSegmentationMaskSchema.pre('save', async function (next) {
 });
 
 // When a project is deleted, delete ALL associated segmentation masks
+// THE S3 FILES STILL EXIST, API SIDE?
 projectSchema.pre('deleteOne', { document: true, query: false }, async function (next) {
-  await projectSegmentationMaskModel.deleteMany({ projectid: this._id });
-  next();
+  const serviceLocationCascade = `${serviceLocation} - Project Delete Hook`;
+  try {
+    logger.info(`Database: Cascade delete triggered for project ${this._id}`);
+    // Delete all masks associated with this project
+    const maskDeleteResult = await projectSegmentationMaskModel.deleteMany({ projectid: this._id });
+    logger.info(`Database: Deleted ${maskDeleteResult.deletedCount} segmentation masks for project ${this._id}`);
+    next(); // Proceed to project deletion
+  } catch (error: unknown) {
+    LogError(error as Error, serviceLocationCascade, `Error during cascade delete for project ${this._id}.`);
+    // Halt the original project deletion by passing the error
+    next(error instanceof Error ? error : new Error('Failed to cascade delete segmentation masks'));
+  }
 });
 
-// When a segmentation mask is deleted, remove its reference from the project
-// NOTE: This is a bit tricky because the projectSegmentationMaskModel doesn't have a reference to the project directly, but rather the projectid
-// So we need to find the project by projectid and remove the reference from the segmentation mask
-// This can be done in the pre('deleteOne') hook of the projectSegmentationMaskModel
-// TODO or implement in deleteSegmentationMask function?
+
+// If a user is deleted, delete all their projects and segmentation masks (especially important for guest accounts)
+userSchema.pre('deleteOne', { document: true, query: false }, async function (next) {
+  const serviceLocationCascade = `${serviceLocation} - User Delete Hook`;
+  try {
+    logger.info(`Database: Cascade delete triggered for user ${this._id}`);
+    const projects = await projectModel.find({ userid: this._id }).select('_id').lean(); // Use lean for plain objects
+    const projectIds = projects.map(p => p._id);
+
+    if (projectIds.length > 0) {
+      logger.info(`Database: Deleting ${projectIds.length} projects and their associated masks for user ${this._id}`);
+      // Delete all masks for all found projects first
+      const maskDeleteResult = await projectSegmentationMaskModel.deleteMany({ projectid: { $in: projectIds } });
+      logger.info(`Database: Deleted ${maskDeleteResult.deletedCount} segmentation masks for user ${this._id}`);
+      // Then delete all projects for the user
+      const projectDeleteResult = await projectModel.deleteMany({ userid: this._id });
+      logger.info(`Database: Deleted ${projectDeleteResult.deletedCount} projects for user ${this._id}`);
+    } else {
+      logger.info(`Database: No projects found for user ${this._id}. No cascade delete needed for projects/masks.`);
+    }
+    next(); // Proceed to user deletion
+  } catch (error: unknown) {
+    LogError(error as Error, serviceLocationCascade, `Error during cascade delete for user ${this._id}.`);
+    // Halt the original user deletion by passing the error
+    next(error instanceof Error ? error : new Error('Failed to cascade delete projects/masks'));
+  }
+});
 
 /**
  * Creates a new project record in the database.
@@ -685,7 +726,7 @@ projectSchema.pre('deleteOne', { document: true, query: false }, async function 
  * - Original file path must be globally unique.
  * - Extracted folder path must be globally unique.
  * - Server-generated filename must be globally unique.
- *
+ * 
  * @async
  * @function createProject
  * @param {string} userid - The ID of the user creating the project.
@@ -780,6 +821,7 @@ const createProject = async (
     });
     // Save the new project to the database
     await newProject.save();
+
     logger.info(`Database: Project ${newProject._id} created successfully: ${newProject.name}, ${newProject.originalfilename}, ${newProject.filename}, ${newProject.filehash}`);
     return { success: true, operation, project: newProject }; // Return the created project
   } catch (error: unknown) {
