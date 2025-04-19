@@ -353,10 +353,6 @@ describe('Database Service', () => {
       expect(result.operation).toBe('read');
       expect(result.users).toBeDefined();
       if (result.success && result.users) {
-        console.log('result.users:', result.users); // Debugging output
-        // Not finding the admin, try to call all users
-        const allUsers = await userModel.find({});
-        console.log('allUsers:', allUsers); // Debugging output
         expect(result.users.length).toBe(2); // Should find both user1 and adminUser
         const usernames = result.users.map(u => u.username);
         expect(usernames).toContain(user1Data.username);
