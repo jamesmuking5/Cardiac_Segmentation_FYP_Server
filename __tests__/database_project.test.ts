@@ -6,6 +6,7 @@ import mongoose, { Types } from 'mongoose'; // Import Types for ObjectId
 import {
     FileType,
     ComponentBoundingBoxesClass,
+
 } from '../src/types/database_types'; // Adjust path as necessary
 import {
     connectToDatabase, // Assuming this initializes connection and checks admin
@@ -13,11 +14,13 @@ import {
     projectSegmentationMaskModel,
     userModel, // Needed to create a dummy user for project association
     createUser, // Helper to create the dummy user
+    IUserDocument, // Interface for user documents
     IProject,
     IProjectSegmentationMask,
+    IProjectDocument,
+    IProjectSegmentationMaskDocument,
     UserRole,
-} from '../src/services/database'; // Adjust path as necessary
-import { IUserDocument } from '../src/services/database'; // Import IUserDocument for user creation
+} from '../src/services/database'; // Adjust path as necessary\
 
 // Mocking logger
 jest.mock('../src/services/logger', () => ({
@@ -29,7 +32,6 @@ jest.mock('../src/services/logger', () => ({
 let mongoServer: MongoMemoryServer;
 let dbUri: string;
 let testUser: IUserDocument; // To hold the created user for project association
-let testProject: IProject; // To hold the created project for mask association
 
 // Setup in-memory MongoDB server and create a test user
 beforeAll(async () => {
