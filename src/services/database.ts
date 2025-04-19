@@ -11,7 +11,7 @@ import LogError from "../utils/error_logger"; // Import the error logging utilit
 const serviceLocation = "Database"; // Service location for error logging
 
 // Import Types
-import { IUser, IUserDocument, IUserSafe, UserRole, CRUDOperation } from "../types/database_types"; // Import the user types
+import { IUser, IUserDocument, IUserSafe, UserRole, CRUDOperation, UserCrudResult } from "../types/database_types"; // Import the user types
 import { FileType, ComponentBoundingBoxesClass, IProject, IProjectSegmentationMask } from "../types/database_types"; // Import the project types
 
 // Load environment variables from .env file
@@ -138,24 +138,7 @@ const createAdminUser = async (): Promise<void> => {
 
 
 // User Functions
-// Define result type for user CRUD operations
-/**
- * Defines the standard structure for the result object returned by user-related database operations
- * (create, read, update, delete, authenticate).
- * @interface UserCrudResult
- * @property {boolean} success - Indicates whether the operation completed successfully.
- * @property {CRUDOperation} operation - The type of operation that was performed (e.g., CREATE, READ).
- * @property {IUserSafe} [user] - The resulting user object (sanitized), typically included on successful CREATE, UPDATE, or AUTHENTICATE operations.
- * @property {IUserSafe[]} [users] - An array of user objects (sanitized), typically included on successful READ operations. Can be empty if no users match the criteria.
- * @property {string} [message] - An optional message providing more details, especially in case of failure (e.g., validation error, user not found) or warnings.
- */
-interface UserCrudResult {
-  success: boolean; // Indicates whether the operation was successful
-  operation: CRUDOperation; // The type of operation performed (CREATE, READ, UPDATE, DELETE)
-  user?: IUserSafe; // The created or updated user document (applicable for CREATE and UPDATE operations)
-  users?: IUserSafe[]; // Array of user documents (applicable for READ operation)
-  message?: string; // Message if error/warning occurred (applicable for all operations)
-}
+
 
 /**
  * Creates a new user record in the database with the provided details.
@@ -569,7 +552,7 @@ const authenticateUser = async (
   }
 };
 
-/*==================================== Project Section begins here =============================================*/
+/*==================================================================================================== Project Section begins here ===================================================================================================================*/
 
 /* Project Collection Creation */
 // Create status schema for use in project schema (Nest Depth: 1)
@@ -686,6 +669,15 @@ projectSchema.pre('deleteOne', { document: true, query: false }, async function(
   await projectSegmentationMaskModel.deleteMany({ projectid: this._id });
   next();
 });
+
+// When a segmentation mask is deleted, remove its reference from the project
+// NOTE: This is a bit tricky because the projectSegmentationMaskModel doesn't have a reference to the project directly, but rather the projectid
+// So we need to find the project by projectid and remove the reference from the segmentation mask
+// This is done in the pre('deleteOne') hook of the projectSegmentationMaskModel
+// TODO or implement in deleteSegmentationMask function?
+
+
+
 
 // Using ES modules instead of CommonJS which is module.exports = {connectToDatabase, User};
 // ONLY unit tests should use userModel, fileModel directly, otherwise use the created functions to create users/files.

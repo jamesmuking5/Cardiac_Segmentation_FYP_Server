@@ -253,3 +253,30 @@ export enum CRUDOperation {
     AUTHENTICATE = "authenticate",
     // Project specific operations
 }
+// Define result type for user CRUD operations
+/**
+ * Defines the standard structure for the result object returned by user-related database operations
+ * (create, read, update, delete, authenticate).
+ * @interface UserCrudResult
+ * @property {boolean} success - Indicates whether the operation completed successfully.
+ * @property {CRUDOperation} operation - The type of operation that was performed (e.g., CREATE, READ).
+ * @property {IUserSafe} [user] - The resulting user object (sanitized), typically included on successful CREATE, UPDATE, or AUTHENTICATE operations.
+ * @property {IUserSafe[]} [users] - An array of user objects (sanitized), typically included on successful READ operations. Can be empty if no users match the criteria.
+ * @property {string} [message] - An optional message providing more details, especially in case of failure (e.g., validation error, user not found) or warnings.
+ */
+export interface UserCrudResult {
+    success: boolean; // Indicates whether the operation was successful
+    operation: CRUDOperation; // The type of operation performed (CREATE, READ, UPDATE, DELETE)
+    user?: IUserSafe; // The created or updated user document (applicable for CREATE and UPDATE operations)
+    users?: IUserSafe[]; // Array of user documents (applicable for READ operation)
+    message?: string; // Message if error/warning occurred (applicable for all operations)
+}
+  
+export interface ProjectCrudResult {
+    success: boolean; // Indicates whether the operation was successful
+    operation: CRUDOperation; // The type of operation performed (CREATE, READ, UPDATE, DELETE)
+    project?: IProject; // The created or updated project document (applicable for CREATE and UPDATE operations)
+    projects?: IProject[]; // Array of project documents (applicable for READ operation)
+    message?: string; // Message if error/warning occurred (applicable for all operations)
+    // segmentationmask?: IProjectSegmentationMask; // Commented as it is inside the project document
+}
