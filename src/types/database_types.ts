@@ -121,8 +121,6 @@ export interface IProject {
     status: {
         upload: boolean; // File upload status
         extract: boolean; // File extraction status
-        component_bounding_box: boolean; // Component bounding box extraction status
-        segmentation: boolean; // Segmentation status
     }
     // File specifics
     datatype: string; // Data type of the image (e.g., uint8, float32)
