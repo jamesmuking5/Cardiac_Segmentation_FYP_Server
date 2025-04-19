@@ -353,6 +353,10 @@ describe('Database Service', () => {
       expect(result.operation).toBe('read');
       expect(result.users).toBeDefined();
       if (result.success && result.users) {
+        console.log('result.users:', result.users); // Debugging output
+        // Not finding the admin, try to call all users
+        const allUsers = await userModel.find({});
+        console.log('allUsers:', allUsers); // Debugging output
         expect(result.users.length).toBe(2); // Should find both user1 and adminUser
         const usernames = result.users.map(u => u.username);
         expect(usernames).toContain(user1Data.username);
@@ -837,16 +841,5 @@ describe('Database Service', () => {
       compareSpy.mockRestore();
     });
   });
-
-  // // --- createFile Tests --- (OBSOLETE)
-  // describe('createFile', () => {
-  //   // TODO: Add tests for createFile
-  //   // Need to import/use 'createFile' function from database.ts
-  //   // Need to import IFileDocument if checking returned object properties
-
-  //   it.todo('should create a new file record successfully');
-  //   it.todo('should fail if filename already exists');
-  //   it.todo('should fail if filehash already exists');
-  // });
 
 });
