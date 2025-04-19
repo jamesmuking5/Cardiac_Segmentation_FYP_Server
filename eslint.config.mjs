@@ -7,7 +7,7 @@ import eslintConfigPrettier from "eslint-config-prettier";
 export default defineConfig([
   // Global ignores - add the dist directory to prevent linting compiled files
   {
-    ignores: ["dist/**", "node_modules/**"]
+    ignores: ["dist/**", "node_modules/**", "__tests__/**"],
   },
 
   // Base configurations
