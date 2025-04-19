@@ -95,13 +95,13 @@ export enum FileDataType {
  * @property {string} name - The name of the project.
  * @property {string} originalfilename - The original filename of the uploaded file.
  * @property {string} description - A description of the project (optional).
- * @property {string} filename - The server-renamed filename of the uploaded file.
+ * @property {string} filename - The server-renamed filename of the uploaded file, using a format of userid_filehash.nii preferably.
  * @property {FileType} filetype - The MIME type of the file (e.g., image/nifti, application/dicom).
  * @property {number} filesize - The size of the renamed file in bytes.
  * @property {string} filehash - The SHA256 hash of the renamed file.
- * @property {string} basepath - The base path for the file storage (e.g., S3 bucket URL).
- * @property {string} originalfilepath - The original file location (e.g., S3 bucket URL).
- * @property {string} extractedfolderpath - The folder where all the extracted JPEGs from NIfTI are saved.
+ * @property {string} basepath - The base path for the file storage (e.g., s3://devel-visheart-s3-bucket/temp/"the-user-id"/"the-user-id"_2630fcede25328c13a15c4dfe6376c068201eb1f8d871736cd8197c2b1463ed3).
+ * @property {string} originalfilepath - The original file location (e.g., s3://devel-visheart-s3-bucket/temp/"the-user-id"/"the-user-id"_2630fcede25328c13a15c4dfe6376c068201eb1f8d871736cd8197c2b1463ed3/"the-user-id"_2630fcede25328c13a15c4dfe6376c068201eb1f8d871736cd8197c2b1463ed3.nii.gz). 
+ * @property {string} extractedfolderpath - The folder where all the extracted JPEGs from NIfTI are saved. (e.g. s3://devel-visheart-s3-bucket/temp/${testUser._id}/${String(testUser._id)}_2630fcede25328c13a15c4dfe6376c068201eb1f8d871736cd8197c2b1463ed3/extracted)
  * @property {boolean} status.upload - Indicates if the file upload was successful.
  * @property {boolean} status.extract - Indicates if the file extraction was successful.
  * @property {boolean} status.component_bounding_box - Indicates if the component bounding box extraction was successful.
@@ -112,11 +112,11 @@ export enum FileDataType {
  * @property {number} dimensions.height - The height of the image in pixels.
  * @property {number} dimensions.slices - The depth/slices of the image in pixels (for 3D images).
  * @property {number} dimensions.frames - The time/frames dimension (optional, for 4D images).
- * @property {object} voxelSize - The physical size of one voxel, usually in mm.
- * @property {number} voxelSize.x - The size in the x-dimension.
- * @property {number} voxelSize.y - The size in the y-dimension.
- * @property {number} voxelSize.z - The size in the z-dimension (optional).
- * @property {number} voxelSize.t - The size in the t-dimension (optional).
+ * @property {object} voxelsize - The physical size of one voxel, usually in mm.
+ * @property {number} voxelsize.x - The size in the x-dimension.
+ * @property {number} voxelsize.y - The size in the y-dimension.
+ * @property {number} voxelsize.z - The size in the z-dimension (optional).
+ * @property {number} voxelsize.t - The size in the t-dimension (optional).
  */
 export interface IProject {
     // Identifiers
@@ -152,7 +152,7 @@ export interface IProject {
     /** Physical size of one voxel (usually in mm). 
      * From NIfTI pixdim = [?, 0.5, 0.5, 1.0, 2.0, 0, 0, 0], first ? and last 3 zeroes are not used,
      * but the 4 numbers are in mm, mm, mm and seconds. */
-    voxelSize?: { x: number; y: number; z?: number; t?: number; };
+    voxelsize?: { x: number; y: number; z?: number; t?: number; };
 
     // Based on mongoose timestamp
     createdAt?: Date; // Creation date of the project
