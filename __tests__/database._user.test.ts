@@ -5,13 +5,11 @@ import mongoose from 'mongoose';
 import {
   connectToDatabase,
   userModel,
-  fileModel,
   createUser,
   readUser,
   updateUser,
   deleteUser,
   authenticateUser,
-  createFile,
   UserRole,
   IUserSafe,
   UserCrudResult,
@@ -840,15 +838,15 @@ describe('Database Service', () => {
     });
   });
 
-  // --- createFile Tests ---
-  describe('createFile', () => {
-    // TODO: Add tests for createFile
-    // Need to import/use 'createFile' function from database.ts
-    // Need to import IFileDocument if checking returned object properties
+  // // --- createFile Tests --- (OBSOLETE)
+  // describe('createFile', () => {
+  //   // TODO: Add tests for createFile
+  //   // Need to import/use 'createFile' function from database.ts
+  //   // Need to import IFileDocument if checking returned object properties
 
-    it.todo('should create a new file record successfully');
-    it.todo('should fail if filename already exists');
-    it.todo('should fail if filehash already exists');
-  });
+  //   it.todo('should create a new file record successfully');
+  //   it.todo('should fail if filename already exists');
+  //   it.todo('should fail if filehash already exists');
+  // });
 
 });
