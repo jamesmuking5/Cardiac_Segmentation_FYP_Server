@@ -1,4 +1,4 @@
-import { Document, Types } from "mongoose";
+import { Document } from "mongoose";
 
 /* Interfaces */
 // Enumeration for user roles
@@ -69,6 +69,24 @@ export enum FileType {
     DICOM = "application/dicom", // .dcm
 }
 
+// Enumeration for DataType
+/**
+ * Defines the possible data types for images.
+ * This is used to specify the data type of the image in the project.
+ * @enum {string}
+ * @property {string} UNKNOWN - Represents an unknown data type.
+ * @property {string} FLOAT32 - Represents a 32-bit floating-point number.
+ * @property {string} UINT16 - Represents a 16-bit unsigned integer.
+ * @property {string} UINT8 - Represents an 8-bit unsigned integer.
+ */
+export enum FileDataType {
+    UNKNOWN = "unknown",
+    FLOAT32 = "float32", // common
+    UINT16 = "uint16", // common
+    UINT8 = "uint8", // common (often for segmentation masks)
+    // To add if needed
+}
+
 /**
  * Defines the structure for a project record stored in the database.
  * This interface is used to represent a project that contains files and their metadata.
@@ -124,7 +142,7 @@ export interface IProject {
         extract: boolean; // File extraction status
     }
     // File specifics
-    datatype: string; // Data type of the image (e.g., uint8, float32)
+    datatype: FileDataType; // Data type of the image (e.g., uint8, float32)
     dimensions: {
         width: number; // Width of the image in pixels
         height: number; // Height of the image in pixels
@@ -145,8 +163,7 @@ export interface IProject {
     updatedAt?: Date; // Last update date of the project
 }
 // Project Model Interface (single project document in the database)
-export interface IProjectDocument extends IProject, Document {
-}
+export interface IProjectDocument extends IProject, Document { }
 
 // Enumeration for component bounding box classes
 /**
@@ -271,7 +288,7 @@ export interface UserCrudResult {
     users?: IUserSafe[]; // Array of user documents (applicable for READ operation)
     message?: string; // Message if error/warning occurred (applicable for all operations)
 }
-  
+
 export interface ProjectCrudResult {
     success: boolean; // Indicates whether the operation was successful
     operation: CRUDOperation; // The type of operation performed (CREATE, READ, UPDATE, DELETE)
