@@ -1,6 +1,6 @@
 // File: src/services/database.ts
 // Description: Database Service for the VisHeart Server
-import mongoose, { Schema, Document, model, Model } from "mongoose";
+import mongoose, { Schema, model, Model } from "mongoose";
 import path from "path";
 import dotenv from "dotenv";
 import logger from "./logger";
@@ -10,8 +10,9 @@ import * as bcrypt from "bcrypt";
 import LogError from "../utils/error_logger"; // Import the error logging utility
 const serviceLocation = "Database"; // Service location for error logging
 
-// TODO: File check script to check if the file exists and is readable before loading it
-// TODO: Read and Delete User and CRUD Files functions
+// Import Types
+import { IUser, IUserDocument, IUserSafe, UserRole, CRUDOperation, UserCrudResult, IProjectDocument } from "../types/database_types"; // Import the user types
+import { FileType, FileDataType, ComponentBoundingBoxesClass, IProject, IProjectSegmentationMask, ProjectCrudResult } from "../types/database_types"; // Import the project types
 
 // Load environment variables from .env file
 try {
@@ -23,8 +24,7 @@ try {
 
 // Database connection URL and name
 const DB_NAME = "visheart";
-const DB_URI: string =
-  process.env.MONGODB_URI || "mongodb://127.0.0.1:27017/visheart";
+const DB_URI: string = process.env.MONGODB_URI || "mongodb://127.0.0.1:27017/visheart";
 
 // Fetch default admin password
 const adminPass: string = process.env.ADMIN_PASS || "admin"; // Default to "admin" if not set
@@ -32,10 +32,13 @@ const adminPass: string = process.env.ADMIN_PASS || "admin"; // Default to "admi
 // Connect to MongoDB (called in index.ts)
 // Added parameter so can be used in test files to connect to a different database if needed, but default is the environment variable
 /**
- * Connects to the MongoDB database using Mongoose. Logs success or failure messages.
- * @returns {Promise<void>} - A promise that resolves when the connection is established.
- * @throws {Error} - Throws an error if the connection fails.
- * 
+ * Connects to the MongoDB database using the Mongoose library and the connection URI
+ * @async
+ * @function connectToDatabase
+ * @returns {Promise<void>} A promise that resolves when the database connection is established
+ * and the admin user check is complete.
+ * @throws {Error} Throws an error if the connection to the MongoDB database fails,
+ * wrapping the original Mongoose connection error.
  */
 const connectToDatabase = async (): Promise<void> => {
   try {
@@ -54,57 +57,15 @@ const connectToDatabase = async (): Promise<void> => {
   }
 };
 
-/* Interfaces */
-// Enumeration for user roles
 /**
- * UserRole enum defines the different roles a user can have in the system.
- * - User: Regular user with standard permissions.
- * - Admin: User with elevated permissions for administrative tasks.
+ * Converts a Mongoose user document (`IUserDocument`) into a safe user object (`IUserSafe`)
+ * by selecting specific fields and converting the `_id` to a string.
+ * This is used to prepare user data for responses, removing sensitive information like the password.
+ *
+ * @function toIUserSafe
+ * @param {IUserDocument} user - The Mongoose user document to convert.
+ * @returns {IUserSafe} A new object containing only the safe-to-expose user properties.
  */
-enum UserRole {
-  User = "user",
-  Admin = "admin",
-}
-
-/**
- * IUser interface defines the structure of a user object in the system.
- * It includes properties for:
- * - {string} username - The unique username of the user.
- * - {string} password - The hashed password of the user.
- * - {string} email - The email address of the user.
- * - {string} phone - The phone number of the user.
- * - {UserRole} role - The role of the user, which can be either "user" or "admin".
- */
-interface IUser {
-  username: string;
-  password: string;
-  email: string;
-  phone: string;
-  role: UserRole; // Default to "user" unless specified otherwise
-}
-
-/**
- * IUserSafe interface defines the structure of a santized user object that is safe for public use.
- * It includes properties for:
- * - {string} _id - The unique identifier of the user, converted to a string.
- * - {string} username - The unique username of the user.
- * - {string} email - The email address of the user.
- * - {string} phone - The phone number of the user.
- * - {UserRole} role - The role of the user, which can be either "user" or "admin".
- */
-interface IUserSafe {
-  /**
-   * _id is taken from the MongoDB document ID and converted to a string.
-   */
-  _id: string;
-  username: string;
-  email: string;
-  phone: string;
-  role: UserRole; // Default to "user" unless specified otherwise
-}
-// User Model Interface (single user document in the database)
-interface IUserDocument extends IUser, Document { }
-// Convert IUserDocument to IUserSafe for public use
 function toIUserSafe(user: IUserDocument): IUserSafe {
   return {
     _id: String(user._id),
@@ -115,21 +76,7 @@ function toIUserSafe(user: IUserDocument): IUserSafe {
   };
 }
 
-// File Interface - Defines a saved file record in the database
-interface IFile {
-  filename: string;
-  filepath: string; // Could be local or S3 path
-  filetype: string; // MIME type of the file (e.g., image/nifti, image/dicom, etc.)
-  filehash: string;
-  filesize: number; // In bytes (helps enforce file size limits)
-  createdAt: Date;
-  createdBy: string; // Reference to the user who uploaded the file
-  description: string;
-}
-// File Model Interface (single file document in the database)
-interface IFileDocument extends IFile, Document { }
-
-/* Collection Creation */
+/* User Collection Creation */
 // User Collection
 const userSchema = new Schema<IUserDocument>({
   username: { type: String, required: true, unique: true },
@@ -137,11 +84,23 @@ const userSchema = new Schema<IUserDocument>({
   email: { type: String, required: true, unique: true },
   phone: { type: String, required: true, unique: true },
   role: { type: String, required: true, enum: Object.values(UserRole), default: UserRole.User },
-});
+}, { timestamps: true }); // Automatically add createdAt and updatedAt timestamps
 // Create the model with proper typing
 const userModel = model<IUserDocument, Model<IUserDocument>>("User", userSchema);
 
-// Create a default admin user if it doesn't exist
+/**
+ * Checks if an administrator user exists in the database. If not, creates a default
+ * administrator account with predefined credentials ("admin" username, password from
+ * `ADMIN_PASS` environment variable or "admin" default, default email/phone).
+ * This function is typically called internally during database initialization (`connectToDatabase`).
+ * It logs information about whether an admin exists or if a default one is created.
+ * A warning is logged upon successful creation of the default admin, advising password change.
+ *
+ * @async
+ * @function createAdminUser
+ * @returns {Promise<void>} A promise that resolves once the check and potential creation are complete.
+ * @throws {Error} Logs an error via `LogError` if any database operation fails during the process.
+ */
 const createAdminUser = async (): Promise<void> => {
   // Check if an admin user exists
   // Cannot use IUserDocument ONLY here because it may return null if no admins exist.
@@ -167,11 +126,7 @@ const createAdminUser = async (): Promise<void> => {
       await admin.save();
       // Check if the admin user was created successfully
       const createdAdmin = await userModel.findOne({ username: "admin" });
-      if (createdAdmin) {
-        logger.warn(
-          `Database: WARNING: Default admin account created successfully with ID:${createdAdmin._id}. Please change the password IMMEDIATELY.`
-        );
-      }
+      if (createdAdmin) logger.warn(`Database: WARNING: Default admin account created successfully with ID:${createdAdmin._id}. Please change the password IMMEDIATELY.`);
     } else {
       logger.info(`Database: Admin account(s) already exists.`);
       return;
@@ -181,54 +136,24 @@ const createAdminUser = async (): Promise<void> => {
   }
 };
 
-// File Collection
-const fileSchema = new Schema<IFileDocument>({
-  filename: { type: String, required: true },
-  filepath: { type: String, required: true },
-  filetype: { type: String, required: true },
-  filehash: { type: String, required: true },
-  filesize: { type: Number, required: true },
-  createdAt: { type: Date, default: Date.now },
-  createdBy: { type: String, required: true },
-  description: { type: String, required: false },
-});
-// Create the model with proper typing
-const fileModel = model<IFileDocument, Model<IFileDocument>>("File", fileSchema);
-
-/* Database Functions */
-enum CRUDOperation {
-  CREATE = "create",
-  READ = "read",
-  UPDATE = "update",
-  DELETE = "delete",
-  /**
-   * AUTHENTICATE is used for user authentication operations and is not a CRUD operation but is required by PassportJS.
-   */
-  AUTHENTICATE = "authenticate",
-}
 
 // User Functions
-// Define result type for user CRUD operations
-interface UserCrudResult {
-  success: boolean; // Indicates whether the operation was successful 
-  operation: CRUDOperation; // The type of operation performed (CREATE, READ, UPDATE, DELETE)
-  user?: IUserSafe; // The created or updated user document (applicable for CREATE and UPDATE operations)
-  users?: IUserSafe[]; // Array of user documents (applicable for READ operation)
-  message?: string; // Message if error/warning occurred (applicable for all operations)
-}
-
-// Function to create a new user given a username, password, email, and phone number
 /**
- * @param username {string} - The username of the user to create
- * @param password {string} - The password of the user to create
- * @param email {string} - The email of the user to create
- * @param phone {string} - The phone number of the user to create
- * @param role {UserRole} (Optional) The role of the user. Defaults to UserRole.User. Can also be UserRole.Admin.
- * @returns {UserCrudResult} - A promise that resolves to an object indicating success or failure.
- * If successful, it returns the created user document.
- * If the user already exists, it returns an error message.
- * If the user does not exist, it returns an error message.
- * If the user is created successfully, it returns the created user document.
+ * Creates a new user record in the database with the provided details.
+ * Hashes the password using bcrypt before storing it.
+ * Checks for uniqueness constraints on username, email, and phone number.
+ *
+ * @async
+ * @function createUser
+ * @param {string} username - The desired username for the new user (must be unique).
+ * @param {string} password - The plain-text password for the new user.
+ * @param {string} email - The email address for the new user (must be unique).
+ * @param {string} phone - The phone number for the new user (must be unique).
+ * @param {UserRole} [role=UserRole.User] - The role to assign to the user. Defaults to `UserRole.User`.
+ * @returns {Promise<UserCrudResult>} A promise that resolves to a `UserCrudResult` object.
+ * - On success: `{ success: true, operation: CRUDOperation.CREATE, user: IUserSafe }` containing the sanitized created user.
+ * - On validation failure (duplicate username/email/phone): `{ success: false, operation: CRUDOperation.CREATE, message: string }` detailing the conflict.
+ * - On other errors: `{ success: false, operation: CRUDOperation.CREATE, message: "Error creating user." }`.
  */
 const createUser = async (
   username: string,
@@ -236,7 +161,6 @@ const createUser = async (
   email: string,
   phone: string,
   role: UserRole = UserRole.User, // Default role is "user" unless specified otherwise
-  // Default role is "user" unless specified otherwise
 ): Promise<UserCrudResult> => {
   try {
     // Use a single query with $or to check all unique constraints
@@ -277,20 +201,30 @@ const createUser = async (
   }
 };
 
-
-// Function to read user or users based on property of IUser
 /**
- * Searches/Finds/Reads for users in the database. If no criteria is provided, it returns all users.
- * @param username {string} - The username of the user to read (optional)
- * @param email {string} - The email of the user to read (optional)
- * @param phone {string} - The phone number of the user to read (optional)
- * @param role {UserRole} - The role of the user to read (optional)
- * @returns {UserCrudResult} - A promise that resolves to an object indicating success or failure.
- * @example If only require username search, use readUser("username")
- * @example If only require email search, use readUser(undefined, "email")
- * @example If only require phone search, use readUser(undefined, undefined, "phone")
- * @example If only require role search, use readUser(undefined, undefined, undefined, UserRole.Admin)
- * @description If no criteria is provided, it returns all users
+ * Reads user records from the database based on optional search criteria.
+ * If multiple criteria (username, email, phone, role) are provided, users matching *any* of the criteria (`$or` logic) are returned.
+ * If no criteria are provided, all users in the database are returned.
+ *
+ * @async
+ * @function readUser
+ * @param {string} [username] - Optional. The username to search for.
+ * @param {string} [email] - Optional. The email address to search for.
+ * @param {string} [phone] - Optional. The phone number to search for.
+ * @param {UserRole} [role] - Optional. The user role to filter by.
+ * @returns {Promise<UserCrudResult>} A promise that resolves to a `UserCrudResult` object.
+ * - On success (users found): `{ success: true, operation: CRUDOperation.READ, users: IUserSafe[] }` containing an array of matching sanitized users.
+ * - On success (no users found): `{ success: true, operation: CRUDOperation.READ, users: [], message: "No users found..." }`. Finding no users is considered a successful operation.
+ * - On error: `{ success: false, operation: CRUDOperation.READ, message: "Error reading user." }`.
+ * @example
+ * // Find a specific user by username
+ * await readUser("johndoe");
+ * // Find all admin users
+ * await readUser(undefined, undefined, undefined, UserRole.Admin);
+ * // Find users by email OR phone
+ * await readUser(undefined, "john@example.com", "1234567890");
+ * // Read all users
+ * await readUser();
  */
 const readUser = async (
   username?: string,
@@ -349,22 +283,33 @@ const readUser = async (
   }
 }
 
-// Function to update a user, given a user ID and an object with the new data
 /**
- * Updates a user in the database with the provided username and updates object.
- * @param username - The username of the user to update
- * @param updates - An object containing the fields to update. At least one field must be provided:
- * @param updates.username - The new username of the user (optional).
- * @param updates.password - The new password of the user (optional).
- * @param updates.email - The new email of the user (optional).
- * @param updates.phone - The new phone number of the user (optional).
- * @param updates.role - The new role of the user (optional).
- * @returns {UserCrudResult} - A promise that resolves to an object indicating success or failure. 
- * If successful, it returns the updated user document.
- * If any field conflicts with existing users, it returns an error message.
+ * Updates an existing user's record in the database.
+ * The user to update is identified by their current `username`.
+ * The `updates` object specifies which fields to change. At least one valid field must be provided for an update to occur.
+ * If `password` is provided, it will be hashed before saving.
+ * Checks for uniqueness conflicts if `username`, `email`, or `phone` are being changed, ensuring the new value isn't already used by *another* user.
+ *
+ * @async
+ * @function updateUser
+ * @param {string} username - The current username of the user to update. This is used for the initial lookup.
+ * @param {object} updates - An object containing the fields to update. All properties are optional.
+ * @param {string} [updates.username] - The new username.
+ * @param {string} [updates.password] - The new plain-text password.
+ * @param {string} [updates.email] - The new email address.
+ * @param {string} [updates.phone] - The new phone number.
+ * @param {UserRole} [updates.role] - The new role for the user.
+ * @returns {Promise<UserCrudResult>} A promise that resolves to a `UserCrudResult` object.
+ * - On success: `{ success: true, operation: CRUDOperation.UPDATE, user: IUserSafe }` containing the sanitized, updated user.
+ * - On failure (user not found): `{ success: false, operation: CRUDOperation.UPDATE, message: "User ... does not exist." }`.
+ * - On failure (no changes provided): `{ success: false, operation: CRUDOperation.UPDATE, message: "No fields to update..." }`.
+ * - On failure (uniqueness conflict): `{ success: false, operation: CRUDOperation.UPDATE, message: "Username/Email/Phone ... already in use..." }`.
+ * - On other errors: `{ success: false, operation: CRUDOperation.UPDATE, message: "Error updating user." }`.
  */
 const updateUser = async (
+  // Identifying parameter
   username: string,
+  // Updates object
   updates: {
     username?: string;
     password?: string;
@@ -460,22 +405,14 @@ const updateUser = async (
 
     // Return if no fields were updated at all
     if (Object.keys(updateData).length === 0) {
-      logger.warn(
-        `Database: No fields to update for user ${username}. Unchanged fields: ${unchangedFields.join(
-          ", "
-        )}`
-      );
+      logger.warn(`Database: No fields to update for user ${username}. Unchanged fields: ${unchangedFields.join(", ")}`);
       return { success: false, operation: CRUDOperation.UPDATE, message: `No fields to update for user ${username}.`, };
     }
 
     // Perform the update
     const updatedUser = existingUser.set(updateData);
     await updatedUser.save();
-    logger.info(
-      `Database: User ${username} updated successfully. Updated fields: ${Object.keys(
-        updateData
-      ).join(", ")}`
-    );
+    logger.info(`Database: User ${username} updated successfully. Updated fields: ${Object.keys(updateData).join(", ")}`);
     return { success: true, operation: CRUDOperation.UPDATE, user: toIUserSafe(updatedUser) };
   } catch (error: unknown) {
     LogError(error as Error, serviceLocation, `Error updating user ${username}.`);
@@ -483,21 +420,80 @@ const updateUser = async (
   }
 };
 
-// Should return a success message if the user is deleted successfully with UserCrudResult [2]
-// const deleteUser = async (username: string): Promise<UserCrudResult> => {
+// Should return a success message if the user is deleted successfully with UserCrudResult
+// Could possibly implement a 'move-to-deleted-users' collection instead of deleting the user, but for now, just delete the user.
+// Unit test should just check if the user is deleted with this function, by using readUser to check if the user exists after deletion since they read from  same collection.
+// This should also delete any files associated with the user, but that is not implemented yet. (TODO: Implement file deletion)
+/**
+ * Deletes a user from the database, identified by their username.
+ * Includes a safety check to prevent deletion of the last remaining administrator account.
+ * TODO: Implement deletion of files associated with the user.
+ *
+ * @async
+ * @function deleteUser
+ * @param {string} username - The username of the user to delete.
+ * @returns {Promise<UserCrudResult>} A promise that resolves to a `UserCrudResult` object.
+ * - On success: `{ success: true, operation: CRUDOperation.DELETE, message: "User ... deleted successfully." }`.
+ * - On failure (user not found): `{ success: false, operation: CRUDOperation.DELETE, message: "User ... does not exist." }`.
+ * - On failure (attempting to delete last admin): `{ success: false, operation: CRUDOperation.DELETE, message: "Cannot delete the last administrator account" }`.
+ * - On failure (deletion confirmation failed or other error): `{ success: false, operation: CRUDOperation.DELETE, message: "Error when deleting user." / "User ... was not deleted successfully." }`.
+ */
+const deleteUser = async (username: string): Promise<UserCrudResult> => {
+  const operation = CRUDOperation.DELETE;
+  try {
 
-// };
+    // Check if the user exists
+    const existingUser = await userModel.findOne({ username: username });
+    // Check if the user is an admin and if this is the last admin
+    if (existingUser && existingUser.role === UserRole.Admin) {
+      // Check if this is the last admin
+      const adminCount = await userModel.countDocuments({ role: UserRole.Admin });
+      if (adminCount <= 1) {
+        logger.warn(`Database: Attempted to delete last admin user: ${username}`);
+        return { success: false, operation, message: 'Cannot delete the last administrator account' };
+      }
+    }
+    if (!existingUser) {
+      logger.warn(`Database: User ${username} does not exist.`);
+      return { success: false, operation, message: `User ${username} does not exist.` };
+    }
+    // Delete the user
+    await existingUser.deleteOne();
+    // Check if the user was deleted successfully using readUser function
+    const deletedUserResult = await readUser(username);
+    if (deletedUserResult.success && deletedUserResult.users && deletedUserResult.users.length > 0) {
+      // This condition should ideally not be met if deleteOne succeeded without error,
+      // but it's kept as a safeguard based on the original code's logic.
+      logger.warn(`Database: User ${username} was not deleted successfully.`);
+      return { success: false, operation, message: `User ${username} was not deleted successfully.` };
+    }
+    // User deleted successfully
+    logger.info(`Database: User ${username} deleted successfully.`);
+    return { success: true, operation, message: `User ${username} deleted successfully.` };
+
+  } catch (error: unknown) {
+    LogError(error as Error, serviceLocation, `Error deleting user ${username}.`);
+    return { success: false, operation, message: "Error when deleting user." };
+  }
+};
 
 // Auxiliary User functions
-// Function to authenticate a user given a username and password
 /**
- * Authenticates a user given a username and password.
- * @param {string} username - The username of the user to authenticate. Must be non-empty.
- * @param {string} passwordAttempt - The plain-text password provided by the user to authenticate. Must be non-empty.
- * @returns {Promise<UserCrudResult>} - A promise resolving to an object indicating success or failure.
- * If successful, `success` is true and `user` contains the sanitized authenticated user document.
- * If authentication fails (user not found, password mismatch, invalid input), `success` is false and `message` provides a generic error ("Invalid username or password.").
- * If an internal error occurs (DB issue, bcrypt error), `success` is false and `message` indicates an internal error.
+ * Authenticates a user by verifying the provided username and password against the database records.
+ * Performs basic input validation (non-empty username and password).
+ * Compares the provided password attempt against the stored hash using bcrypt.
+ * Returns a generic error message for common failure scenarios (user not found, incorrect password)
+ * to avoid leaking information.
+ *
+ * @async
+ * @function authenticateUser
+ * @param {string} username - The username provided for authentication. Must be a non-empty string.
+ * @param {string} passwordAttempt - The plain-text password provided for authentication. Must not be null, undefined, or empty.
+ * @returns {Promise<UserCrudResult>} A promise that resolves to a `UserCrudResult` object.
+ * - On successful authentication: `{ success: true, operation: CRUDOperation.AUTHENTICATE, user: IUserSafe }` containing the sanitized authenticated user.
+ * - On authentication failure (invalid input, user not found, password mismatch): `{ success: false, operation: CRUDOperation.AUTHENTICATE, message: "Invalid username or password." }`.
+ * - On failure due to account configuration issue (e.g., missing password hash in DB): `{ success: false, operation: CRUDOperation.AUTHENTICATE, message: "Authentication failed due to an account configuration issue." }`.
+ * - On internal server error (database issue, bcrypt error): `{ success: false, operation: CRUDOperation.AUTHENTICATE, message: "An internal server error occurred..." }`.
  */
 const authenticateUser = async (
   username: string,
@@ -554,61 +550,289 @@ const authenticateUser = async (
   }
 };
 
-// File Functions
-// Define result type for createFile function
-type FileCrudResult =
-  | { success: true; file: IFileDocument } // Successful file creation
-  | { success: false; error: string }; // File already exists or other error
+/*==================================================================================================== Project Section begins here ===================================================================================================================*/
 
-// Function to create a new file record in the database
-const createFile = async (
-  filename: string,
-  filepath: string,
-  filetype: string,
-  filehash: string,
-  filesize: number, // In bytes
-  createdBy: string,
-  description: string | undefined = undefined
-): Promise<FileCrudResult> => {
+/* Project Collection Creation */
+// Create status schema for use in project schema (Nest Depth: 1)
+const projectStatusSchema = new Schema({
+  upload: { type: Boolean, default: false, required: true }, // Indicates if the file has been uploaded
+  extract: { type: Boolean, default: false, required: true }, // Indicates if the file has been extracted
+}, { _id: false }); // Disable automatic creation of an _id field for this subdocument
+
+// Create dimension schema for use in project schema (Nest Depth: 1)
+const projectDimensionSchema = new Schema({
+  width: { type: Number, required: true }, // X dimension of the image
+  height: { type: Number, required: true }, // Y dimension of the image
+  slices: { type: Number, required: true }, // Z dimension of the image (if applicable)
+  frames: { type: Number, required: false }, // T dimension of the image (if applicable)
+}, { _id: false }); // Disable automatic creation of an _id field for this subdocument
+
+// Create voxel size schema for use in project schema (Nest Depth: 1)
+const projectVoxelsizeSchema = new Schema({
+  x: { type: Number, required: true }, // Voxel size in the X dimension
+  y: { type: Number, required: true }, // Voxel size in the Y dimension
+  z: { type: Number, required: false }, // Voxel size in the Z dimension (if applicable)
+  t: { type: Number, required: false }, // Voxel size in the T dimension (if applicable)
+}, { _id: false }); // Disable automatic creation of an _id field for this subdocument
+
+// Project Collection (Nest Depth: 0)
+const projectSchema = new Schema<IProject>({
+  // Identifiers
+  // _id:  string; // MongoDB Object ID of the project
+  userid: { type: String, required: true }, // MongoDB User ID of the user to whom the project belongs
+  // User inputs
+  name: { type: String, required: true }, // Name of the project
+  originalfilename: { type: String, required: true }, // Original filename of the uploaded file
+  description: { type: String, required: false }, // Description of the project
+  // File properties
+  filename: { type: String, required: true }, // Server rename - e.g., userid_projid.nii - use new mongoose.Types.ObjectId() to pregenerate before creating document in DB
+  filetype: { type: String, required: true, enum: Object.values(FileType) }, // MIME type of the file
+  filesize: { type: Number, required: true }, // Size of the file in bytes
+  filehash: { type: String, required: true }, // SHA256 hash of the file
+  // Location-tracking
+  basepath: { type: String, required: true }, // Base path for the file storage (e.g., S3 bucket URL)
+  originalfilepath: { type: String, required: true }, // Original (nifti/dicom) file location (e.g., S3 bucket URL)
+  extractedfolderpath: { type: String, required: true }, // Folder path for the extracted files (e.g., S3 bucket URL)
+  // Processing status
+  status: { type: projectStatusSchema, required: true, default: {} }, // Status of the project processing, default: {} tells mongoose to use the default values defined in the statusSchema
+  // File specifics
+  datatype: { type: String, required: true }, // Data type of the image (e.g., uint8, float32)
+  dimensions: { type: projectDimensionSchema, required: true }, // Dimensions of the image (e.g., width, height, slices, frames)
+  // Voxel size (future proofing for 3D segmentation)
+  voxelsize: { type: projectVoxelsizeSchema, required: false }, // Voxel size of the image (e.g., x, y, z, t dimensions) - check for errors in the future (stored in nifti as pixdim = [?, 0.5, 0.5, 1.0, 2.0, 0, 0, 0])
+}, { timestamps: true }); // Automatically add createdAt and updatedAt timestamps
+// Create the model with proper typing
+const projectModel = model<IProject, Model<IProject>>("Project", projectSchema);
+
+// Project Segmentation Mask Collection
+// Create bounding box schema for use in project segmentation mask schema's slice schema (Nest Depth: 3)
+const projectSegmentationMaskSliceComponentBoundingBoxesSchema = new Schema({
+  class: { type: String, required: true, enum: Object.values(ComponentBoundingBoxesClass) }, // Class of the bounding box (rv, myo, lvc)
+  x_min: { type: Number, required: true }, // Minimum X coordinate of the bounding box
+  y_min: { type: Number, required: true }, // Minimum Y coordinate of the bounding box
+  x_max: { type: Number, required: true }, // Maximum X coordinate of the bounding box
+  y_max: { type: Number, required: true }, // Maximum Y coordinate of the bounding box
+}, { _id: false }); // Disable automatic creation of an _id field for this subdocument
+
+// Create Segmentation Mask Location Schema (Nest Depth: 3)
+const projectSegmentationMasksSliceSegmentationMasksLocationSchema = new Schema({
+  path: { type: String, required: true }, // Path to the segmentation mask image (e.g., S3 bucket URL)
+  isRLE: { type: Boolean, required: true }, // Indicates if the segmentation mask is in RLE format
+}, { _id: false }); // Disable automatic creation of an _id field for this subdocument
+
+// Create slice schema (Nest Depth: 2)
+const projectSegmentationMaskSliceSchema = new Schema({
+  sliceindex: { type: Number, required: true }, // Index of the slice (0-based)
+  slicepath: { type: String, required: true }, // Path to the slice image (e.g., S3 bucket URL)
+  componentboundingboxes: [{ type: projectSegmentationMaskSliceComponentBoundingBoxesSchema, required: false }], // Array of component bounding boxes for the slice
+  segmentationmaskslocation: [{ type: projectSegmentationMasksSliceSegmentationMasksLocationSchema, required: false }], // Path to the segmentation mask image (e.g., S3 bucket URL) - assume CSV? or RLE?
+}, { _id: false }); // Disable automatic creation of an _id field for this subdocument
+
+// Create frames schema (Nest Depth: 1)
+const projectSegmentationMaskFramesSchema = new Schema({
+  frameIndex: { type: Number, required: true }, // Index of the frame (0-based)
+  slices: { type: [projectSegmentationMaskSliceSchema], required: true }, // Array of slices for the frame
+}, { _id: false }); // Disable automatic creation of an _id field for this subdocument
+
+// Create Segmentation mask schema (Nest Depth: 0)
+const projectSegmentationMaskSchema = new Schema<IProjectSegmentationMask>({
+  // Identifiers
+  projectid: { type: String, required: true }, // MongoDB Project ID of the project to which the segmentation mask belongs
+  // User inputs
+  name: { type: String, required: true }, // Name of the segmentation mask
+  description: { type: String, required: false }, // Description of the segmentation mask
+  // Properties of extracted folder + location tracking
+  // Index should be 0 based
+  frames: [{ type: projectSegmentationMaskFramesSchema, required: true }], // Array of frames for the segmentation mask
+}, { timestamps: true }); // Automatically add createdAt and updatedAt timestamps
+// Create the model with proper typing
+const projectSegmentationMaskModel = model<IProjectSegmentationMask, Model<IProjectSegmentationMask>>("Segmentation Masks", projectSegmentationMaskSchema);
+
+// Add an index to improve query performance
+projectSchema.index({ userid: 1, name: 1 }, { unique: true }); // Unique index on userid and name
+projectSegmentationMaskSchema.index({ projectid: 1 });
+
+/* ========================================= MongoDB Hooks ========================================== */
+
+// Add validation to ensure userid exists before saving the project
+projectSchema.pre('save', async function (next) {
+  const userExists = await userModel.exists({ _id: this.userid });
+  if (!userExists) {
+    throw new Error('Referenced user does not exist');
+  }
+  next();
+});
+
+// Add validation to ensure projectid exists before saving
+projectSegmentationMaskSchema.pre('save', async function (next) {
+  const projectExists = await projectModel.exists({ _id: this.projectid });
+  if (!projectExists) {
+    throw new Error('Referenced project does not exist');
+  }
+  next();
+});
+
+// When a project is deleted, delete ALL associated segmentation masks
+// THE S3 FILES STILL EXIST, API SIDE?
+projectSchema.pre('deleteOne', { document: true, query: false }, async function (next) {
+  const serviceLocationCascade = `${serviceLocation} - Project Delete Hook`;
   try {
-    // Check if file exists with name, hash
-    const existingFile = await fileModel.findOne({
-      $or: [{ filename: filename }, { filehash: filehash }],
-    });
-    if (existingFile) {
-      let reasons = `File already exists: `;
-      if (existingFile.filename === filename) {
-        reasons += `Filename "${filename}" already exists. `;
-      }
-      if (existingFile.filehash === filehash) {
-        reasons += `File hash "${filehash}" already exists. `;
-      }
-      logger.warn(`Database: Error creating file: ${reasons}`);
-      return { success: false, error: reasons };
+    logger.info(`Database: Cascade delete triggered for project ${this._id}`);
+    // Delete all masks associated with this project
+    const maskDeleteResult = await projectSegmentationMaskModel.deleteMany({ projectid: this._id });
+    logger.info(`Database: Deleted ${maskDeleteResult.deletedCount} segmentation masks for project ${this._id}`);
+    next(); // Proceed to project deletion
+  } catch (error: unknown) {
+    LogError(error as Error, serviceLocationCascade, `Error during cascade delete for project ${this._id}.`);
+    // Halt the original project deletion by passing the error
+    next(error instanceof Error ? error : new Error('Failed to cascade delete segmentation masks'));
+  }
+});
+
+
+// If a user is deleted, delete all their projects and segmentation masks (especially important for guest accounts)
+userSchema.pre('deleteOne', { document: true, query: false }, async function (next) {
+  const serviceLocationCascade = `${serviceLocation} - User Delete Hook`;
+  try {
+    logger.info(`Database: Cascade delete triggered for user ${this._id}`);
+    const projects = await projectModel.find({ userid: this._id }).select('_id').lean(); // Use lean for plain objects
+    const projectIds = projects.map(p => p._id);
+
+    if (projectIds.length > 0) {
+      logger.info(`Database: Deleting ${projectIds.length} projects and their associated masks for user ${this._id}`);
+      // Delete all masks for all found projects first
+      const maskDeleteResult = await projectSegmentationMaskModel.deleteMany({ projectid: { $in: projectIds } });
+      logger.info(`Database: Deleted ${maskDeleteResult.deletedCount} segmentation masks for user ${this._id}`);
+      // Then delete all projects for the user
+      const projectDeleteResult = await projectModel.deleteMany({ userid: this._id });
+      logger.info(`Database: Deleted ${projectDeleteResult.deletedCount} projects for user ${this._id}`);
+    } else {
+      logger.info(`Database: No projects found for user ${this._id}. No cascade delete needed for projects/masks.`);
     }
-    // Create a new file instance
-    const newFile: IFileDocument = new fileModel({
-      filename: filename,
-      filepath: filepath,
-      filetype: filetype,
-      filehash: filehash,
-      filesize: filesize,
-      createdBy: createdBy,
-      description: description,
+    next(); // Proceed to user deletion
+  } catch (error: unknown) {
+    LogError(error as Error, serviceLocationCascade, `Error during cascade delete for user ${this._id}.`);
+    // Halt the original user deletion by passing the error
+    next(error instanceof Error ? error : new Error('Failed to cascade delete projects/masks'));
+  }
+});
+
+/**
+ * Creates a new project record in the database.
+ * Performs checks to ensure uniqueness constraints are met before creation.
+ * Uniqueness checks include:
+ * - Project name must be unique per user.
+ * - File hash must be unique per user.
+ * - Original file path must be globally unique.
+ * - Extracted folder path must be globally unique.
+ * - Server-generated filename must be globally unique.
+ * 
+ * @async
+ * @function createProject
+ * @param {string} userid - The ID of the user creating the project.
+ * @param {string} name - The name for the new project (must be unique for this user).
+ * @param {string} originalfilename - The original name of the uploaded file.
+ * @param {string} filename - The server-generated unique filename, preferably using the format `userid_filehash.nii` as ObjectId has not been generated yet.
+ * @param {FileType} filetype - The MIME type of the uploaded file.
+ * @param {number} filesize - The size of the uploaded file in bytes.
+ * @param {string} filehash - The SHA256 hash of the uploaded file content.
+ * @param {string} basepath - The base storage path (e.g., S3 bucket URL).
+ * @param {string} originalfilepath - The unique path/key where the original file is stored.
+ * @param {string} extractedfolderpath - The unique path/key to the folder where extracted files (e.g., JPEGs) will be stored.
+ * @param {FileDataType} datatype - The data type of the image pixels (e.g., float32, uint8).
+ * @param {object} dimensions - The dimensions of the image.
+ * @param {number} dimensions.width - Image width in pixels.
+ * @param {number} dimensions.height - Image height in pixels.
+ * @param {number} dimensions.slices - Number of slices (depth).
+ * @param {number} [dimensions.frames] - Optional number of time frames (for 4D data).
+ * @param {object} [voxelsize] - Optional physical voxel dimensions.
+ * @param {number} voxelsize.x - Voxel size in the x-dimension (mm).
+ * @param {number} voxelsize.y - Voxel size in the y-dimension (mm).
+ * @param {number} [voxelsize.z] - Optional voxel size in the z-dimension (mm).
+ * @param {number} [voxelsize.t] - Optional voxel size in the t-dimension (e.g., seconds).
+ * @param {string} [description] - Optional description for the project.
+ * @returns {Promise<ProjectCrudResult>} A promise resolving to a ProjectCrudResult object.
+ * - On success: `{ success: true, operation: CRUDOperation.CREATE, project: IProjectDocument }`
+ * - On uniqueness conflict: `{ success: false, operation: CRUDOperation.CREATE, message: string }` detailing the conflict.
+ * - On database error: `{ success: false, operation: CRUDOperation.CREATE, message: "Error creating project." }`
+ */
+const createProject = async (
+  userid: string,
+  name: string, // User-given name of the project (must be unique for the user)
+  originalfilename: string, // The original name of the file when uploaded
+  filename: string, // server generated filename in the format of userid_filehash.nii (e.g., 1234567890_2630fcede25328c13a15c4dfe6376c068201eb1f8d871736cd8197c2b1463ed3.nii)
+  filetype: FileType, // MIME type of the file (e.g., image/nifti, image/dicom) - should be detected by server
+  filesize: number, // In bytes
+  filehash: string, // SHA256 hash of the file (to be generated by the API developers)
+  basepath: string, // Base path for the file storage (e.g., S3 bucket URL)
+  originalfilepath: string, // Original file location (e.g., S3 bucket URL)
+  extractedfolderpath: string, // Folder path for the extracted files (e.g., S3 bucket URL)
+  status: { upload: boolean; extract: boolean }, // Status of the project processing (upload and extract) - default to false
+  datatype: FileDataType, // Data type of the image (e.g., uint8, float32) - should be detected by server
+  dimensions: { width: number; height: number; slices: number; frames?: number },
+  voxelsize?: { x: number; y: number; z?: number; t?: number }, // Optional physical voxel dimensions (e.g., x, y, z, t dimensions) - should be detected by server
+  description?: string, // User-given description of the project (optional)
+): Promise<ProjectCrudResult> => {
+  const operation = CRUDOperation.CREATE;
+  try {
+    // If user does not exist, return error
+    const user = await userModel.findById(userid);
+    if (!user) {
+      logger.warn(`Database: User ${userid} does not exist.`);
+      return { success: false, operation, message: `User ${userid} does not exist.` };
+    }
+    // Check conflicting fields (name, filehash, originalfilepath, extractedfolderpath, filename) 
+    const existingProject = await projectModel.findOne({
+      $or: [
+        { userid: userid, name: name }, // User must not have a project with the same name
+        { userid: userid, filehash: filehash }, // User must not have a project with the same filehash
+        { originalfilepath: originalfilepath },
+        { extractedfolderpath: extractedfolderpath },
+        { filename: filename },
+      ],
     });
-    // Save the new file to the database
-    await newFile.save();
-    logger.info(
-      `Database: File ${newFile._id} created successfully: ${newFile.filename}, ${newFile.filepath}, ${newFile.filetype}`
-    );
-    return { success: true, file: newFile };
+    // If conflicts found, aggregate reasons and return error
+    if (existingProject) {
+      let reasons = `Project creation failed due to uniqueness constraint violation:`; // Starting error message
+      if (existingProject.userid === userid && existingProject.name === name) reasons += ` Name "${name}" already exists for this user.`;
+      if (existingProject.userid === userid && existingProject.filehash === filehash) reasons += ` File hash "${filehash}" already exists for this user.`;
+      if (existingProject.originalfilepath === originalfilepath) reasons += ` Original filepath "${originalfilepath}" is already in use globally.`;
+      if (existingProject.extractedfolderpath === extractedfolderpath) reasons += ` Extracted folder path "${extractedfolderpath}" is already in use globally.`;
+      if (existingProject.filename === filename) reasons += ` Server filename "${filename}" is already in use globally.`;
+      logger.warn(`Database: Error creating project: ${reasons}`);
+      return { success: false, operation, message: reasons };
+    }
+
+    // Create new project instance
+    const newProject: IProjectDocument = new projectModel({
+      userid: userid,
+      name: name,
+      originalfilename: originalfilename,
+      filename: filename,
+      filetype: filetype,
+      filesize: filesize,
+      filehash: filehash,
+      basepath: basepath,
+      originalfilepath: originalfilepath,
+      extractedfolderpath: extractedfolderpath,
+      status: status,
+      datatype: datatype,
+      dimensions: dimensions,
+      voxelsize: voxelsize, // Optional
+      description: description, // Optional
+    });
+    // Save the new project to the database
+    await newProject.save();
+
+    logger.info(`Database: Project ${newProject._id} created successfully: ${newProject.name}, ${newProject.originalfilename}, ${newProject.filename}, ${newProject.filehash}`);
+    return { success: true, operation, project: newProject }; // Return the created project
+  } catch (error: unknown) {
+    LogError(error as Error, serviceLocation, `Error creating project.`);
+    return { success: false, operation: CRUDOperation.CREATE, message: "Error creating project." };
   }
-  catch (error: unknown) {
-    LogError(error as Error, serviceLocation, `Error creating file ${filename}.`);
-    return { success: false, error: "Error creating file." };
-  }
-};
+}
 
 // Using ES modules instead of CommonJS which is module.exports = {connectToDatabase, User};
 // ONLY unit tests should use userModel, fileModel directly, otherwise use the created functions to create users/files.
-export { connectToDatabase, userModel, fileModel, createUser, readUser, updateUser, authenticateUser, createFile, UserRole, IUserSafe, UserCrudResult, CRUDOperation };
+export { connectToDatabase, userModel, createUser, readUser, updateUser, deleteUser, authenticateUser, UserRole, IUserSafe, UserCrudResult, CRUDOperation, IUserDocument, IProject, IProjectSegmentationMask, projectModel, projectSegmentationMaskModel, createProject };
+// createFile, readFile, updateFile,
