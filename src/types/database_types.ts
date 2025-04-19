@@ -1,4 +1,4 @@
-import { Document } from "mongoose";
+import { Document, Types } from "mongoose";
 
 /* Interfaces */
 // Enumeration for user roles
@@ -49,7 +49,8 @@ export interface IUserSafe {
     role: UserRole; // Default to "user" unless specified otherwise
 }
 // User Model Interface (single user document in the database)
-export interface IUserDocument extends IUser, Document { }
+export interface IUserDocument extends IUser, Document {
+}
 
 
 /*==================================== Project Section begins here =============================================*/
@@ -138,6 +139,13 @@ export interface IProject {
      * From NIfTI pixdim = [?, 0.5, 0.5, 1.0, 2.0, 0, 0, 0], first ? and last 3 zeroes are not used,
      * but the 4 numbers are in mm, mm, mm and seconds. */
     voxelSize?: { x: number; y: number; z?: number; t?: number; };
+
+    // Based on mongoose timestamp
+    createdAt?: Date; // Creation date of the project
+    updatedAt?: Date; // Last update date of the project
+}
+// Project Model Interface (single project document in the database)
+export interface IProjectDocument extends IProject, Document {
 }
 
 // Enumeration for component bounding box classes
@@ -206,7 +214,15 @@ export interface IProjectSegmentationMask {
             }[];
         }[];
     }[];
+
+    // Based on mongoose timestamp
+    createdAt?: Date; // Creation date of the project
+    updatedAt?: Date; // Last update date of the project
 }
+// Segmentation Mask Model Interface (single segmentation mask document in the database)
+export interface IProjectSegmentationMaskDocument extends IProjectSegmentationMask, Document {
+}
+/*==================================== Project Section ends here =============================================*/
 
 
 /* Database Functions */
