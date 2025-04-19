@@ -11,7 +11,7 @@ import LogError from "../utils/error_logger"; // Import the error logging utilit
 const serviceLocation = "Database"; // Service location for error logging
 
 // Import Types
-import { IUser, IUserDocument, IUserSafe, UserRole, CRUDOperation, UserCrudResult } from "../types/database_types"; // Import the user types
+import { IUser, IUserDocument, IUserSafe, UserRole, CRUDOperation, UserCrudResult, IProjectDocument } from "../types/database_types"; // Import the user types
 import { FileType, FileDataType, ComponentBoundingBoxesClass, IProject, IProjectSegmentationMask, ProjectCrudResult } from "../types/database_types"; // Import the project types
 
 // Load environment variables from .env file
@@ -676,20 +676,48 @@ projectSchema.pre('deleteOne', { document: true, query: false }, async function 
 // This can be done in the pre('deleteOne') hook of the projectSegmentationMaskModel
 // TODO or implement in deleteSegmentationMask function?
 
-
-// Create a new project
-// Unique fields should be:
-// - userid (user must exist)
-// - name (user must not have a project with the same name)
-// - originalfilename
-// - originalfilepath (user must not have a project with the same originalfilepath)
-// - extractedfolderpath (user must not have a project with the same extractedfolderpath)
-// - filename (user must not have a project with the same filename)
-// - filehash (user must not have a project with the same filehash) - API developers will implement the hashing
-
+/**
+ * Creates a new project record in the database.
+ * Performs checks to ensure uniqueness constraints are met before creation.
+ * Uniqueness checks include:
+ * - Project name must be unique per user.
+ * - File hash must be unique per user.
+ * - Original file path must be globally unique.
+ * - Extracted folder path must be globally unique.
+ * - Server-generated filename must be globally unique.
+ *
+ * @async
+ * @function createProject
+ * @param {string} userid - The ID of the user creating the project.
+ * @param {string} name - The name for the new project (must be unique for this user).
+ * @param {string} originalfilename - The original name of the uploaded file.
+ * @param {string} filename - The server-generated unique filename (e.g., using UUID or ObjectId).
+ * @param {FileType} filetype - The MIME type of the uploaded file.
+ * @param {number} filesize - The size of the uploaded file in bytes.
+ * @param {string} filehash - The SHA256 hash of the uploaded file content.
+ * @param {string} basepath - The base storage path (e.g., S3 bucket URL).
+ * @param {string} originalfilepath - The unique path/key where the original file is stored.
+ * @param {string} extractedfolderpath - The unique path/key to the folder where extracted files (e.g., JPEGs) will be stored.
+ * @param {FileDataType} datatype - The data type of the image pixels (e.g., float32, uint8).
+ * @param {object} dimensions - The dimensions of the image.
+ * @param {number} dimensions.width - Image width in pixels.
+ * @param {number} dimensions.height - Image height in pixels.
+ * @param {number} dimensions.slices - Number of slices (depth).
+ * @param {number} [dimensions.frames] - Optional number of time frames (for 4D data).
+ * @param {object} [voxelSize] - Optional physical voxel dimensions.
+ * @param {number} voxelSize.x - Voxel size in the x-dimension (mm).
+ * @param {number} voxelSize.y - Voxel size in the y-dimension (mm).
+ * @param {number} [voxelSize.z] - Optional voxel size in the z-dimension (mm).
+ * @param {number} [voxelSize.t] - Optional voxel size in the t-dimension (e.g., seconds).
+ * @param {string} [description] - Optional description for the project.
+ * @returns {Promise<ProjectCrudResult>} A promise resolving to a ProjectCrudResult object.
+ * - On success: `{ success: true, operation: CRUDOperation.CREATE, project: IProjectDocument }`
+ * - On uniqueness conflict: `{ success: false, operation: CRUDOperation.CREATE, message: string }` detailing the conflict.
+ * - On database error: `{ success: false, operation: CRUDOperation.CREATE, message: "Error creating project." }`
+ */
 const createProject = async (
   userid: string,
-  name: string, // Name of the project (must be unique for the user)
+  name: string, // User-given name of the project (must be unique for the user)
   originalfilename: string, // The original name of the file when uploaded
   filename: string, // server generated filename in the format of userid_projid.nii (e.g., 1234567890_1234567890.nii)
   filetype: FileType, // MIME type of the file (e.g., image/nifti, image/dicom) - should be detected by server
@@ -700,48 +728,60 @@ const createProject = async (
   extractedfolderpath: string, // Folder path for the extracted files (e.g., S3 bucket URL)
   datatype: FileDataType, // Data type of the image (e.g., uint8, float32) - should be detected by server
   dimensions: { width: number; height: number; slices: number; frames?: number },
-  voxelSize?: { x: number; y: number; z?: number; t?: number },
-  description?: string,
+  voxelSize?: { x: number; y: number; z?: number; t?: number }, // Optional physical voxel dimensions (e.g., x, y, z, t dimensions) - should be detected by server
+  description?: string, // User-given description of the project (optional)
 ): Promise<ProjectCrudResult> => {
   const operation = CRUDOperation.CREATE;
   try {
-    // Check for any conflicting fields (must be unique)
+    // If user does not exist, return error
+    const user = await userModel.findById(userid);
+    if (!user) {
+      logger.warn(`Database: User ${userid} does not exist.`);
+      return { success: false, operation, message: `User ${userid} does not exist.` };
+    }
+    // Check conflicting fields (name, filehash, originalfilepath, extractedfolderpath, filename) 
     const existingProject = await projectModel.findOne({
       $or: [
-        { userid: userid, name: name },
-        { userid: userid, originalfilepath: originalfilepath },
-        { userid: userid, extractedfolderpath: extractedfolderpath },
-        { userid: userid, filename: filename },
-        { userid: userid, filehash: filehash },
+        { userid: userid, name: name }, // User must not have a project with the same name
+        { userid: userid, filehash: filehash }, // User must not have a project with the same filehash
+        { originalfilepath: originalfilepath },
+        { extractedfolderpath: extractedfolderpath },
+        { filename: filename },
       ],
     });
+    // If conflicts found, aggregate reasons and return error
     if (existingProject) {
-      let reasons = `Project already exists:`;
-      if (existingProject.name === name) {
-        reasons += ` Name "${name}" already exists.`;
-      }
-      if (existingProject.originalfilepath === originalfilepath) {
-        reasons += ` Original filepath "${originalfilepath}" already exists.`;
-      }
-      if (existingProject.extractedfolderpath === extractedfolderpath) {
-        reasons += ` Extracted folder path "${extractedfolderpath}" already exists.`;
-      }
-      if (existingProject.filename === filename) {
-        reasons += ` Filename "${filename}" already exists.`;
-      }
-      if (existingProject.filehash === filehash) {
-        reasons += ` File hash "${filehash}" already exists.`;
-      }
+      let reasons = `Project creation failed due to uniqueness constraint violation:`; // Starting error message
+      if (existingProject.userid === userid && existingProject.name === name) reasons += ` Name "${name}" already exists for this user.`;
+      if (existingProject.userid === userid && existingProject.filehash === filehash) reasons += ` File hash "${filehash}" already exists for this user.`;
+      if (existingProject.originalfilepath === originalfilepath) reasons += ` Original filepath "${originalfilepath}" is already in use globally.`;
+      if (existingProject.extractedfolderpath === extractedfolderpath) reasons += ` Extracted folder path "${extractedfolderpath}" is already in use globally.`;
+      if (existingProject.filename === filename) reasons += ` Server filename "${filename}" is already in use globally.`;
       logger.warn(`Database: Error creating project: ${reasons}`);
       return { success: false, operation, message: reasons };
     }
 
     // Create new project instance
-    
-
-
-
-
+    const newProject: IProjectDocument = new projectModel({
+      userid: userid,
+      name: name,
+      originalfilename: originalfilename,
+      filename: filename,
+      filetype: filetype,
+      filesize: filesize,
+      filehash: filehash,
+      basepath: basepath,
+      originalfilepath: originalfilepath,
+      extractedfolderpath: extractedfolderpath,
+      datatype: datatype,
+      dimensions: dimensions,
+      voxelSize: voxelSize, // Optional
+      description: description, // Optional
+    });
+    // Save the new project to the database
+    await newProject.save();
+    logger.info(`Database: Project ${newProject._id} created successfully: ${newProject.name}, ${newProject.originalfilename}, ${newProject.filename}, ${newProject.filehash}`);
+    return { success: true, operation, project: newProject }; // Return the created project
   } catch (error: unknown) {
     LogError(error as Error, serviceLocation, `Error creating project.`);
     return { success: false, operation: CRUDOperation.CREATE, message: "Error creating project." };
@@ -750,5 +790,5 @@ const createProject = async (
 
 // Using ES modules instead of CommonJS which is module.exports = {connectToDatabase, User};
 // ONLY unit tests should use userModel, fileModel directly, otherwise use the created functions to create users/files.
-export { connectToDatabase, userModel, createUser, readUser, updateUser, deleteUser, authenticateUser, UserRole, IUserSafe, UserCrudResult, CRUDOperation, IUserDocument, IProject, IProjectSegmentationMask, projectModel, projectSegmentationMaskModel };
+export { connectToDatabase, userModel, createUser, readUser, updateUser, deleteUser, authenticateUser, UserRole, IUserSafe, UserCrudResult, CRUDOperation, IUserDocument, IProject, IProjectSegmentationMask, projectModel, projectSegmentationMaskModel, createProject };
 // createFile, readFile, updateFile,
