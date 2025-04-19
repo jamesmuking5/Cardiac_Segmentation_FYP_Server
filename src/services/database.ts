@@ -576,8 +576,6 @@ const authenticateUser = async (
 const projectStatusSchema = new Schema({
   upload: { type: Boolean, default: false, required: true }, // Indicates if the file has been uploaded
   extract: { type: Boolean, default: false, required: true }, // Indicates if the file has been extracted
-  component_bounding_box: { type: Boolean, default: false, required: true }, // Indicates if the component bounding box has been extracted
-  segmentation: { type: Boolean, default: false, required: true }, // Indicates if the segmentation has been performed
 }, { _id: false }); // Disable automatic creation of an _id field for this subdocument
 
 // Create dimension schema for use in project schema (Nest Depth: 1)
@@ -683,7 +681,7 @@ projectSegmentationMaskSchema.pre('save', async function(next) {
   next();
 });
 
-// When a project is deleted, delete all associated segmentation masks
+// When a project is deleted, delete ALL associated segmentation masks
 projectSchema.pre('deleteOne', { document: true, query: false }, async function(next) {
   await projectSegmentationMaskModel.deleteMany({ projectid: this._id });
   next();
