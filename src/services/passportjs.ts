@@ -34,35 +34,34 @@ passport.use( // register a new strategy for local authentication
     })
 );
 
-// Serialize user (store full user details (except password) into session) and called when a user is authenticated/logged in successfully
-passport.serializeUser((user: any, done) => {
-  // Logs the username of the user being serialized for debugging purposes
-  logger.info(`${serviceLocation}: Serializing user: ${user.username}`);
-  done(null, user); // Save only the user ID in the session
+// Store only the user ID in the session
+passport.serializeUser((user: IUserSafe, done) => {
+  logger.info(`${serviceLocation}: Serializing user with ID: ${user._id}`);
+  done(null, user._id); // ← store only the user ID
 });
 
-// Deserialize user (retrieve user info from session)
-passport.deserializeUser(async (username: string, done) => {
+// Use the stored user ID to read the user
+passport.deserializeUser(async (id: string, done) => {
   try {
-    const result = await readUser(username);
-    if (!result.success && result.message) {
-      logger.warn(`${serviceLocation}: Deserialization failed - ${result.message}`);
+    const result = await readUser(id); // fetch by user ID
+    if (!result.success) {  
+      logger.warn(`${serviceLocation}: Deserialization failed for user ID: ${id}`);
       return done(null, false);
     }
-    if (result.user) {
-      logger.info(`${serviceLocation}: Deserialized user: ${result.user.username}`);
+    if (result.success && result.user) {
+      logger.info(`${serviceLocation}: Deserialized user with ID: ${result.user._id}`);
       return done(null, result.user);
     }
   } catch (error: unknown) {
     LogError(error as Error, serviceLocation, "Error during deserialization.");
     return done(error);
   }
-});
+}); 
 
 // Middleware to check if the user is authenticated/logged in
-const isAuthenticated = (req: Request, res: Response, next: NextFunction): void => {
-  if (req.isAuthenticated()) next();
-  else res.status(401).json({ message: "Unauthorized. Please log in." });
+const isAuth = (req: Request, res: Response, next: NextFunction): void => {
+  if (req.isAuthenticated()) return next();
+  res.status(401).json({ message: "Unauthorized. Please log in." });
 }
 
 // Middleware to check if the user is authenticated and is an admin
@@ -71,4 +70,4 @@ const isAuthAndAdmin = (req: Request, res: Response, next: NextFunction): void =
   else res.status(403).json({ message: "Forbidden. Admin access required." });
 };
 
-export { isAuthenticated, isAuthAndAdmin };
+export { isAuth, isAuthAndAdmin };
