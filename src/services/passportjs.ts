@@ -34,30 +34,29 @@ passport.use( // register a new strategy for local authentication
     })
 );
 
-// Store only the username in the session
+// Store only the user ID in the session
 passport.serializeUser((user: IUserSafe, done) => {
-  logger.info(`${serviceLocation}: Serializing user: ${user.username}`);
-  done(null, user.username); // ← store only username
+  logger.info(`${serviceLocation}: Serializing user with ID: ${user._id}`);
+  done(null, user._id); // ← store only the user ID
 });
 
-// Use the stored username to read the user
-passport.deserializeUser(async (username: string, done) => {
+// Use the stored user ID to read the user
+passport.deserializeUser(async (id: string, done) => {
   try {
-    const result = await readUser(username); // always fetch by username
+    const result = await readUser(id); // fetch by user ID
     if (!result.success) {  
-      logger.warn(`${serviceLocation}: Deserialization failed for user: ${username}`);
+      logger.warn(`${serviceLocation}: Deserialization failed for user ID: ${id}`);
       return done(null, false);
     }
-    logger.info(result.success);
     if (result.success && result.user) {
-      logger.info(`${serviceLocation}: Deserialized user: ${result.user.username}`);
+      logger.info(`${serviceLocation}: Deserialized user with ID: ${result.user._id}`);
       return done(null, result.user);
     }
   } catch (error: unknown) {
     LogError(error as Error, serviceLocation, "Error during deserialization.");
     return done(error);
   }
-});
+}); 
 
 // Middleware to check if the user is authenticated/logged in
 const isAuth = (req: Request, res: Response, next: NextFunction): void => {
