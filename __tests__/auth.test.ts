@@ -155,7 +155,7 @@ describe('Authentication Tests', () => {
         });
       } catch (error: any) {
         expect(error.response.status).toBe(401);
-        expect(error.response.data.message).toContain("User not logged in.");
+        expect(error.response.data.message).toContain("Unauthorized. Please log in.");
       }
     });
   });
