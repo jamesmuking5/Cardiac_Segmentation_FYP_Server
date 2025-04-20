@@ -4,7 +4,7 @@
 import express, { Request, Response, NextFunction } from "express";
 import passport from "passport";
 import { IUserSafe, createUser } from "../services/database"; // CRUD + Auth functions for User
-import { isAuthenticated, isAuthAndAdmin } from "../services/passportjs"; // Import Passport.js middleware
+import { isAuth, isAuthAndAdmin } from "../services/passportjs"; // Import Passport.js middleware
 import logger from "../services/logger"; // Import logger
 import { body, validationResult } from 'express-validator'; // Import express-validator for input validation
 import { v4 as uuidv4 } from 'uuid'; // Import UUID for generating unique guest IDs
@@ -128,6 +128,8 @@ router.post("/logout", (req: Request, res: Response): void => {
     if (err) {
       logger.error(err);
       res.status(500).json({ message: "Internal error when logging out." });
+    } else {
+      res.status(200).json({ message: "Logout successful." });
     }
     res.status(200).json({ message: "Logout successful." });
   });
@@ -135,7 +137,7 @@ router.post("/logout", (req: Request, res: Response): void => {
 
 // Middleware-protected route
 // This route is only accessible to users who are logged in (i.e., authenticated users). It acts as a basic protected endpoint.
-router.get("/protected", isAuthenticated, (req: Request, res: Response) => {
+router.get("/protected", isAuth, (req: Request, res: Response) => {
   res.status(200).json({ message: "You are authenticated!" });
 });
 
