@@ -227,13 +227,14 @@ const createUser = async (
  * await readUser();
  */
 const readUser = async (
+  id?: string, // Add an optional `id` parameter
   username?: string,
   email?: string,
   phone?: string,
   role?: UserRole,
 ): Promise<UserCrudResult> => {
-
   const searchConditions: object[] = [];
+  if (id) searchConditions.push({ _id: id }); // Add support for searching by ID
   if (username) searchConditions.push({ username: username });
   if (email) searchConditions.push({ email: email });
   if (phone) searchConditions.push({ phone: phone });
@@ -243,6 +244,7 @@ const readUser = async (
   const filterCriteriaString = searchConditions.length > 0
     ? searchConditions.map(cond => JSON.stringify(cond)).join(' OR ')
     : 'all users';
+
   try {
     let foundUsers: IUserDocument[];
     // If no search conditions are provided, find all users
@@ -255,6 +257,7 @@ const readUser = async (
       logger.info(`Database: Reading users matching ANY of: ${filterCriteriaString}`);
       foundUsers = await userModel.find(query);
     }
+
     // Process the results
     if (foundUsers.length === 0) {
       logger.info(`Database: No users found matching criteria: ${filterCriteriaString}`);
@@ -269,6 +272,17 @@ const readUser = async (
 
     // Convert found users to IUserSafe for public use
     const safeUsers: IUserSafe[] = foundUsers.map(toIUserSafe); // Simplified map usage
+
+    // If searching by ID, return a single user in the `user` field
+    if (id) {
+      const user = safeUsers[0]; // Assume ID is unique
+      return {
+        success: true,
+        operation: CRUDOperation.READ,
+        user: user,
+      };
+    }
+
     logger.info(`Database: Successfully read ${safeUsers.length} user(s) matching criteria: ${filterCriteriaString}`);
     return {
       success: true,
@@ -276,12 +290,11 @@ const readUser = async (
       users: safeUsers,
     };
 
-  }
-  catch (error: unknown) {
-    LogError(error as Error, serviceLocation, `Error reading user ${username}.`);
+  } catch (error: unknown) {
+    LogError(error as Error, serviceLocation, `Error reading user with criteria: ${filterCriteriaString}`);
     return { success: false, operation: CRUDOperation.READ, message: "Error reading user." };
   }
-}
+};
 
 /**
  * Updates an existing user's record in the database.
