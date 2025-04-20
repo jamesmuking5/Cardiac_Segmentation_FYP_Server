@@ -56,7 +56,7 @@ passport.deserializeUser(async (id: string, done) => {
     LogError(error as Error, serviceLocation, "Error during deserialization.");
     return done(error);
   }
-});
+}); 
 
 // Middleware to check if the user is authenticated/logged in
 const isAuth = (req: Request, res: Response, next: NextFunction): void => {
