@@ -253,26 +253,40 @@ describe('Database Service', () => {
     const user2Data = { username: 'reader2', email: 'reader2@example.com', phone: '2020202020', password: 'password2', role: UserRole.User };
     const adminUserData = { username: 'readerAdmin', email: 'readerAdmin@example.com', phone: '3030303030', password: 'passwordAdmin', role: UserRole.Admin };
 
+    // Store created user IDs for ID-based tests
+    let user1Id: string;
+    let user2Id: string;
+    let adminUserId: string;
+
     // Setup users before each test in this block
     beforeEach(async () => {
       // Create the sample users needed for read tests
-      // Note: Global beforeEach already clears the DB
-      await createUser(user1Data.username, user1Data.password, user1Data.email, user1Data.phone, user1Data.role);
-      await createUser(user2Data.username, user2Data.password, user2Data.email, user2Data.phone, user2Data.role);
-      await createUser(adminUserData.username, adminUserData.password, adminUserData.email, adminUserData.phone, adminUserData.role);
+      const res1 = await createUser(user1Data.username, user1Data.password, user1Data.email, user1Data.phone, user1Data.role);
+      const res2 = await createUser(user2Data.username, user2Data.password, user2Data.email, user2Data.phone, user2Data.role);
+      const resAdmin = await createUser(adminUserData.username, adminUserData.password, adminUserData.email, adminUserData.phone, adminUserData.role);
+
+      // Store IDs if creation was successful
+      if (res1.success && res1.user) user1Id = res1.user._id;
+      if (res2.success && res2.user) user2Id = res2.user._id;
+      if (resAdmin.success && resAdmin.user) adminUserId = resAdmin.user._id;
+
+      // Fail fast if setup didn't work
+      if (!user1Id || !user2Id || !adminUserId) {
+        throw new Error("Failed to create users during readUser beforeEach setup.");
+      }
     });
 
     it('should return all users when no criteria are provided', async () => {
       // Act
-      const result = await readUser();
+      const result = await readUser(); // No arguments
 
       // Assert
       expect(result.success).toBe(true);
-      expect(result.operation).toBe('read'); // Assuming CRUDOperation.READ is 'read'
+      expect(result.operation).toBe(CRUDOperation.READ);
       expect(result.users).toBeDefined();
+      expect(result.user).toBeUndefined(); // Should not return single user
       if (result.success && result.users) { // Type guard
         expect(result.users.length).toBe(3); // user1, user2, adminUser
-        // Optional: Check if some expected usernames are present
         const usernames = result.users.map(u => u.username);
         expect(usernames).toContain(user1Data.username);
         expect(usernames).toContain(user2Data.username);
@@ -282,20 +296,44 @@ describe('Database Service', () => {
       }
     });
 
-    it('should find a user by unique username', async () => {
+    // --- NEW: Test searching by ID ---
+    it('should find a single user by unique ID and return it in the user field', async () => {
       // Act
-      const result = await readUser(user1Data.username);
+      const result = await readUser(user1Id); // Pass ID as the first argument
 
       // Assert
       expect(result.success).toBe(true);
-      expect(result.operation).toBe('read');
-      expect(result.users).toBeDefined();
+      expect(result.operation).toBe(CRUDOperation.READ);
+      expect(result.user).toBeDefined(); // Expect single user object
+      expect(result.users).toBeUndefined(); // Expect users array to be undefined
+
+      if (result.success && result.user) {
+        expect(result.user._id).toBe(user1Id);
+        expect(result.user.username).toBe(user1Data.username);
+        expect(result.user.email).toBe(user1Data.email);
+        expect(result.user.phone).toBe(user1Data.phone);
+        expect(result.user.role).toBe(user1Data.role);
+        // IMPORTANT: Verify password is NOT present
+        expect((result.user as any).password).toBeUndefined();
+      } else {
+        fail('readUser(id) failed or did not return a single user.');
+      }
+    });
+
+    it('should find a user by unique username', async () => {
+      // Act
+      const result = await readUser(undefined, user1Data.username); // id is undefined
+
+      // Assert
+      expect(result.success).toBe(true);
+      expect(result.operation).toBe(CRUDOperation.READ);
+      expect(result.users).toBeDefined(); // Expect users array
+      expect(result.user).toBeUndefined(); // Expect single user to be undefined
       if (result.success && result.users) {
         expect(result.users.length).toBe(1);
+        expect(result.users[0]._id).toBe(user1Id);
         expect(result.users[0].username).toBe(user1Data.username);
         expect(result.users[0].email).toBe(user1Data.email);
-        expect(result.users[0].phone).toBe(user1Data.phone);
-        expect(result.users[0].role).toBe(user1Data.role);
         // IMPORTANT: Verify password is NOT present
         expect((result.users[0] as any).password).toBeUndefined();
       } else {
@@ -305,40 +343,51 @@ describe('Database Service', () => {
 
     it('should find a user by unique email', async () => {
       // Act
-      const result = await readUser(undefined, user2Data.email);
+      const result = await readUser(undefined, undefined, user2Data.email); // id, username are undefined
 
       // Assert
       expect(result.success).toBe(true);
+      expect(result.users).toBeDefined();
+      expect(result.user).toBeUndefined();
       expect(result.users?.length).toBe(1);
+      expect(result.users?.[0]._id).toBe(user2Id);
       expect(result.users?.[0].username).toBe(user2Data.username);
       expect(result.users?.[0].email).toBe(user2Data.email);
     });
 
     it('should find a user by unique phone', async () => {
       // Act
-      const result = await readUser(undefined, undefined, adminUserData.phone);
+      const result = await readUser(undefined, undefined, undefined, adminUserData.phone); // id, username, email are undefined
 
       // Assert
       expect(result.success).toBe(true);
+      expect(result.users).toBeDefined();
+      expect(result.user).toBeUndefined();
       expect(result.users?.length).toBe(1);
+      expect(result.users?.[0]._id).toBe(adminUserId);
       expect(result.users?.[0].username).toBe(adminUserData.username);
       expect(result.users?.[0].phone).toBe(adminUserData.phone);
     });
 
     it('should return multiple users when searching by role (UserRole.User)', async () => {
       // Act
-      const result = await readUser(undefined, undefined, undefined, UserRole.User);
+      const result = await readUser(undefined, undefined, undefined, undefined, UserRole.User); // id, username, email, phone are undefined
 
       // Assert
       expect(result.success).toBe(true);
-      expect(result.operation).toBe('read');
+      expect(result.operation).toBe(CRUDOperation.READ);
       expect(result.users).toBeDefined();
+      expect(result.user).toBeUndefined();
       if (result.success && result.users) {
         expect(result.users.length).toBe(2); // reader1, reader2
         const usernames = result.users.map(u => u.username);
+        const ids = result.users.map(u => u._id);
         expect(usernames).toContain(user1Data.username);
         expect(usernames).toContain(user2Data.username);
+        expect(ids).toContain(user1Id);
+        expect(ids).toContain(user2Id);
         expect(usernames).not.toContain(adminUserData.username); // Ensure admin isn't included
+        expect(ids).not.toContain(adminUserId);
       } else {
         fail('readUser(role: User) failed or did not return users.');
       }
@@ -346,18 +395,23 @@ describe('Database Service', () => {
 
     it('should return users matching ANY provided criteria (OR logic)', async () => {
       // Act: Search for user1's username OR admin's email
-      const result = await readUser(user1Data.username, adminUserData.email);
+      const result = await readUser(undefined, user1Data.username, adminUserData.email); // id undefined
 
       // Assert
       expect(result.success).toBe(true);
-      expect(result.operation).toBe('read');
+      expect(result.operation).toBe(CRUDOperation.READ);
       expect(result.users).toBeDefined();
+      expect(result.user).toBeUndefined();
       if (result.success && result.users) {
         expect(result.users.length).toBe(2); // Should find both user1 and adminUser
         const usernames = result.users.map(u => u.username);
+        const ids = result.users.map(u => u._id);
         expect(usernames).toContain(user1Data.username);
         expect(usernames).toContain(adminUserData.username);
+        expect(ids).toContain(user1Id);
+        expect(ids).toContain(adminUserId);
         expect(usernames).not.toContain(user2Data.username);
+        expect(ids).not.toContain(user2Id);
       } else {
         fail('readUser with OR criteria failed or did not return users.');
       }
@@ -365,45 +419,78 @@ describe('Database Service', () => {
 
     it('should return only matching users if one criterion matches and another does not', async () => {
       // Act: Search for user1's username OR a non-existent email
-      const result = await readUser(user1Data.username, 'nonexistent@email.com');
+      const result = await readUser(undefined, user1Data.username, 'nonexistent@email.com'); // id undefined
 
       // Assert
       expect(result.success).toBe(true);
-      expect(result.operation).toBe('read');
+      expect(result.operation).toBe(CRUDOperation.READ);
       expect(result.users).toBeDefined();
+      expect(result.user).toBeUndefined();
       if (result.success && result.users) {
         expect(result.users.length).toBe(1); // Should find only user 1
         expect(result.users[0].username).toBe(user1Data.username);
+        expect(result.users[0]._id).toBe(user1Id);
       } else {
         fail('readUser with one matching OR criteria failed.');
       }
     });
 
-
-    it('should return success: true and empty array when no user matches criteria', async () => {
+    it('should return success: true and empty array when no user matches criteria (username/email)', async () => {
       // Act
-      const result = await readUser('nonexistentuser', 'nobody@nowhere.com');
+      const result = await readUser(undefined, 'nonexistentuser', 'nobody@nowhere.com'); // id undefined
 
       // Assert
       expect(result.success).toBe(true); // Still successful operation
-      expect(result.operation).toBe('read');
+      expect(result.operation).toBe(CRUDOperation.READ);
       expect(result.users).toBeDefined();
+      expect(result.user).toBeUndefined();
       expect(result.users?.length).toBe(0); // Empty array
       expect(result.message).toContain("No users found matching the specified criteria.");
     });
 
-    it('should return success: true and empty array when searching by non-existent role', async () => {
-      // We'll try searching by a non-existent username instead, as roles are limited.
-      const result = await readUser('nonexistentuser');
+    // --- NEW: Test searching by non-existent ID ---
+    it('should return success: true and empty array when searching by non-existent ID', async () => {
+      // Generate a valid-looking but non-existent ObjectId
+      const nonExistentId = new mongoose.Types.ObjectId().toString();
+      // Act
+      const result = await readUser(nonExistentId);
 
       // Assert
       expect(result.success).toBe(true);
-      expect(result.operation).toBe('read');
+      expect(result.operation).toBe(CRUDOperation.READ);
+      // IMPORTANT: Based on the current code, searching by ID when none is found
+      // still goes through the `foundUsers.length === 0` check and returns `users: []`.
+      // It does *not* return `user: undefined` in this specific failure case.
+      expect(result.users).toBeDefined();
       expect(result.users?.length).toBe(0);
+      expect(result.user).toBeUndefined();
       expect(result.message).toContain("No users found matching the specified criteria.");
     });
 
-  });
+    // --- Optional: Test searching by invalid ID format ---
+    it('should return success: false or empty array when searching by invalid ID format', async () => {
+      const invalidId = 'this-is-not-a-valid-object-id';
+      // Act
+      const result = await readUser(invalidId);
+
+      // Assert
+      // Mongoose might throw an error for invalid ID format before the query,
+      // or it might proceed and find nothing. We check for either failure or empty success.
+      if (!result.success) {
+        expect(result.operation).toBe(CRUDOperation.READ);
+        expect(result.message).toContain("Error reading user"); // Expect generic error
+      } else {
+        // If it didn't error, it should return empty
+        expect(result.success).toBe(true);
+        expect(result.operation).toBe(CRUDOperation.READ);
+        expect(result.users).toBeDefined();
+        expect(result.users?.length).toBe(0);
+        expect(result.user).toBeUndefined();
+        expect(result.message).toContain("No users found matching the specified criteria.");
+      }
+    });
+
+  }); // End describe('readUser')
 
   // --- updateUser Tests ---
   describe('updateUser', () => {
@@ -636,7 +723,7 @@ describe('Database Service', () => {
       expect(res.message).toContain(testUsername);
       expect(res.message).not.toContain('error'); // No error message on success
       // Try looking with readUser to confirm deletion
-      const readResult = await readUser(testUsername);
+      const readResult = await readUser("",testUsername); // empty id, search username
       expect(readResult.success).toBe(true); // Should still be successful even if no users found
       expect(readResult.users).toBeDefined();
       if (readResult.success && readResult.users) {
@@ -837,16 +924,5 @@ describe('Database Service', () => {
       compareSpy.mockRestore();
     });
   });
-
-  // // --- createFile Tests --- (OBSOLETE)
-  // describe('createFile', () => {
-  //   // TODO: Add tests for createFile
-  //   // Need to import/use 'createFile' function from database.ts
-  //   // Need to import IFileDocument if checking returned object properties
-
-  //   it.todo('should create a new file record successfully');
-  //   it.todo('should fail if filename already exists');
-  //   it.todo('should fail if filehash already exists');
-  // });
 
 });
