@@ -139,7 +139,7 @@ describe('Authentication Tests', () => {
       } catch (error: any) {
         const data = error.response.data as { message: string };
         expect(error.response.status).toBe(401);
-        expect(data.message).toContain("Unauthorized. Please log in.");
+        expect(error.response.data.message).toContain("Unauthorized. Please log in.");
       }
     });
 
