@@ -202,32 +202,16 @@ const createUser = async (
 };
 
 /**
- * Reads user records from the database based on optional search criteria.
- * If multiple criteria (username, email, phone, role) are provided, users matching *any* of the criteria (`$or` logic) are returned.
- * If no criteria are provided, all users in the database are returned.
- *
- * @async
- * @function readUser
- * @param {string} [username] - Optional. The username to search for.
- * @param {string} [email] - Optional. The email address to search for.
- * @param {string} [phone] - Optional. The phone number to search for.
- * @param {UserRole} [role] - Optional. The user role to filter by.
- * @returns {Promise<UserCrudResult>} A promise that resolves to a `UserCrudResult` object.
- * - On success (users found): `{ success: true, operation: CRUDOperation.READ, users: IUserSafe[] }` containing an array of matching sanitized users.
- * - On success (no users found): `{ success: true, operation: CRUDOperation.READ, users: [], message: "No users found..." }`. Finding no users is considered a successful operation.
- * - On error: `{ success: false, operation: CRUDOperation.READ, message: "Error reading user." }`.
- * @example
- * // Find a specific user by username
- * await readUser("johndoe");
- * // Find all admin users
- * await readUser(undefined, undefined, undefined, UserRole.Admin);
- * // Find users by email OR phone
- * await readUser(undefined, "john@example.com", "1234567890");
- * // Read all users
- * await readUser();
+ * Searches/Finds/Reads for users in the database. If no criteria is provided, it returns all users.
+ * @param id {string} - The ID of the user to read (optional)
+ * @param username {string} - The username of the user to read (optional)
+ * @param email {string} - The email of the user to read (optional)
+ * @param phone {string} - The phone number of the user to read (optional)
+ * @param role {UserRole} - The role of the user to read (optional)
+ * @returns {UserCrudResult} - A promise that resolves to an object indicating success or failure.
  */
 const readUser = async (
-  id?: string, // Add an optional `id` parameter
+  id?: string,
   username?: string,
   email?: string,
   phone?: string,
@@ -240,58 +224,54 @@ const readUser = async (
   if (phone) searchConditions.push({ phone: phone });
   if (role) searchConditions.push({ role: role });
 
-  // String representation for logging purposes
   const filterCriteriaString = searchConditions.length > 0
     ? searchConditions.map(cond => JSON.stringify(cond)).join(' OR ')
     : 'all users';
 
   try {
-    let foundUsers: IUserDocument[];
-    // If no search conditions are provided, find all users
     if (searchConditions.length === 0) {
       logger.info(`Database: Reading all users.`);
-      foundUsers = await userModel.find({});
-    } else {
-      // If search conditions ARE provided, use $or logic
-      const query = { $or: searchConditions };
-      logger.info(`Database: Reading users matching ANY of: ${filterCriteriaString}`);
-      foundUsers = await userModel.find(query);
-    }
-
-    // Process the results
-    if (foundUsers.length === 0) {
-      logger.info(`Database: No users found matching criteria: ${filterCriteriaString}`);
-      // Return SUCCESS, but with empty array - It's not an error to find nothing
-      return {
-        success: true, // Operation succeeded
-        operation: CRUDOperation.READ,
-        users: [], // Found zero users
-        message: "No users found matching the specified criteria.",
-      };
-    }
-
-    // Convert found users to IUserSafe for public use
-    const safeUsers: IUserSafe[] = foundUsers.map(toIUserSafe); // Simplified map usage
-
-    // If searching by ID, return a single user in the `user` field
-    if (id) {
-      const user = safeUsers[0]; // Assume ID is unique
+      const foundUsers = await userModel.find({});
+      const safeUsers = foundUsers.map(toIUserSafe);
       return {
         success: true,
         operation: CRUDOperation.READ,
-        user: user,
+        users: safeUsers,
+      };
+    } else {
+      const query = { $or: searchConditions };
+      logger.info(`Database: Reading users matching ANY of: ${filterCriteriaString}`);
+      const foundUsers = await userModel.find(query);
+
+      if (foundUsers.length === 0) {
+        logger.info(`Database: No users found matching criteria: ${filterCriteriaString}`);
+        return {
+          success: true,
+          operation: CRUDOperation.READ,
+          users: [],
+          message: "No users found matching the specified criteria.",
+        };
+      }
+
+      // If searching by ID, return a single user in the `user` field
+      if (id) {
+        const user = foundUsers[0]; // Assume ID is unique
+        return {
+          success: true,
+          operation: CRUDOperation.READ,
+          user: toIUserSafe(user),
+        };
+      }
+
+      const safeUsers = foundUsers.map(toIUserSafe);
+      return {
+        success: true,
+        operation: CRUDOperation.READ,
+        users: safeUsers,
       };
     }
-
-    logger.info(`Database: Successfully read ${safeUsers.length} user(s) matching criteria: ${filterCriteriaString}`);
-    return {
-      success: true,
-      operation: CRUDOperation.READ,
-      users: safeUsers,
-    };
-
   } catch (error: unknown) {
-    LogError(error as Error, serviceLocation, `Error reading user with criteria: ${filterCriteriaString}`);
+    LogError(error as Error, serviceLocation, `Error reading user with ID: ${id}.`);
     return { success: false, operation: CRUDOperation.READ, message: "Error reading user." };
   }
 };
