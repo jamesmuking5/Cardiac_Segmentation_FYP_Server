@@ -96,21 +96,6 @@ describe('Authentication Tests', () => {
         expect(data.message).toContain("User already exists");
       }
     });
-
-    // it('should register a user with non-English characters in username and email', async () => {
-    //   const response = await client.post(`${baseURL}/auth/register`, {
-    //     username: '测试用户', 
-    //     password: 'password123',
-    //     email: '测试用户@example.com',
-    //     phone: '1234345654345690',
-    //   });
-
-    //   const data = response.data as { message: string; username?: string };
-
-    //   expect(response.status).toBe(201);
-    //   expect(data.message).toContain("Registration successful");
-    //   expect(data.username).toBe('测试用户');
-    // });
   });
 
   describe('Login Functionality', () => {
@@ -126,39 +111,6 @@ describe('Authentication Tests', () => {
         expect(error.response.data.message).toContain("Invalid username or password.");
       }
     });
-
-    // it('should register and log in successfully', async () => {
-    //   // Register the user
-    //   const response = await client.post(`${baseURL}/auth/register`, {
-    //     username: 'testuser',
-    //     password: 'password123',
-    //     email: 'testuser@example.com',
-    //     phone: '1234345654345690',
-    //   });
-
-    //   const regData = response.data as { message: string; username?: string };
-
-    //   expect(response.status).toBe(201); 
-    //   expect(regData.message).toContain("Registration successful");
-    //   expect(regData.username).toBe('testuser');
-
-    //   // Log in with the registered user
-    //   const loginResponse = await client.post(`${baseURL}/auth/login`, {
-    //     username: 'testuser',
-    //     password: 'password123',
-    //   });
-
-    //   const loginData = loginResponse.data as {
-    //     login: boolean;
-    //     username?: string;
-    //     message: string;
-    //   };
-
-    //   expect(loginResponse.status).toBe(200);
-    //   expect(loginData.login).toBe(true);
-    //   expect(loginData.username).toBe('testuser');
-    //   expect(loginData.message).toContain("Login successful.");
-    // });
 
     it('should log in as a guest successfully', async () => {
       const response = await client.post(`${baseURL}/auth/guest`);
