@@ -768,6 +768,35 @@ const createProject = async (
 ): Promise<ProjectCrudResult> => {
   const operation = CRUDOperation.CREATE;
   try {
+    // Validate input parameters
+    // Check if all the string inputs are non-empty strings
+    const stringInputs = [userid, name, originalfilename, filename, filehash, basepath, originalfilepath, extractedfolderpath, datatype];
+    const emptyStringInputs = stringInputs.filter(input => !input || typeof input !== 'string' || input.trim() === '');
+    if (emptyStringInputs.length > 0) {
+      logger.warn(`Database: Invalid input parameters for project creation: ${emptyStringInputs.join(", ")}`);
+      return { success: false, operation, message: `Invalid input parameters for project creation: ${emptyStringInputs.join(", ")}` };
+    }
+    // Check if the numeric inputs are valid numbers
+    if (isNaN(filesize) || isNaN(dimensions.width) || isNaN(dimensions.height) || isNaN(dimensions.slices)) {
+      logger.warn(`Database: Invalid numeric input parameters for project creation: ${JSON.stringify({ filesize, dimensions })}`);
+      return { success: false, operation, message: `Invalid numeric input parameters for project creation.` };
+    }    
+    // Check if all numeric inputs are more than 0
+    const numericInputs = [filesize, dimensions.width, dimensions.height, dimensions.slices];
+    const negativeNumericInputs = numericInputs.filter(input => input <= 0);
+    if (negativeNumericInputs.length > 0) {
+      logger.warn(`Database: Invalid numeric input parameters for project creation: ${negativeNumericInputs.join(", ")}`);
+      return { success: false, operation, message: `Invalid numeric input parameters for project creation.` };
+    }
+    // Check that voxelSize inputs are more than 0 if provided
+    if (voxelsize) {
+      const voxelNumericInputs = [voxelsize.x, voxelsize.y, voxelsize.z, voxelsize.t].filter(input => (input ?? 0) <= 0);
+      if (voxelNumericInputs.length > 0) {
+        logger.warn(`Database: Invalid voxel size input parameters for project creation: ${voxelNumericInputs.join(", ")}`);
+        return { success: false, operation, message: `Invalid voxel size input parameters for project creation.` };
+      }
+    }
+
     // If user does not exist, return error
     const user = await userModel.findById(userid);
     if (!user) {
@@ -824,7 +853,6 @@ const createProject = async (
     return { success: false, operation: CRUDOperation.CREATE, message: "Error creating project." };
   }
 }
-
 
 
 // Using ES modules instead of CommonJS which is module.exports = {connectToDatabase, User};
