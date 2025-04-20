@@ -8,6 +8,7 @@ import { isAuth, isAuthAndAdmin } from "../services/passportjs"; // Import Passp
 import logger from "../services/logger"; // Import logger
 import { body, validationResult } from 'express-validator'; // Import express-validator for input validation
 import { v4 as uuidv4 } from 'uuid'; // Import UUID for generating unique guest IDs
+import LogError  from "../utils/error_logger"; // Import custom error logging utility
 
 const router = express.Router();
 
@@ -75,7 +76,7 @@ router.post("/register",
   });
 
 // Guest login route
-router.post("/guest", async (req: Request, res: Response) => {
+router.post("/guest", async (req: Request, res: Response): Promise<void> => {
   try {
     const guestID = uuidv4();
     const username = `guest_${guestID}`;
@@ -87,18 +88,20 @@ router.post("/guest", async (req: Request, res: Response) => {
 
     if (!result.success || !result.user) {
       logger.error(`Guest registration failed: ${result.message}`);
-      return res.status(500).json({ login: false, message: "Failed to create guest account." });
+      res.status(500).json({ login: false, message: "Failed to create guest account." });
+      return;
     }
 
     if (!result.user) {
       logger.error("Guest login failed: User is undefined.");
-      return res.status(500).json({ message: "Guest login failed." });
+      res.status(500).json({ message: "Guest login failed." });
+      return;
     }
-
     return req.logIn(result.user, (err) => {
       if (err) {
         logger.error(`Guest login error: ${err}`);
-        return res.status(500).json({ message: "Guest login failed." });
+        res.status(500).json({ message: "Guest login failed." });
+        return;
       }
 
       logger.info(`Guest user ${result.user!.username} logged in successfully.`);
@@ -110,9 +113,10 @@ router.post("/guest", async (req: Request, res: Response) => {
         message: "Logged in as guest.",
       });
     });
-  } catch (error: any) {
-    logger.error(`Unexpected guest login error: ${error.message}`);
-    return res.status(500).json({ message: "Unexpected error during guest login." });
+  } catch (error: unknown) {
+    LogError(error as Error, "Guest Login", "Unexpected error during guest login.");
+    res.status(500).json({ message: "Unexpected error during guest login." });
+    return;
   }
 });
 
