@@ -278,27 +278,24 @@ const createUser = async (
 };
 
 
-// Function to read user or users based on property of IUser
 /**
  * Searches/Finds/Reads for users in the database. If no criteria is provided, it returns all users.
+ * @param id {string} - The ID of the user to read (optional)
  * @param username {string} - The username of the user to read (optional)
  * @param email {string} - The email of the user to read (optional)
  * @param phone {string} - The phone number of the user to read (optional)
  * @param role {UserRole} - The role of the user to read (optional)
  * @returns {UserCrudResult} - A promise that resolves to an object indicating success or failure.
- * @example If only require username search, use readUser("username")
- * @example If only require email search, use readUser(undefined, "email")
- * @example If only require phone search, use readUser(undefined, undefined, "phone")
- * @example If only require role search, use readUser(undefined, undefined, undefined, UserRole.Admin)
- * @description If no criteria is provided, it returns all users
  */
 const readUser = async (
+  id?: string,
   username?: string,
   email?: string,
   phone?: string,
   role?: UserRole,
 ): Promise<UserCrudResult> => {
   const searchConditions: object[] = [];
+  if (id) searchConditions.push({ _id: id }); // Add support for searching by ID
   if (username) searchConditions.push({ username: username });
   if (email) searchConditions.push({ email: email });
   if (phone) searchConditions.push({ phone: phone });
@@ -333,9 +330,9 @@ const readUser = async (
         };
       }
 
-      // If searching by username, return a single user in the `user` field
-      if (username) {
-        const user = foundUsers[0]; // Assume username is unique
+      // If searching by ID, return a single user in the `user` field
+      if (id) {
+        const user = foundUsers[0]; // Assume ID is unique
         return {
           success: true,
           operation: CRUDOperation.READ,
@@ -351,7 +348,7 @@ const readUser = async (
       };
     }
   } catch (error: unknown) {
-    LogError(error as Error, serviceLocation, `Error reading user ${username}.`);
+    LogError(error as Error, serviceLocation, `Error reading user with ID: ${id}.`);
     return { success: false, operation: CRUDOperation.READ, message: "Error reading user." };
   }
 };
