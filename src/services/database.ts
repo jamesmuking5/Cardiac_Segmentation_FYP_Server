@@ -576,6 +576,7 @@ const projectSchema = new Schema<IProject>({
   // User inputs
   name: { type: String, required: true }, // Name of the project
   originalfilename: { type: String, required: true }, // Original filename of the uploaded file
+  isSaved: { type: Boolean, required: true, default: false }, // Indicates if the project is saved
   description: { type: String, required: false }, // Description of the project
   // File properties
   filename: { type: String, required: true }, // Server rename - e.g., userid_projid.nii - use new mongoose.Types.ObjectId() to pregenerate before creating document in DB
@@ -634,6 +635,8 @@ const projectSegmentationMaskSchema = new Schema<IProjectSegmentationMask>({
   // User inputs
   name: { type: String, required: true }, // Name of the segmentation mask
   description: { type: String, required: false }, // Description of the segmentation mask
+  isSaved: { type: Boolean, required: true, default: false }, // Indicates if the segmentation mask is saved
+  isMedSAMOutput: { type: Boolean, required: true, default: false }, // Indicates if the segmentation mask is a MedSAM output
   // Properties of extracted folder + location tracking
   // Index should be 0 based
   frames: [{ type: projectSegmentationMaskFramesSchema, required: true }], // Array of frames for the segmentation mask
@@ -753,6 +756,7 @@ const createProject = async (
   userid: string,
   name: string, // User-given name of the project (must be unique for the user)
   originalfilename: string, // The original name of the file when uploaded
+  isSaved: boolean, // Indicates if the file should be saved (true) or not (false)
   filename: string, // server generated filename in the format of userid_filehash.nii (e.g., 1234567890_2630fcede25328c13a15c4dfe6376c068201eb1f8d871736cd8197c2b1463ed3.nii)
   filetype: FileType, // MIME type of the file (e.g., image/nifti, image/dicom) - should be detected by server
   filesize: number, // In bytes
@@ -768,6 +772,35 @@ const createProject = async (
 ): Promise<ProjectCrudResult> => {
   const operation = CRUDOperation.CREATE;
   try {
+    // Validate input parameters
+    // Check if all the string inputs are non-empty strings
+    const stringInputs = [userid, name, originalfilename, filename, filehash, basepath, originalfilepath, extractedfolderpath, datatype];
+    const emptyStringInputs = stringInputs.filter(input => !input || typeof input !== 'string' || input.trim() === '');
+    if (emptyStringInputs.length > 0) {
+      logger.warn(`Database: Invalid input parameters for project creation: ${emptyStringInputs.join(", ")}`);
+      return { success: false, operation, message: `Invalid input parameters for project creation: ${emptyStringInputs.join(", ")}` };
+    }
+    // Check if the numeric inputs are valid numbers
+    if (isNaN(filesize) || isNaN(dimensions.width) || isNaN(dimensions.height) || isNaN(dimensions.slices)) {
+      logger.warn(`Database: Invalid numeric input parameters for project creation: ${JSON.stringify({ filesize, dimensions })}`);
+      return { success: false, operation, message: `Invalid numeric input parameters for project creation.` };
+    }    
+    // Check if all numeric inputs are more than 0
+    const numericInputs = [filesize, dimensions.width, dimensions.height, dimensions.slices];
+    const negativeNumericInputs = numericInputs.filter(input => input <= 0);
+    if (negativeNumericInputs.length > 0) {
+      logger.warn(`Database: Invalid numeric input parameters for project creation: ${negativeNumericInputs.join(", ")}`);
+      return { success: false, operation, message: `Invalid numeric input parameters for project creation.` };
+    }
+    // Check that voxelSize inputs are more than 0 if provided
+    if (voxelsize) {
+      const voxelNumericInputs = [voxelsize.x, voxelsize.y, voxelsize.z, voxelsize.t].filter(input => (input ?? 0) <= 0);
+      if (voxelNumericInputs.length > 0) {
+        logger.warn(`Database: Invalid voxel size input parameters for project creation: ${voxelNumericInputs.join(", ")}`);
+        return { success: false, operation, message: `Invalid voxel size input parameters for project creation.` };
+      }
+    }
+
     // If user does not exist, return error
     const user = await userModel.findById(userid);
     if (!user) {
@@ -801,6 +834,7 @@ const createProject = async (
       userid: userid,
       name: name,
       originalfilename: originalfilename,
+      isSaved: isSaved,
       filename: filename,
       filetype: filetype,
       filesize: filesize,
@@ -824,7 +858,6 @@ const createProject = async (
     return { success: false, operation: CRUDOperation.CREATE, message: "Error creating project." };
   }
 }
-
 
 
 // Using ES modules instead of CommonJS which is module.exports = {connectToDatabase, User};
