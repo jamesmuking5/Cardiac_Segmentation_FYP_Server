@@ -95,6 +95,7 @@ export enum FileDataType {
  * @property {string} name - The name of the project.
  * @property {string} originalfilename - The original filename of the uploaded file.
  * @property {string} description - A description of the project (optional).
+ * @property {boolean} isSaved - Indicates if the project should be saved.
  * @property {string} filename - The server-renamed filename of the uploaded file, using a format of userid_filehash.nii preferably.
  * @property {FileType} filetype - The MIME type of the file (e.g., image/nifti, application/dicom).
  * @property {number} filesize - The size of the renamed file in bytes.
@@ -126,6 +127,7 @@ export interface IProject {
     name: string; // Name of the project
     originalfilename: string;
     description?: string;
+    isSaved: boolean; // Indicates if the project is saved in the database
     // File properties
     filename: string; // Server rename - e.g., userid_projid.nii - use new mongoose.Types.ObjectId() to pregenerate before creating document in DB
     filetype: FileType; // MIME type of the file
@@ -184,6 +186,8 @@ export enum ComponentBoundingBoxesClass {
  * @property {string} projectid - The unique MongoDB project ID of the project to which the segmentation mask belongs.
  * @property {string} name - The name of the segmentation mask.
  * @property {string} description - A description of the segmentation mask (optional).
+ * @property {boolean} isSaved - Indicates if the segmentation mask should be saved.
+ * @property {boolean} isMedSAMOutput - Indicates if the segmentation mask is a MedSAM output (should not delete if its the output of MedSAM).
  * @property {object[]} frames - An array of frame objects, each containing slice information.
  * @property {number} frameIndex - The index of the frame (0-based).
  * @property {object[]} slices - An array of slice objects, each containing segmentation mask information.
@@ -206,6 +210,8 @@ export interface IProjectSegmentationMask {
     // User inputs
     name: string; // Name of the segmentation mask
     description?: string; // Description of the segmentation mask
+    isSaved: boolean; // Indicates if the segmentation mask is saved in the database
+    isMedSAMOutput: boolean; // Indicates if the segmentation mask is a MedSAM output (should not delete if its the output of MedSAM)
     // Properties of the extracted folder + location tracking
     // Note - index are 0-based
     // If the segmentation mask is a single frame, there will be only one entry in the frames array

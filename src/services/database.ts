@@ -576,6 +576,7 @@ const projectSchema = new Schema<IProject>({
   // User inputs
   name: { type: String, required: true }, // Name of the project
   originalfilename: { type: String, required: true }, // Original filename of the uploaded file
+  isSaved: { type: Boolean, required: true, default: false }, // Indicates if the project is saved
   description: { type: String, required: false }, // Description of the project
   // File properties
   filename: { type: String, required: true }, // Server rename - e.g., userid_projid.nii - use new mongoose.Types.ObjectId() to pregenerate before creating document in DB
@@ -634,6 +635,8 @@ const projectSegmentationMaskSchema = new Schema<IProjectSegmentationMask>({
   // User inputs
   name: { type: String, required: true }, // Name of the segmentation mask
   description: { type: String, required: false }, // Description of the segmentation mask
+  isSaved: { type: Boolean, required: true, default: false }, // Indicates if the segmentation mask is saved
+  isMedSAMOutput: { type: Boolean, required: true, default: false }, // Indicates if the segmentation mask is a MedSAM output
   // Properties of extracted folder + location tracking
   // Index should be 0 based
   frames: [{ type: projectSegmentationMaskFramesSchema, required: true }], // Array of frames for the segmentation mask
@@ -753,6 +756,7 @@ const createProject = async (
   userid: string,
   name: string, // User-given name of the project (must be unique for the user)
   originalfilename: string, // The original name of the file when uploaded
+  isSaved: boolean, // Indicates if the file should be saved (true) or not (false)
   filename: string, // server generated filename in the format of userid_filehash.nii (e.g., 1234567890_2630fcede25328c13a15c4dfe6376c068201eb1f8d871736cd8197c2b1463ed3.nii)
   filetype: FileType, // MIME type of the file (e.g., image/nifti, image/dicom) - should be detected by server
   filesize: number, // In bytes
@@ -830,6 +834,7 @@ const createProject = async (
       userid: userid,
       name: name,
       originalfilename: originalfilename,
+      isSaved: isSaved,
       filename: filename,
       filetype: filetype,
       filesize: filesize,
