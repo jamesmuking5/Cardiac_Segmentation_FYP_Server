@@ -1066,10 +1066,39 @@ const updateProject = async (
     LogError(error as Error, serviceLocation, `Error updating project ${projectid} with error: ${error}.`);
     return { success: false, operation, message: "Error updating project." };
   }
+}
 
+/**
+ * Deletes a project from the database by ID, triggering cascade deletion of all associated segmentation masks.
+ * 
+ * @async
+ * @function deleteProject
+ * @param {string} projectid - The ID of the project to delete
+ * @returns {Promise<ProjectCrudResult>} Result object with success status, operation type, and message
+ * - Success: {success: true, operation: DELETE, message: "Project deleted successfully"}
+ * - Not found: {success: false, operation: DELETE, message: "Project not found"}
+ * - Error: {success: false, operation: DELETE, message: "Error deleting project"}
+ */
+const deleteProject = async (projectid: string): Promise<ProjectCrudResult> => {
+  const operation = CRUDOperation.DELETE;
+  try {
+    // Find the project by ID
+    const project = await projectModel.findById(projectid);
+    if (!project) {
+      logger.warn(`Database: Project ${projectid} not found.`);
+      return { success: false, operation, message: `Project ${projectid} not found.` };
+    }
+    // Delete the project
+    await project.deleteOne();
+    logger.info(`Database: Project ${project._id} deleted successfully.`);
+    return { success: true, operation, message: `Project ${project._id} deleted successfully.` };
+  } catch (error: unknown) {
+    LogError(error as Error, serviceLocation, `Error deleting project ${projectid}.`);
+    return { success: false, operation, message: "Error deleting project." };
+  }
 }
 
 // Using ES modules instead of CommonJS which is module.exports = {connectToDatabase, User};
 // ONLY unit tests should use userModel, fileModel directly, otherwise use the created functions to create users/files.
-export { connectToDatabase, userModel, createUser, readUser, updateUser, deleteUser, authenticateUser, UserRole, IUserSafe, UserCrudResult, CRUDOperation, IUserDocument, IProject, IProjectSegmentationMask, projectModel, projectSegmentationMaskModel, createProject, readProject, updateProject };
+export { connectToDatabase, userModel, createUser, readUser, updateUser, deleteUser, authenticateUser, UserRole, IUserSafe, UserCrudResult, CRUDOperation, IUserDocument, IProject, IProjectSegmentationMask, projectModel, projectSegmentationMaskModel, createProject, readProject, updateProject, deleteProject };
 // createFile, readFile, updateFile,
