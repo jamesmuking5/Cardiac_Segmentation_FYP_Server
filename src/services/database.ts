@@ -785,7 +785,7 @@ const createProject = async (
     if (isNaN(filesize) || isNaN(dimensions.width) || isNaN(dimensions.height) || isNaN(dimensions.slices)) {
       logger.warn(`Database: Invalid numeric input parameters for project creation: ${JSON.stringify({ filesize, dimensions })}`);
       return { success: false, operation, message: `Invalid numeric input parameters for project creation.` };
-    }    
+    }
     // Check if all numeric inputs are more than 0
     const numericInputs = [filesize, dimensions.width, dimensions.height, dimensions.slices];
     const negativeNumericInputs = numericInputs.filter(input => input <= 0);
@@ -860,8 +860,231 @@ const createProject = async (
   }
 }
 
+/**
+ * Reads/searches for projects in the database based on various optional criteria.
+ * Dynamically constructs a MongoDB query based on the provided parameters.
+ * Supports filtering by ID, user, name (case-insensitive), description (case-insensitive),
+ * saved status, filename (case-insensitive), file types (array), file size range,
+ * processing status, data types (array), dimension ranges, voxel size ranges, and creation date range.
+ *
+ * @async
+ * @function readProject
+ * @param {string} [projectid] - Optional project ID to find a specific project.
+ * @param {string} [userid] - Optional user ID to filter projects by owner.
+ * @param {string} [name] - Optional project name fragment for case-insensitive search.
+ * @param {string} [description] - Optional description fragment for case-insensitive search.
+ * @param {boolean} [isSaved] - Optional boolean to filter by saved status.
+ * @param {string} [filename] - Optional filename fragment for case-insensitive search.
+ * @param {FileType[]} [filetype] - Optional array of file types (e.g., [FileType.NIFTI]) to filter by.
+ * @param {object} [filesize] - Optional object defining a file size range.
+ * @param {number} [filesize.minsize] - Minimum file size (inclusive).
+ * @param {number} [filesize.maxsize] - Maximum file size (inclusive).
+ * @param {object} [status] - Optional object to filter by processing status.
+ * @param {boolean} [status.upload] - Filter by upload status.
+ * @param {boolean} [status.extract] - Filter by extraction status.
+ * @param {FileDataType[]} [datatype] - Optional array of data types to filter by.
+ * @param {object} [dimensions] - Optional object defining dimension ranges.
+ * @param {object} [dimensions.width] - Width range { minsize?, maxsize? }.
+ * @param {object} [dimensions.height] - Height range { minsize?, maxsize? }.
+ * @param {object} [dimensions.slices] - Slices range { minsize?, maxsize? }.
+ * @param {object} [dimensions.frames] - Frames range { minsize?, maxsize? }.
+ * @param {object} [voxelsize] - Optional object defining voxel size ranges.
+ * @param {object} [voxelsize.x] - Voxel X range { minsize?, maxsize? }.
+ * @param {object} [voxelsize.y] - Voxel Y range { minsize?, maxsize? }.
+ * @param {object} [voxelsize.z] - Voxel Z range { minsize?, maxsize? }.
+ * @param {object} [voxelsize.t] - Voxel T range { minsize?, maxsize? }.
+ * @param {object} [daterange] - Optional object defining a creation date range.
+ * @param {Date} [daterange.start] - Start date (inclusive).
+ * @param {Date} [daterange.end] - End date (inclusive).
+ * @returns {Promise<ProjectCrudResult>} A promise resolving to a ProjectCrudResult object.
+ * - On success with results: `{ success: true, operation: CRUDOperation.READ, projects: IProjectDocument[] }`.
+ * - On success with no results: `{ success: true, operation: CRUDOperation.READ, message: "No projects found..." }`.
+ * - On error: `{ success: false, operation: CRUDOperation.READ, message: "Error reading projects." }`.
+ */
+const readProject = async (
+  projectid?: string,
+  userid?: string,
+  name?: string,
+  description?: string,
+  isSaved?: boolean,
+  filename?: string,
+  filetype?: FileType[], // array of file types to filter by (e.g., [FileType.NIFTI, FileType.DICOM])
+  filesize?: { minsize?: number; maxsize?: number },
+  status?: { upload?: boolean; extract?: boolean },
+  datatype?: FileDataType[],
+  dimensions?: { width?: { minsize?: number; maxsize?: number }, height?: { minsize?: number; maxsize?: number }, slices?: { minsize?: number; maxsize?: number }, frames?: { minsize?: number; maxsize?: number }, },
+  voxelsize?: { x?: { minsize?: number; maxsize?: number }, y?: { minsize?: number; maxsize?: number }, z?: { minsize?: number; maxsize?: number }, t?: { minsize?: number; maxsize?: number }, },
+  daterange?: { start?: Date; end?: Date },
+): Promise<ProjectCrudResult> => {
+  const operation = CRUDOperation.READ;
+  const query: any = {}; // Use 'any' to allow dynamic query construction
+  try {
+    // create a query object to filter the projects
+    if (projectid) query._id = projectid; // Filter by project ID
+    if (userid) query.userid = userid; // Filter by user ID
+    if (name) query.name = { $regex: name, $options: 'i' }; // Filter by project name (case-insensitive)
+    if (description) query.description = { $regex: description, $options: 'i' }; // Filter by project description (case-insensitive)
+    if (isSaved !== undefined) query.isSaved = isSaved; // Filter by saved status
+    if (filename) query.filename = { $regex: filename, $options: 'i' }; // Filter by filename (case-insensitive)
+    if (filetype) query.filetype = { $in: filetype }; // Filter by file type (array of types)
+    if (filesize) {
+      const sizeQuery: any = {};
+      if (filesize.minsize !== undefined) sizeQuery.$gte = filesize.minsize;
+      if (filesize.maxsize !== undefined) sizeQuery.$lte = filesize.maxsize;
+      if (Object.keys(sizeQuery).length > 0) { // Only add if $gte or $lte was set
+        query.filesize = sizeQuery;
+      }
+    }
+    if (status) {
+      if (status.upload !== undefined) query['status.upload'] = status.upload; // Filter by upload status
+      if (status.extract !== undefined) query['status.extract'] = status.extract; // Filter by extract status
+    }
+    if (datatype) query.datatype = { $in: datatype }; // Filter by data type (array of types)
+    if (dimensions) {
+      if (dimensions.width) {
+        const dimWidthQuery: any = {};
+        if (dimensions.width.minsize !== undefined) dimWidthQuery.$gte = dimensions.width.minsize;
+        if (dimensions.width.maxsize !== undefined) dimWidthQuery.$lte = dimensions.width.maxsize;
+        if (Object.keys(dimWidthQuery).length > 0) {
+          query['dimensions.width'] = dimWidthQuery;
+        }
+      }
+
+      if (dimensions.height) {
+        const dimHeightQuery: any = {};
+        if (dimensions.height.minsize !== undefined) dimHeightQuery.$gte = dimensions.height.minsize;
+        if (dimensions.height.maxsize !== undefined) dimHeightQuery.$lte = dimensions.height.maxsize;
+        if (Object.keys(dimHeightQuery).length > 0) {
+          query['dimensions.height'] = dimHeightQuery;
+        }
+      }
+
+      if (dimensions.slices) {
+        const dimSlicesQuery: any = {};
+        if (dimensions.slices.minsize !== undefined) dimSlicesQuery.$gte = dimensions.slices.minsize;
+        if (dimensions.slices.maxsize !== undefined) dimSlicesQuery.$lte = dimensions.slices.maxsize;
+        if (Object.keys(dimSlicesQuery).length > 0) {
+          query['dimensions.slices'] = dimSlicesQuery;
+        }
+      }
+
+      if (dimensions.frames) {
+        const dimFramesQuery: any = {};
+        if (dimensions.frames.minsize !== undefined) dimFramesQuery.$gte = dimensions.frames.minsize;
+        if (dimensions.frames.maxsize !== undefined) dimFramesQuery.$lte = dimensions.frames.maxsize;
+        if (Object.keys(dimFramesQuery).length > 0) {
+          query['dimensions.frames'] = dimFramesQuery;
+        }
+      }
+    }
+
+    if (voxelsize) {
+      if (voxelsize.x) {
+        const voxelXQuery: any = {};
+        if (voxelsize.x.minsize !== undefined) voxelXQuery.$gte = voxelsize.x.minsize;
+        if (voxelsize.x.maxsize !== undefined) voxelXQuery.$lte = voxelsize.x.maxsize;
+        if (Object.keys(voxelXQuery).length > 0) {
+          query['voxelsize.x'] = voxelXQuery;
+        }
+      }
+
+      if (voxelsize.y) {
+        const voxelYQuery: any = {};
+        if (voxelsize.y.minsize !== undefined) voxelYQuery.$gte = voxelsize.y.minsize;
+        if (voxelsize.y.maxsize !== undefined) voxelYQuery.$lte = voxelsize.y.maxsize;
+        if (Object.keys(voxelYQuery).length > 0) {
+          query['voxelsize.y'] = voxelYQuery;
+        }
+      }
+
+      if (voxelsize.z) {
+        const voxelZQuery: any = {};
+        if (voxelsize.z.minsize !== undefined) voxelZQuery.$gte = voxelsize.z.minsize;
+        if (voxelsize.z.maxsize !== undefined) voxelZQuery.$lte = voxelsize.z.maxsize;
+        if (Object.keys(voxelZQuery).length > 0) {
+          query['voxelsize.z'] = voxelZQuery;
+        }
+      }
+
+      if (voxelsize.t) {
+        const voxelTQuery: any = {};
+        if (voxelsize.t.minsize !== undefined) voxelTQuery.$gte = voxelsize.t.minsize;
+        if (voxelsize.t.maxsize !== undefined) voxelTQuery.$lte = voxelsize.t.maxsize;
+        if (Object.keys(voxelTQuery).length > 0) {
+          query['voxelsize.t'] = voxelTQuery;
+        }
+      }
+    }
+
+    if (daterange) {
+      const dateQuery: any = {};
+      if (daterange.start) dateQuery.$gte = daterange.start;
+      if (daterange.end) dateQuery.$lte = daterange.end;
+      if (Object.keys(dateQuery).length > 0) {
+        query.createdAt = dateQuery;
+      }
+    }
+
+    logger.info(`Database: Reading projects matching query: ${JSON.stringify(query)}`);
+    const projects = await projectModel.find(query);
+
+    if (projects.length === 0) {
+      logger.info(`Database: No projects found matching the criteria.`);
+      return { success: true, operation: operation, message: "No projects found matching the criteria." };
+    }
+
+    logger.info(`Database: Found ${projects.length} projects matching the criteria.`);
+    return { success: true, operation: operation, projects: projects };
+
+  }
+  catch (error: unknown) {
+    LogError(error as Error, serviceLocation, `Error reading projects with query: ${JSON.stringify(query)}`);
+    return { success: false, operation: operation, message: "Error reading projects." };
+  }
+}
+
+// updateProject function
+const updateProject = async (
+  // Identifying parameters:
+  projectid: string, // The ID of the project to update
+  // Update object
+  updates: {
+    userid: string,
+    name: string, // User-given name of the project (must be unique for the user)
+    originalfilename: string, // The original name of the file when uploaded
+    isSaved: boolean, // Indicates if the file should be saved (true) or not (false)
+    filename: string, // server generated filename in the format of userid_filehash.nii (e.g., 1234567890_2630fcede25328c13a15c4dfe6376c068201eb1f8d871736cd8197c2b1463ed3.nii)
+    filetype: FileType, // MIME type of the file (e.g., image/nifti, image/dicom) - should be detected by server
+    filesize: number, // In bytes
+    filehash: string, // SHA256 hash of the file (to be generated by the API developers)
+    basepath: string, // Base path for the file storage (e.g., S3 bucket URL)
+    originalfilepath: string, // Original file location (e.g., S3 bucket URL)
+    extractedfolderpath: string, // Folder path for the extracted files (e.g., S3 bucket URL)
+    status: { upload: boolean; extract: boolean }, // Status of the project processing (upload and extract) - default to false
+    datatype: FileDataType, // Data type of the image (e.g., uint8, float32) - should be detected by server
+    dimensions: { width: number; height: number; slices: number; frames?: number },
+    voxelsize?: { x: number; y: number; z?: number; t?: number }, // Optional physical voxel dimensions (e.g., x, y, z, t dimensions) - should be detected by server
+    description?: string, // User-given description of the project (optional)
+  }
+): Promise<ProjectCrudResult> => {
+  const operation = CRUDOperation.UPDATE;
+  // Look for the project by id
+  const project = await projectModel.findById(projectid);
+  if (!project) {
+    logger.warn(`Database: Project ${projectid} not found.`);
+    return { success: false, operation, message: `Project ${projectid} not found.` };
+  }
+  try {
+    // Validate input parameters
+
+  } catch (error: unknown) {
+    LogError(error as Error, serviceLocation, `Error updating project.`);
+    return { success: false, operation, message: "Error updating project." };
+  }
+
+}
 
 // Using ES modules instead of CommonJS which is module.exports = {connectToDatabase, User};
 // ONLY unit tests should use userModel, fileModel directly, otherwise use the created functions to create users/files.
-export { connectToDatabase, userModel, createUser, readUser, updateUser, deleteUser, authenticateUser, UserRole, IUserSafe, UserCrudResult, CRUDOperation, IUserDocument, IProject, IProjectSegmentationMask, projectModel, projectSegmentationMaskModel, createProject };
+export { connectToDatabase, userModel, createUser, readUser, updateUser, deleteUser, authenticateUser, UserRole, IUserSafe, UserCrudResult, CRUDOperation, IUserDocument, IProject, IProjectSegmentationMask, projectModel, projectSegmentationMaskModel, createProject, readProject };
 // createFile, readFile, updateFile,
