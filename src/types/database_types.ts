@@ -40,6 +40,8 @@ export interface IUser {
  * @property {string} email - The email address of the user.
  * @property {string} phone - The phone number of the user.
  * @property {UserRole} role - The role of the user (e.g., User, Admin).
+ * @property {Date} [createdAt] - The date when the user was created (optional).
+ * @property {Date} [updatedAt] - The date when the user was last updated (optional).
  */
 export interface IUserSafe {
     _id: string; // MongoDB Object ID of the user
@@ -47,9 +49,13 @@ export interface IUserSafe {
     email: string;
     phone: string;
     role: UserRole; // Default to "user" unless specified otherwise
+    createdAt?: Date; // Creation date of the user
+    updatedAt?: Date; // Last update date of the user
 }
 // User Model Interface (single user document in the database)
 export interface IUserDocument extends IUser, Document {
+    createdAt: Date; // Creation date of the user, commented out if extended with mongoose.Document
+    updatedAt: Date; // Last update date of the user, commented out if extended with mongoose.Document
 }
 
 
