@@ -433,41 +433,41 @@ const updateUser = async (
  * - On failure (attempting to delete last admin): `{ success: false, operation: CRUDOperation.DELETE, message: "Cannot delete the last administrator account" }`.
  * - On failure (deletion confirmation failed or other error): `{ success: false, operation: CRUDOperation.DELETE, message: "Error when deleting user." / "User ... was not deleted successfully." }`.
  */
-const deleteUser = async (username: string): Promise<UserCrudResult> => {
+const deleteUser = async (user_id: string): Promise<UserCrudResult> => {
   const operation = CRUDOperation.DELETE;
   try {
 
     // Check if the user exists
-    const existingUser = await userModel.findOne({ username: username });
+    const existingUser = await userModel.findOne({ _id: user_id });
     // Check if the user is an admin and if this is the last admin
     if (existingUser && existingUser.role === UserRole.Admin) {
       // Check if this is the last admin
       const adminCount = await userModel.countDocuments({ role: UserRole.Admin });
       if (adminCount <= 1) {
-        logger.warn(`Database: Attempted to delete last admin user: ${username}`);
+        logger.warn(`Database: Attempted to delete last admin user: ${existingUser.username}`);
         return { success: false, operation, message: 'Cannot delete the last administrator account' };
       }
     }
     if (!existingUser) {
-      logger.warn(`Database: User ${username} does not exist.`);
-      return { success: false, operation, message: `User ${username} does not exist.` };
+      logger.warn(`Database: User ${user_id} does not exist.`);
+      return { success: false, operation, message: `User ${user_id} does not exist.` };
     }
     // Delete the user
     await existingUser.deleteOne();
     // Check if the user was deleted successfully using readUser function
-    const deletedUserResult = await readUser(username);
+    const deletedUserResult = await readUser(user_id);
     if (deletedUserResult.success && deletedUserResult.users && deletedUserResult.users.length > 0) {
       // This condition should ideally not be met if deleteOne succeeded without error,
       // but it's kept as a safeguard based on the original code's logic.
-      logger.warn(`Database: User ${username} was not deleted successfully.`);
-      return { success: false, operation, message: `User ${username} was not deleted successfully.` };
+      logger.warn(`Database: User ${deletedUserResult.user?._id} was not deleted successfully.`);
+      return { success: false, operation, message: `User ${user_id} was not deleted successfully.` };
     }
     // User deleted successfully
-    logger.info(`Database: User ${username} deleted successfully.`);
-    return { success: true, operation, message: `User ${username} deleted successfully.` };
+    logger.info(`Database: User ${user_id} deleted successfully.`);
+    return { success: true, operation, message: `User ${user_id} deleted successfully.` };
 
   } catch (error: unknown) {
-    LogError(error as Error, serviceLocation, `Error deleting user ${username}.`);
+    LogError(error as Error, serviceLocation, `Error deleting user ${user_id} with error: ${error}.`);
     return { success: false, operation, message: "Error when deleting user." };
   }
 };
@@ -868,7 +868,8 @@ const createProject = async (
  * Dynamically constructs a MongoDB query based on the provided parameters.
  * Supports filtering by ID, user, name (case-insensitive), description (case-insensitive),
  * saved status, filename (case-insensitive), file types (array), file size range,
- * processing status, data types (array), dimension ranges, voxel size ranges, and creation date range.
+ * processing status, data types (array), dimension ranges (AND logic), voxel size ranges (OR logic),
+ * and creation date range.
  *
  * @async
  * @function readProject
@@ -886,12 +887,12 @@ const createProject = async (
  * @param {boolean} [status.upload] - Filter by upload status.
  * @param {boolean} [status.extract] - Filter by extraction status.
  * @param {FileDataType[]} [datatype] - Optional array of data types to filter by.
- * @param {object} [dimensions] - Optional object defining dimension ranges.
+ * @param {object} [dimensions] - Optional object defining dimension ranges. All provided dimension ranges must be met (AND logic).
  * @param {object} [dimensions.width] - Width range { minsize?, maxsize? }.
  * @param {object} [dimensions.height] - Height range { minsize?, maxsize? }.
  * @param {object} [dimensions.slices] - Slices range { minsize?, maxsize? }.
  * @param {object} [dimensions.frames] - Frames range { minsize?, maxsize? }.
- * @param {object} [voxelsize] - Optional object defining voxel size ranges.
+ * @param {object} [voxelsize] - Optional object defining voxel size ranges. At least one provided voxel size range must be met (OR logic).
  * @param {object} [voxelsize.x] - Voxel X range { minsize?, maxsize? }.
  * @param {object} [voxelsize.y] - Voxel Y range { minsize?, maxsize? }.
  * @param {object} [voxelsize.z] - Voxel Z range { minsize?, maxsize? }.
@@ -920,6 +921,7 @@ const readProject = async (
   daterange?: { start?: Date; end?: Date },
 ): Promise<ProjectCrudResult> => {
   const operation = CRUDOperation.READ;
+  // validate input parameters
   const searchConditions: object[] = []; // Array to hold search conditions for the query
   if (projectid) searchConditions.push({ _id: projectid }); // Search by project ID
   if (userid) searchConditions.push({ userid: userid }); // Search by user ID
@@ -997,48 +999,88 @@ const readProject = async (
   }
 }
 
-// // updateProject function
-// const updateProject = async (
-//   // Identifying parameters:
-//   projectid: string, // The ID of the project to update
-//   // Update object
-//   updates: {
-//     userid: string,
-//     name: string, // User-given name of the project (must be unique for the user)
-//     originalfilename: string, // The original name of the file when uploaded
-//     isSaved: boolean, // Indicates if the file should be saved (true) or not (false)
-//     filename: string, // server generated filename in the format of userid_filehash.nii (e.g., 1234567890_2630fcede25328c13a15c4dfe6376c068201eb1f8d871736cd8197c2b1463ed3.nii)
-//     filetype: FileType, // MIME type of the file (e.g., image/nifti, image/dicom) - should be detected by server
-//     filesize: number, // In bytes
-//     filehash: string, // SHA256 hash of the file (to be generated by the API developers)
-//     basepath: string, // Base path for the file storage (e.g., S3 bucket URL)
-//     originalfilepath: string, // Original file location (e.g., S3 bucket URL)
-//     extractedfolderpath: string, // Folder path for the extracted files (e.g., S3 bucket URL)
-//     status: { upload: boolean; extract: boolean }, // Status of the project processing (upload and extract) - default to false
-//     datatype: FileDataType, // Data type of the image (e.g., uint8, float32) - should be detected by server
-//     dimensions: { width: number; height: number; slices: number; frames?: number },
-//     voxelsize?: { x: number; y: number; z?: number; t?: number }, // Optional physical voxel dimensions (e.g., x, y, z, t dimensions) - should be detected by server
-//     description?: string, // User-given description of the project (optional)
-//   }
-// ): Promise<ProjectCrudResult> => {
-//   const operation = CRUDOperation.UPDATE;
-//   // Look for the project by id
-//   const project = await projectModel.findById(projectid);
-//   if (!project) {
-//     logger.warn(`Database: Project ${projectid} not found.`);
-//     return { success: false, operation, message: `Project ${projectid} not found.` };
-//   }
-//   try {
-//     // Validate input parameters
+// updateProject function
+const updateProject = async (
+  // Identifying parameters:
+  projectid: string, // The ID of the project to update (unique)
+  // Update object
+  updates: {
+    userid?: string,
+    name?: string, // User-given name of the project (must be unique for the user)
+    originalfilename?: string, // The original name of the file when uploaded
+    isSaved?: boolean, // Indicates if the file should be saved (true) or not (false)
+    filename?: string, // server generated filename in the format of userid_filehash.nii (e.g., 1234567890_2630fcede25328c13a15c4dfe6376c068201eb1f8d871736cd8197c2b1463ed3.nii)
+    filetype?: FileType, // MIME type of the file (e.g., image/nifti, image/dicom) - should be detected by server
+    filesize?: number, // In bytes
+    filehash?: string, // SHA256 hash of the file (to be generated by the API developers)
+    basepath?: string, // Base path for the file storage (e.g., S3 bucket URL)
+    originalfilepath?: string, // Original file location (e.g., S3 bucket URL)
+    extractedfolderpath?: string, // Folder path for the extracted files (e.g., S3 bucket URL)
+    status?: { upload?: boolean; extract?: boolean }, // Status of the project processing (upload and extract) - default to false
+    datatype?: FileDataType, // Data type of the image (e.g., uint8, float32) - should be detected by server
+    dimensions?: { width?: number; height?: number; slices?: number; frames?: number },
+    voxelsize?: { x?: number; y?: number; z?: number; t?: number }, // Optional physical voxel dimensions (e.g., x, y, z, t dimensions) - should be detected by server
+    description?: string, // User-given description of the project (optional)
+  }
+): Promise<ProjectCrudResult> => {
+  const operation = CRUDOperation.UPDATE;
+  // Look for the project by id
+  const project = await projectModel.findById(projectid);
+  if (!project) {
+    logger.warn(`Database: Project ${projectid} not found.`);
+    return { success: false, operation, message: `Project ${projectid} not found.` };
+  }
+  try {
+    if (updates.userid) project.userid = updates.userid; // Update user ID if provided
+    if (updates.name) project.name = updates.name; // Update project name if provided
+    if (updates.originalfilename) project.originalfilename = updates.originalfilename;
+    if (updates.isSaved !== undefined) project.isSaved = updates.isSaved; // Update saved status if provided
+    if (updates.filename) project.filename = updates.filename; // Update server filename if provided
+    if (updates.filetype) project.filetype = updates.filetype; // Update file type if provided
+    if (updates.filesize) project.filesize = updates.filesize; // Update file size if provided
+    if (updates.filehash) project.filehash = updates.filehash; // Update file hash if provided
+    if (updates.basepath) project.basepath = updates.basepath; // Update base path if provided
+    if (updates.originalfilepath) project.originalfilepath = updates.originalfilepath; // Update original file path if provided
+    if (updates.extractedfolderpath) project.extractedfolderpath = updates.extractedfolderpath; // Update extracted folder path if provided
+    // Status updates
+    if (updates.status) {
+      if (updates.status.extract) project.status.extract = updates.status.extract; // Update extraction status if provided
+      if (updates.status.upload) project.status.upload = updates.status.upload; // Update upload status if provided
+    }
+    if (updates.datatype) project.datatype = updates.datatype; // Update data type if provided
+    // Dimensions updates
+    if (updates.dimensions) {
+      if (updates.dimensions.width) project.dimensions.width = updates.dimensions.width;
+      if (updates.dimensions.height) project.dimensions.height = updates.dimensions.height;
+      if (updates.dimensions.slices) project.dimensions.slices = updates.dimensions.slices;
+      if (updates.dimensions.frames) project.dimensions.frames = updates.dimensions.frames;
+    }
+    // Voxel size updates
+    if (updates.voxelsize) {
+      // Initialize voxelsize object if it doesn't exist
+      if (!project.voxelsize) {
+        project.voxelsize = { x: 0, y: 0 }; // Initialize with required fields
+      }
+      if (updates.voxelsize.x) project.voxelsize.x = updates.voxelsize.x;
+      if (updates.voxelsize.y) project.voxelsize.y = updates.voxelsize.y;
+      if (updates.voxelsize.z) project.voxelsize.z = updates.voxelsize.z;
+      if (updates.voxelsize.t) project.voxelsize.t = updates.voxelsize.t;
+    }
+    if (updates.description) project.description = updates.description; // Update description if provided
 
-//   } catch (error: unknown) {
-//     LogError(error as Error, serviceLocation, `Error updating project.`);
-//     return { success: false, operation, message: "Error updating project." };
-//   }
+    // Save the updated project to the database
+    await project.save();
 
-// }
+    logger.info(`Database: Project ${project._id} updated successfully.`);
+    return { success: true, operation, project: project }; // Return the updated project
+  } catch (error: unknown) {
+    LogError(error as Error, serviceLocation, `Error updating project ${projectid} with error: ${error}.`);
+    return { success: false, operation, message: "Error updating project." };
+  }
+
+}
 
 // Using ES modules instead of CommonJS which is module.exports = {connectToDatabase, User};
 // ONLY unit tests should use userModel, fileModel directly, otherwise use the created functions to create users/files.
-export { connectToDatabase, userModel, createUser, readUser, updateUser, deleteUser, authenticateUser, UserRole, IUserSafe, UserCrudResult, CRUDOperation, IUserDocument, IProject, IProjectSegmentationMask, projectModel, projectSegmentationMaskModel, createProject, readProject };
+export { connectToDatabase, userModel, createUser, readUser, updateUser, deleteUser, authenticateUser, UserRole, IUserSafe, UserCrudResult, CRUDOperation, IUserDocument, IProject, IProjectSegmentationMask, projectModel, projectSegmentationMaskModel, createProject, readProject, updateProject };
 // createFile, readFile, updateFile,
