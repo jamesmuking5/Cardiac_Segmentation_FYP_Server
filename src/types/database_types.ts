@@ -189,6 +189,7 @@ export enum ComponentBoundingBoxesClass {
  * @property {boolean} isSaved - Indicates if the segmentation mask should be saved.
  * @property {boolean} isMedSAMOutput - Indicates if the segmentation mask is a MedSAM output (should not delete if its the output of MedSAM).
  * @property {object[]} frames - An array of frame objects, each containing slice information.
+ * @property {boolean} frameInferred - Indicates if the frame has been inferred (user must manually run MedSAM on it)
  * @property {number} frameIndex - The index of the frame (0-based).
  * @property {object[]} slices - An array of slice objects, each containing segmentation mask information.
  * @property {number} sliceindex - The index of the slice (0-based).
@@ -217,6 +218,8 @@ export interface IProjectSegmentationMask {
     // If the segmentation mask is a single frame, there will be only one entry in the frames array
     frames: {
         frameIndex: number;
+        // Since GPU limitaion, predict on only one frame at a time, this is a record
+        frameInferred: boolean; // Indicates if the frame has been inferred
         slices: {
             sliceindex: number;
             slicepath: string; // Path to the slice image (e.g., S3 bucket URL)
