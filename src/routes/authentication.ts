@@ -6,6 +6,7 @@ import passport from "passport";
 import { IUserSafe, createUser } from "../services/database"; // CRUD + Auth functions for User
 import { isAuth, isAuthAndAdmin } from "../services/passportjs"; // Import Passport.js middleware
 import logger from "../services/logger"; // Import logger
+import validateFields from "../utils/field_validation"; // Import reusable validation middleware
 import { body, validationResult } from 'express-validator'; // Import express-validator for input validation
 import { v4 as uuidv4 } from 'uuid'; // Import UUID for generating unique guest IDs
 import LogError  from "../utils/error_logger"; // Import custom error logging utility
@@ -13,67 +14,78 @@ import LogError  from "../utils/error_logger"; // Import custom error logging ut
 const router = express.Router();
 
 router.post("/login",
-  // Validate input fields
-  [body('username').notEmpty().withMessage('Username is required.'),
-  body('password').notEmpty().withMessage('Password is required.')],
-  (req: Request, res: Response, next: NextFunction) => {
+  // Use only username and password validation for login
+  [validateFields[0], validateFields[1]], // Username and password validation
+  (req: Request, res: Response, next: NextFunction): void => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
-      res.status(400).json({ errors: errors.array() });
-      return;
+      // If validation fails, return a 400 response with error details
+      res.status(400).json({ login: false, errors: errors.array() });
+    } else {
+      next(); // Proceed to authentication if validation passes
     }
-    return next(); // Proceed to authentication if validation passes
   },
   (req: Request, res: Response, next: NextFunction): void => {
-    passport.authenticate("local", (err: Error | null, user: IUserSafe, info?: { message: string }) => {
-      if (err) {
-        logger.error(err);
-        res.status(500).json({ message: "Internal error" });
-      }
-      if (!user) {
-        res.status(401).json({ login: false, message: info?.message });
-        return; // Stop further execution
-      }
-
-      // If user is found, log them in
-      req.logIn(user, (loginErr) => {
-        if (loginErr) {
-          logger.error(loginErr);
-          res.status(500).json({ message: "Internal error during login." });
-          return; // Stop further execution
+    passport.authenticate("local",
+      (err: Error | null, user: IUserSafe, info?: { message: string }) => {
+        if (err) {
+          logger.error(err);
+          return res.status(500).json({ message: "Internal error" });
         }
-        // Successful login, send user info back to client
-        logger.info(`User ${user.username} logged in successfully.`);
-        res.status(200).json({
-          login: true,
-          username: user.username,
-          role: user.role,
-          message: "Login successful.",
+        if (!user) {
+          return res.status(401).json({ login: false, message: info?.message });
+        }
+
+        // If user is found, log them in
+        return req.logIn(user, (loginErr) => {
+          if (loginErr) {
+            logger.error(loginErr);
+            return res.status(500).json({ message: "Internal error during login." });
+          }
+          // Successful login, send user info back to client
+          logger.info(`User ${user.username} logged in successfully.`);
+          return res.status(200).json({
+            login: true,
+            username: user.username,
+            role: user.role,
+            message: "Login successful.",
+          });
         });
-      });
-    })(req, res, next);
-  });
+      }
+    )(req, res, next);
+  }
+);
 
 router.post("/register",
-  // Validate input fields
-  [body('username').notEmpty().withMessage('Username is required.'),
-  body('password').notEmpty().withMessage('Password is required.'),
-  body('email').isEmail().withMessage('Valid email is required.'),
-  body('phone').notEmpty().withMessage('Phone number is required.')],
-  (req: Request, res: Response, next: NextFunction) => {
+  // Use all validation fields for registration
+  validateFields,
+  (req: Request, res: Response, next: NextFunction): void => {
     const errors = validationResult(req);
-    if (!errors.isEmpty()) res.status(400).json({ errors: errors.array() });
-    next(); // Proceed to registration if validation passes
+    if (!errors.isEmpty()) {
+      // If validation fails, return a 400 response with error details
+      res.status(400).json({ register: false, errors: errors.array() });
+    } else {
+      next(); // Proceed to registration if validation passes
+    }
   },
   async (req: Request, res: Response): Promise<void> => {
     const { username, password, email, phone } = req.body;
     const result = await createUser(username, password, email, phone);
-    if (!result.success) res.status(400).json({ register: false, message: result.message });
+    if (!result.success) {
+      res.status(400).json({ register: false, message: result.message });
+      return;
+    }
     if (result.success && result.user) {
       logger.info(`User ${result.user.username} registered successfully.`);
-      res.status(201).json({ register: true, username: result.user.username, message: "Registration successful." });
+      res.status(201).json({
+        register: true,
+        username: result.user.username,
+        message: "Registration successful.",
+      });
+      return;
     }
-  });
+  }
+);
 
 // Guest login route
 router.post("/guest", async (req: Request, res: Response): Promise<void> => {
