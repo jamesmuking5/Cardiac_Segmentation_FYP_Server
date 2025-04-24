@@ -625,6 +625,7 @@ const projectSegmentationMaskSliceSchema = new Schema({
 // Create frames schema (Nest Depth: 1)
 const projectSegmentationMaskFramesSchema = new Schema({
   frameIndex: { type: Number, required: true }, // Index of the frame (0-based)
+  frameInferred: { type: Boolean, required: true, default: false }, // Indicates if the frame is inferred (update if user runs MedSAM on the frame)
   slices: { type: [projectSegmentationMaskSliceSchema], required: true }, // Array of slices for the frame
 }, { _id: false }); // Disable automatic creation of an _id field for this subdocument
 
