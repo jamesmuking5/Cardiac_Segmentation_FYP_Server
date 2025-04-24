@@ -2,4 +2,3 @@
 /node_modules
 /logs/winston_logger/*
 /dist
-/src/services/db_test.ts
