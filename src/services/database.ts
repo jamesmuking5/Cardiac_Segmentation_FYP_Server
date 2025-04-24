@@ -87,6 +87,32 @@ const userSchema = new Schema<IUserDocument>({
   phone: { type: String, required: true, unique: true },
   role: { type: String, required: true, enum: Object.values(UserRole), default: UserRole.User },
 }, { timestamps: true }); // Automatically add createdAt and updatedAt timestamps
+// Hooks for pre-save and pre-delete operations (must be before the model creation)
+// If a user is deleted, delete all their projects and segmentation masks (especially important for guest accounts)
+userSchema.pre('deleteOne', { document: true, query: false }, async function (next) {
+  const serviceLocationCascade = `${serviceLocation} - User Delete Hook`;
+  try {
+    logger.info(`Database: Cascade delete triggered for user ${this._id}`);
+    const projects = await projectModel.find({ userid: this._id }).select('_id').lean(); // Use lean for plain objects
+    const projectIds = projects.map(p => p._id);
+    if (projectIds.length > 0) {
+      logger.info(`Database: Deleting ${projectIds.length} projects and their associated masks for user ${this._id}`);
+      // Delete all masks for all found projects first
+      const maskDeleteResult = await projectSegmentationMaskModel.deleteMany({ projectid: { $in: projectIds } });
+      logger.info(`Database: Deleted ${maskDeleteResult.deletedCount} segmentation masks for user ${this._id}`);
+      // Then delete all projects for the user
+      const projectDeleteResult = await projectModel.deleteMany({ userid: this._id });
+      logger.info(`Database: Deleted ${projectDeleteResult.deletedCount} projects for user ${this._id}`);
+    } else {
+      logger.info(`Database: No projects found for user ${this._id}. No cascade delete needed for projects/masks.`);
+    }
+    next(); // Proceed to user deletion
+  } catch (error: unknown) {
+    LogError(error as Error, serviceLocationCascade, `Error during cascade delete for user ${this._id}.`);
+    // Halt the original user deletion by passing the error
+    next(error instanceof Error ? error : new Error('Failed to cascade delete projects/masks'));
+  }
+});
 // Create the model with proper typing
 const userModel = model<IUserDocument, Model<IUserDocument>>("User", userSchema);
 
@@ -545,8 +571,7 @@ const authenticateUser = async (
   }
 };
 
-/*==================================================================================================== Project Section begins here ===================================================================================================================*/
-
+/* Project Section */
 /* Project Collection Creation */
 // Create status schema for use in project schema (Nest Depth: 1)
 const projectStatusSchema = new Schema({
@@ -597,6 +622,31 @@ const projectSchema = new Schema<IProject>({
   // Voxel size (future proofing for 3D segmentation)
   voxelsize: { type: projectVoxelsizeSchema, required: false }, // Voxel size of the image (e.g., x, y, z, t dimensions) - check for errors in the future (stored in nifti as pixdim = [?, 0.5, 0.5, 1.0, 2.0, 0, 0, 0])
 }, { timestamps: true }); // Automatically add createdAt and updatedAt timestamps
+// Hooks for pre-save and pre-delete operations (must be before the model creation)
+// Add validation to ensure userid exists before saving the project
+projectSchema.pre('save', async function (next) {
+  const userExists = await userModel.exists({ _id: this.userid });
+  if (!userExists) {
+    throw new Error('Referenced user does not exist');
+  }
+  next();
+});
+// When a project is deleted, delete ALL associated segmentation masks
+// THE S3 FILES STILL EXIST, API SIDE?
+projectSchema.pre('deleteOne', { document: true, query: false }, async function (next) {
+  const serviceLocationCascade = `${serviceLocation} - Project Delete Hook`;
+  try {
+    logger.info(`Database: Cascade delete triggered for project ${this._id}`);
+    // Delete all masks associated with this project
+    const maskDeleteResult = await projectSegmentationMaskModel.deleteMany({ projectid: this._id });
+    logger.info(`Database: Deleted ${maskDeleteResult.deletedCount} segmentation masks for project ${this._id}`);
+    next(); // Proceed to project deletion
+  } catch (error: unknown) {
+    LogError(error as Error, serviceLocationCascade, `Error during cascade delete for project ${this._id}.`);
+    // Halt the original project deletion by passing the error
+    next(error instanceof Error ? error : new Error('Failed to cascade delete segmentation masks'));
+  }
+});
 // Create the model with proper typing
 const projectModel = model<IProject, Model<IProject>>("Project", projectSchema);
 
@@ -645,23 +695,7 @@ const projectSegmentationMaskSchema = new Schema<IProjectSegmentationMask>({
   frames: [{ type: projectSegmentationMaskFramesSchema, required: true }], // Array of frames for the segmentation mask
 }, { timestamps: true }); // Automatically add createdAt and updatedAt timestamps
 // Create the model with proper typing
-const projectSegmentationMaskModel = model<IProjectSegmentationMask, Model<IProjectSegmentationMask>>("Segmentation Masks", projectSegmentationMaskSchema);
-
-// Add an index to improve query performance
-projectSchema.index({ userid: 1, name: 1 }, { unique: true }); // Unique index on userid and name
-projectSegmentationMaskSchema.index({ projectid: 1 });
-
-/* ========================================= MongoDB Hooks ========================================== */
-
-// Add validation to ensure userid exists before saving the project
-projectSchema.pre('save', async function (next) {
-  const userExists = await userModel.exists({ _id: this.userid });
-  if (!userExists) {
-    throw new Error('Referenced user does not exist');
-  }
-  next();
-});
-
+// Hooks for pre-save and pre-delete operations (must be before the model creation)
 // Add validation to ensure projectid exists before saving
 projectSegmentationMaskSchema.pre('save', async function (next) {
   const projectExists = await projectModel.exists({ _id: this.projectid });
@@ -670,51 +704,11 @@ projectSegmentationMaskSchema.pre('save', async function (next) {
   }
   next();
 });
+const projectSegmentationMaskModel = model<IProjectSegmentationMask, Model<IProjectSegmentationMask>>("Segmentation Masks", projectSegmentationMaskSchema);
 
-// When a project is deleted, delete ALL associated segmentation masks
-// THE S3 FILES STILL EXIST, API SIDE?
-projectSchema.pre('deleteOne', { document: true, query: false }, async function (next) {
-  const serviceLocationCascade = `${serviceLocation} - Project Delete Hook`;
-  try {
-    logger.info(`Database: Cascade delete triggered for project ${this._id}`);
-    // Delete all masks associated with this project
-    const maskDeleteResult = await projectSegmentationMaskModel.deleteMany({ projectid: this._id });
-    logger.info(`Database: Deleted ${maskDeleteResult.deletedCount} segmentation masks for project ${this._id}`);
-    next(); // Proceed to project deletion
-  } catch (error: unknown) {
-    LogError(error as Error, serviceLocationCascade, `Error during cascade delete for project ${this._id}.`);
-    // Halt the original project deletion by passing the error
-    next(error instanceof Error ? error : new Error('Failed to cascade delete segmentation masks'));
-  }
-});
-
-
-// If a user is deleted, delete all their projects and segmentation masks (especially important for guest accounts)
-userSchema.pre('deleteOne', { document: true, query: false }, async function (next) {
-  const serviceLocationCascade = `${serviceLocation} - User Delete Hook`;
-  try {
-    logger.info(`Database: Cascade delete triggered for user ${this._id}`);
-    const projects = await projectModel.find({ userid: this._id }).select('_id').lean(); // Use lean for plain objects
-    const projectIds = projects.map(p => p._id);
-
-    if (projectIds.length > 0) {
-      logger.info(`Database: Deleting ${projectIds.length} projects and their associated masks for user ${this._id}`);
-      // Delete all masks for all found projects first
-      const maskDeleteResult = await projectSegmentationMaskModel.deleteMany({ projectid: { $in: projectIds } });
-      logger.info(`Database: Deleted ${maskDeleteResult.deletedCount} segmentation masks for user ${this._id}`);
-      // Then delete all projects for the user
-      const projectDeleteResult = await projectModel.deleteMany({ userid: this._id });
-      logger.info(`Database: Deleted ${projectDeleteResult.deletedCount} projects for user ${this._id}`);
-    } else {
-      logger.info(`Database: No projects found for user ${this._id}. No cascade delete needed for projects/masks.`);
-    }
-    next(); // Proceed to user deletion
-  } catch (error: unknown) {
-    LogError(error as Error, serviceLocationCascade, `Error during cascade delete for user ${this._id}.`);
-    // Halt the original user deletion by passing the error
-    next(error instanceof Error ? error : new Error('Failed to cascade delete projects/masks'));
-  }
-});
+// Add an index to improve query performance
+projectSchema.index({ userid: 1, name: 1 }, { unique: true }); // Unique index on userid and name
+projectSegmentationMaskSchema.index({ projectid: 1 });
 
 /**
  * Creates a new project record in the database.
