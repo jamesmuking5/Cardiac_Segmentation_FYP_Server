@@ -73,6 +73,8 @@ function toIUserSafe(user: IUserDocument): IUserSafe {
     email: user.email,
     phone: user.phone,
     role: user.role,
+    createdAt: user.createdAt,
+    updatedAt: user.updatedAt,
   };
 }
 
@@ -271,7 +273,7 @@ const readUser = async (
       };
     }
   } catch (error: unknown) {
-    LogError(error as Error, serviceLocation, `Error reading user with ID: ${id}.`);
+    LogError(error as Error, serviceLocation, `Error reading user with ID: ${id} and error message: ${error}`);
     return { success: false, operation: CRUDOperation.READ, message: "Error reading user." };
   }
 };
@@ -729,6 +731,7 @@ userSchema.pre('deleteOne', { document: true, query: false }, async function (ne
  * @param {string} userid - The ID of the user creating the project.
  * @param {string} name - The name for the new project (must be unique for this user).
  * @param {string} originalfilename - The original name of the uploaded file.
+ * @param {boolean} isSaved - Indicates if the file should be saved (true) or not (false).
  * @param {string} filename - The server-generated unique filename, preferably using the format `userid_filehash.nii` as ObjectId has not been generated yet.
  * @param {FileType} filetype - The MIME type of the uploaded file.
  * @param {number} filesize - The size of the uploaded file in bytes.
@@ -917,172 +920,123 @@ const readProject = async (
   daterange?: { start?: Date; end?: Date },
 ): Promise<ProjectCrudResult> => {
   const operation = CRUDOperation.READ;
-  const query: any = {}; // Use 'any' to allow dynamic query construction
+  const searchConditions: object[] = []; // Array to hold search conditions for the query
+  if (projectid) searchConditions.push({ _id: projectid }); // Search by project ID
+  if (userid) searchConditions.push({ userid: userid }); // Search by user ID
+  if (name) searchConditions.push({ name: { $regex: new RegExp(name, 'i') } }); // Case-insensitive search by name
+  if (description) searchConditions.push({ description: { $regex: new RegExp(description, 'i') } }); // Case-insensitive search by description
+  if (isSaved !== undefined) searchConditions.push({ isSaved: isSaved }); // Search by saved status
+  if (filename) searchConditions.push({ filename: { $regex: new RegExp(filename, 'i') } }); // Case-insensitive search by filename
+  if (filetype) searchConditions.push({ filetype: { $in: filetype } }); // Search by file type
+  if (filesize) {
+    if (filesize.minsize) searchConditions.push({ filesize: { $gte: filesize.minsize } }); // Search by minimum file size
+    if (filesize.maxsize) searchConditions.push({ filesize: { $lte: filesize.maxsize } }); // Search by maximum file size
+  }
+  if (status) {
+    if (status.upload !== undefined) searchConditions.push({ 'status.upload': status.upload }); // Search by upload status
+    if (status.extract !== undefined) searchConditions.push({ 'status.extract': status.extract }); // Search by extraction status
+  }
+  if (datatype) searchConditions.push({ datatype: { $in: datatype } }); // Search by data type
+  if (dimensions) searchConditions.push({
+    $and: [
+      dimensions.width?.minsize ? { 'dimensions.width': { $gte: dimensions.width.minsize } } : {},
+      dimensions.width?.maxsize ? { 'dimensions.width': { $lte: dimensions.width.maxsize } } : {},
+      dimensions.height?.minsize ? { 'dimensions.height': { $gte: dimensions.height.minsize } } : {},
+      dimensions.height?.maxsize ? { 'dimensions.height': { $lte: dimensions.height.maxsize } } : {},
+      dimensions.slices?.minsize ? { 'dimensions.slices': { $gte: dimensions.slices.minsize } } : {},
+      dimensions.slices?.maxsize ? { 'dimensions.slices': { $lte: dimensions.slices.maxsize } } : {},
+      dimensions.frames?.minsize ? { 'dimensions.frames': { $gte: dimensions.frames.minsize } } : {},
+      dimensions.frames?.maxsize ? { 'dimensions.frames': { $lte: dimensions.frames.maxsize } } : {},
+    ]
+  });
+  if (voxelsize) searchConditions.push({
+    $or: [
+      voxelsize.t?.minsize ? { 'voxelsize.t': { $gte: voxelsize.t.minsize } } : {},
+      voxelsize.t?.maxsize ? { 'voxelsize.t': { $lte: voxelsize.t.maxsize } } : {},
+
+      voxelsize.x?.minsize ? { 'voxelsize.x': { $gte: voxelsize.x.minsize } } : {},
+      voxelsize.x?.maxsize ? { 'voxelsize.x': { $lte: voxelsize.x.maxsize } } : {},
+
+      voxelsize.y?.minsize ? { 'voxelsize.y': { $gte: voxelsize.y.minsize } } : {},
+      voxelsize.y?.maxsize ? { 'voxelsize.y': { $lte: voxelsize.y.maxsize } } : {},
+
+      voxelsize.z?.minsize ? { 'voxelsize.z': { $gte: voxelsize.z.minsize } } : {},
+      voxelsize.z?.maxsize ? { 'voxelsize.z': { $lte: voxelsize.z.maxsize } } : {},
+
+    ]
+  });
+  if (daterange) {
+    if (daterange.start) searchConditions.push({ createdAt: { $gte: daterange.start } }); // Search by start date
+    if (daterange.end) searchConditions.push({ createdAt: { $lte: daterange.end } }); // Search by end date
+  }
+  // If no search conditions are provided, return all projects
+  if (searchConditions.length === 0) {
+    logger.warn(`Database: No search conditions provided. Returning all projects.`);
+    // Remove .lean() to return Mongoose documents (IProjectDocument) instead of plain objects
+    return { success: true, operation, projects: await projectModel.find({}) }; // Return all projects as Mongoose documents
+  }
+
+  // If there are search conditions, build the query
+  const query = { $and: searchConditions }; // Combine all conditions with $and
+  logger.info(`Database: Reading projects matching query: ${JSON.stringify(query)}`);
+
   try {
-    // create a query object to filter the projects
-    if (projectid) query._id = projectid; // Filter by project ID
-    if (userid) query.userid = userid; // Filter by user ID
-    if (name) query.name = { $regex: name, $options: 'i' }; // Filter by project name (case-insensitive)
-    if (description) query.description = { $regex: description, $options: 'i' }; // Filter by project description (case-insensitive)
-    if (isSaved !== undefined) query.isSaved = isSaved; // Filter by saved status
-    if (filename) query.filename = { $regex: filename, $options: 'i' }; // Filter by filename (case-insensitive)
-    if (filetype) query.filetype = { $in: filetype }; // Filter by file type (array of types)
-    if (filesize) {
-      const sizeQuery: any = {};
-      if (filesize.minsize !== undefined) sizeQuery.$gte = filesize.minsize;
-      if (filesize.maxsize !== undefined) sizeQuery.$lte = filesize.maxsize;
-      if (Object.keys(sizeQuery).length > 0) { // Only add if $gte or $lte was set
-        query.filesize = sizeQuery;
-      }
-    }
-    if (status) {
-      if (status.upload !== undefined) query['status.upload'] = status.upload; // Filter by upload status
-      if (status.extract !== undefined) query['status.extract'] = status.extract; // Filter by extract status
-    }
-    if (datatype) query.datatype = { $in: datatype }; // Filter by data type (array of types)
-    if (dimensions) {
-      if (dimensions.width) {
-        const dimWidthQuery: any = {};
-        if (dimensions.width.minsize !== undefined) dimWidthQuery.$gte = dimensions.width.minsize;
-        if (dimensions.width.maxsize !== undefined) dimWidthQuery.$lte = dimensions.width.maxsize;
-        if (Object.keys(dimWidthQuery).length > 0) {
-          query['dimensions.width'] = dimWidthQuery;
-        }
-      }
-
-      if (dimensions.height) {
-        const dimHeightQuery: any = {};
-        if (dimensions.height.minsize !== undefined) dimHeightQuery.$gte = dimensions.height.minsize;
-        if (dimensions.height.maxsize !== undefined) dimHeightQuery.$lte = dimensions.height.maxsize;
-        if (Object.keys(dimHeightQuery).length > 0) {
-          query['dimensions.height'] = dimHeightQuery;
-        }
-      }
-
-      if (dimensions.slices) {
-        const dimSlicesQuery: any = {};
-        if (dimensions.slices.minsize !== undefined) dimSlicesQuery.$gte = dimensions.slices.minsize;
-        if (dimensions.slices.maxsize !== undefined) dimSlicesQuery.$lte = dimensions.slices.maxsize;
-        if (Object.keys(dimSlicesQuery).length > 0) {
-          query['dimensions.slices'] = dimSlicesQuery;
-        }
-      }
-
-      if (dimensions.frames) {
-        const dimFramesQuery: any = {};
-        if (dimensions.frames.minsize !== undefined) dimFramesQuery.$gte = dimensions.frames.minsize;
-        if (dimensions.frames.maxsize !== undefined) dimFramesQuery.$lte = dimensions.frames.maxsize;
-        if (Object.keys(dimFramesQuery).length > 0) {
-          query['dimensions.frames'] = dimFramesQuery;
-        }
-      }
-    }
-
-    if (voxelsize) {
-      if (voxelsize.x) {
-        const voxelXQuery: any = {};
-        if (voxelsize.x.minsize !== undefined) voxelXQuery.$gte = voxelsize.x.minsize;
-        if (voxelsize.x.maxsize !== undefined) voxelXQuery.$lte = voxelsize.x.maxsize;
-        if (Object.keys(voxelXQuery).length > 0) {
-          query['voxelsize.x'] = voxelXQuery;
-        }
-      }
-
-      if (voxelsize.y) {
-        const voxelYQuery: any = {};
-        if (voxelsize.y.minsize !== undefined) voxelYQuery.$gte = voxelsize.y.minsize;
-        if (voxelsize.y.maxsize !== undefined) voxelYQuery.$lte = voxelsize.y.maxsize;
-        if (Object.keys(voxelYQuery).length > 0) {
-          query['voxelsize.y'] = voxelYQuery;
-        }
-      }
-
-      if (voxelsize.z) {
-        const voxelZQuery: any = {};
-        if (voxelsize.z.minsize !== undefined) voxelZQuery.$gte = voxelsize.z.minsize;
-        if (voxelsize.z.maxsize !== undefined) voxelZQuery.$lte = voxelsize.z.maxsize;
-        if (Object.keys(voxelZQuery).length > 0) {
-          query['voxelsize.z'] = voxelZQuery;
-        }
-      }
-
-      if (voxelsize.t) {
-        const voxelTQuery: any = {};
-        if (voxelsize.t.minsize !== undefined) voxelTQuery.$gte = voxelsize.t.minsize;
-        if (voxelsize.t.maxsize !== undefined) voxelTQuery.$lte = voxelsize.t.maxsize;
-        if (Object.keys(voxelTQuery).length > 0) {
-          query['voxelsize.t'] = voxelTQuery;
-        }
-      }
-    }
-
-    if (daterange) {
-      const dateQuery: any = {};
-      if (daterange.start) dateQuery.$gte = daterange.start;
-      if (daterange.end) dateQuery.$lte = daterange.end;
-      if (Object.keys(dateQuery).length > 0) {
-        query.createdAt = dateQuery;
-      }
-    }
-
-    logger.info(`Database: Reading projects matching query: ${JSON.stringify(query)}`);
-    const projects = await projectModel.find(query);
+    const projects = await projectModel.find(query); // Execute the query
 
     if (projects.length === 0) {
       logger.info(`Database: No projects found matching the criteria.`);
-      return { success: true, operation: operation, message: "No projects found matching the criteria." };
+      return { success: true, operation, message: "No projects found matching the criteria." };
     }
 
     logger.info(`Database: Found ${projects.length} projects matching the criteria.`);
-    return { success: true, operation: operation, projects: projects };
-
-  }
-  catch (error: unknown) {
-    LogError(error as Error, serviceLocation, `Error reading projects with query: ${JSON.stringify(query)}`);
-    return { success: false, operation: operation, message: "Error reading projects." };
-  }
-}
-
-// updateProject function
-const updateProject = async (
-  // Identifying parameters:
-  projectid: string, // The ID of the project to update
-  // Update object
-  updates: {
-    userid: string,
-    name: string, // User-given name of the project (must be unique for the user)
-    originalfilename: string, // The original name of the file when uploaded
-    isSaved: boolean, // Indicates if the file should be saved (true) or not (false)
-    filename: string, // server generated filename in the format of userid_filehash.nii (e.g., 1234567890_2630fcede25328c13a15c4dfe6376c068201eb1f8d871736cd8197c2b1463ed3.nii)
-    filetype: FileType, // MIME type of the file (e.g., image/nifti, image/dicom) - should be detected by server
-    filesize: number, // In bytes
-    filehash: string, // SHA256 hash of the file (to be generated by the API developers)
-    basepath: string, // Base path for the file storage (e.g., S3 bucket URL)
-    originalfilepath: string, // Original file location (e.g., S3 bucket URL)
-    extractedfolderpath: string, // Folder path for the extracted files (e.g., S3 bucket URL)
-    status: { upload: boolean; extract: boolean }, // Status of the project processing (upload and extract) - default to false
-    datatype: FileDataType, // Data type of the image (e.g., uint8, float32) - should be detected by server
-    dimensions: { width: number; height: number; slices: number; frames?: number },
-    voxelsize?: { x: number; y: number; z?: number; t?: number }, // Optional physical voxel dimensions (e.g., x, y, z, t dimensions) - should be detected by server
-    description?: string, // User-given description of the project (optional)
-  }
-): Promise<ProjectCrudResult> => {
-  const operation = CRUDOperation.UPDATE;
-  // Look for the project by id
-  const project = await projectModel.findById(projectid);
-  if (!project) {
-    logger.warn(`Database: Project ${projectid} not found.`);
-    return { success: false, operation, message: `Project ${projectid} not found.` };
-  }
-  try {
-    // Validate input parameters
+    return { success: true, operation, projects: projects }; // Return found projects as Mongoose documents
 
   } catch (error: unknown) {
-    LogError(error as Error, serviceLocation, `Error updating project.`);
-    return { success: false, operation, message: "Error updating project." };
+    LogError(error as Error, serviceLocation, `Error reading projects with query: ${JSON.stringify(query)}`);
+    return { success: false, operation, message: "Error reading projects." };
   }
-
 }
+
+// // updateProject function
+// const updateProject = async (
+//   // Identifying parameters:
+//   projectid: string, // The ID of the project to update
+//   // Update object
+//   updates: {
+//     userid: string,
+//     name: string, // User-given name of the project (must be unique for the user)
+//     originalfilename: string, // The original name of the file when uploaded
+//     isSaved: boolean, // Indicates if the file should be saved (true) or not (false)
+//     filename: string, // server generated filename in the format of userid_filehash.nii (e.g., 1234567890_2630fcede25328c13a15c4dfe6376c068201eb1f8d871736cd8197c2b1463ed3.nii)
+//     filetype: FileType, // MIME type of the file (e.g., image/nifti, image/dicom) - should be detected by server
+//     filesize: number, // In bytes
+//     filehash: string, // SHA256 hash of the file (to be generated by the API developers)
+//     basepath: string, // Base path for the file storage (e.g., S3 bucket URL)
+//     originalfilepath: string, // Original file location (e.g., S3 bucket URL)
+//     extractedfolderpath: string, // Folder path for the extracted files (e.g., S3 bucket URL)
+//     status: { upload: boolean; extract: boolean }, // Status of the project processing (upload and extract) - default to false
+//     datatype: FileDataType, // Data type of the image (e.g., uint8, float32) - should be detected by server
+//     dimensions: { width: number; height: number; slices: number; frames?: number },
+//     voxelsize?: { x: number; y: number; z?: number; t?: number }, // Optional physical voxel dimensions (e.g., x, y, z, t dimensions) - should be detected by server
+//     description?: string, // User-given description of the project (optional)
+//   }
+// ): Promise<ProjectCrudResult> => {
+//   const operation = CRUDOperation.UPDATE;
+//   // Look for the project by id
+//   const project = await projectModel.findById(projectid);
+//   if (!project) {
+//     logger.warn(`Database: Project ${projectid} not found.`);
+//     return { success: false, operation, message: `Project ${projectid} not found.` };
+//   }
+//   try {
+//     // Validate input parameters
+
+//   } catch (error: unknown) {
+//     LogError(error as Error, serviceLocation, `Error updating project.`);
+//     return { success: false, operation, message: "Error updating project." };
+//   }
+
+// }
 
 // Using ES modules instead of CommonJS which is module.exports = {connectToDatabase, User};
 // ONLY unit tests should use userModel, fileModel directly, otherwise use the created functions to create users/files.
