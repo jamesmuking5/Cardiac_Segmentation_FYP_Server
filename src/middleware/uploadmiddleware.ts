@@ -44,7 +44,7 @@ export const uploadToS3 = async (file: Express.Multer.File) => {
   }
 };
 
-//Configure Multer storage engine for handling file uploads.
+// Configure Multer storage engine for handling file uploads.
 const storage: StorageEngine = multer.diskStorage({
   destination: function (req: Express.Request, file, cb) {
     cb(null, "src/uploads/"); // Directory to temporarily store uploaded files
