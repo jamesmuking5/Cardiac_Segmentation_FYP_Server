@@ -105,9 +105,7 @@ export enum FileDataType {
  * @property {string} extractedfolderpath - The folder where all the extracted JPEGs from NIfTI are saved. (e.g. s3://devel-visheart-s3-bucket/temp/${testUser._id}/${String(testUser._id)}_2630fcede25328c13a15c4dfe6376c068201eb1f8d871736cd8197c2b1463ed3/extracted)
  * @property {boolean} status.upload - Indicates if the file upload was successful.
  * @property {boolean} status.extract - Indicates if the file extraction was successful.
- * @property {boolean} status.component_bounding_box - Indicates if the component bounding box extraction was successful.
- * @property {boolean} status.segmentation - Indicates if the segmentation was successful.
- * @property {string} datatype - The data type of the image (e.g., uint8, float32).
+* @property {string} datatype - The data type of the image (e.g., uint8, float32).
  * @property {object} dimensions - The dimensions of the image.
  * @property {number} dimensions.width - The width of the image in pixels.
  * @property {number} dimensions.height - The height of the image in pixels.
@@ -294,11 +292,22 @@ export interface UserCrudResult {
     message?: string; // Message if error/warning occurred (applicable for all operations)
 }
 
+// Define result type for project CRUD operations
+/**
+ * Defines the standard structure for the result object returned by project-related database operations
+ * (create, read, update, delete).
+ * @interface ProjectCrudResult
+ * @property {boolean} success - Indicates whether the operation completed successfully.
+ * @property {CRUDOperation} operation - The type of operation that was performed (e.g., CREATE, READ).
+ * @property {IProjectDocument} [project] - The resulting project object, typically included on successful CREATE or UPDATE operations.
+ * @property {IProjectDocument[]} [projects] - An array of project objects, typically included on successful READ operations. Can be empty if no projects match the criteria.
+ * @property {string} [message] - An optional message providing more details, especially in case of failure (e.g., validation error, project not found) or warnings.
+ * @property {IProjectSegmentationMask} [segmentationmask] - The segmentation mask object, typically included on successful READ operations.
+ */
 export interface ProjectCrudResult {
     success: boolean; // Indicates whether the operation was successful
     operation: CRUDOperation; // The type of operation performed (CREATE, READ, UPDATE, DELETE)
-    project?: IProject; // The created or updated project document (applicable for CREATE and UPDATE operations)
-    projects?: IProject[]; // Array of project documents (applicable for READ operation)
+    project?: IProjectDocument; // The created or updated project document (applicable for CREATE and UPDATE operations)
+    projects?: IProjectDocument[]; // Array of project documents (applicable for READ operation)
     message?: string; // Message if error/warning occurred (applicable for all operations)
-    // segmentationmask?: IProjectSegmentationMask; // Commented as it is inside the project document
 }
