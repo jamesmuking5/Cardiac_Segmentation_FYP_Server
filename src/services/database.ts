@@ -441,23 +441,18 @@ const updateUser = async (
   }
 };
 
-// Should return a success message if the user is deleted successfully with UserCrudResult
-// Could possibly implement a 'move-to-deleted-users' collection instead of deleting the user, but for now, just delete the user.
-// Unit test should just check if the user is deleted with this function, by using readUser to check if the user exists after deletion since they read from  same collection.
-// This should also delete any files associated with the user, but that is not implemented yet. (TODO: Implement file deletion)
 /**
- * Deletes a user from the database, identified by their username.
+ * Deletes a user from the database by ID and cascade deletes all associated projects and segmentation masks.
  * Includes a safety check to prevent deletion of the last remaining administrator account.
- * TODO: Implement deletion of files associated with the user.
  *
  * @async
  * @function deleteUser
- * @param {string} username - The username of the user to delete.
+ * @param {string} user_id - The ID of the user to delete.
  * @returns {Promise<UserCrudResult>} A promise that resolves to a `UserCrudResult` object.
  * - On success: `{ success: true, operation: CRUDOperation.DELETE, message: "User ... deleted successfully." }`.
  * - On failure (user not found): `{ success: false, operation: CRUDOperation.DELETE, message: "User ... does not exist." }`.
  * - On failure (attempting to delete last admin): `{ success: false, operation: CRUDOperation.DELETE, message: "Cannot delete the last administrator account" }`.
- * - On failure (deletion confirmation failed or other error): `{ success: false, operation: CRUDOperation.DELETE, message: "Error when deleting user." / "User ... was not deleted successfully." }`.
+ * - On other errors: `{ success: false, operation: CRUDOperation.DELETE, message: "Error when deleting user." }`.
  */
 const deleteUser = async (user_id: string): Promise<UserCrudResult> => {
   const operation = CRUDOperation.DELETE;
