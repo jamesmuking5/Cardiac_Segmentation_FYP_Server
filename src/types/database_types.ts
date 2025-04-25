@@ -305,7 +305,6 @@ export interface UserCrudResult {
  * @property {IProjectDocument} [project] - The resulting project object, typically included on successful CREATE or UPDATE operations.
  * @property {IProjectDocument[]} [projects] - An array of project objects, typically included on successful READ operations. Can be empty if no projects match the criteria.
  * @property {string} [message] - An optional message providing more details, especially in case of failure (e.g., validation error, project not found) or warnings.
- * @property {IProjectSegmentationMask} [segmentationmask] - The segmentation mask object, typically included on successful READ operations.
  */
 export interface ProjectCrudResult {
     success: boolean; // Indicates whether the operation was successful
@@ -316,15 +315,14 @@ export interface ProjectCrudResult {
 }
 
 /**
- * Deletes a project from the database by ID, triggering cascade deletion of all associated segmentation masks.
- * 
- * @async
- * @function deleteProject
- * @param {string} projectid - The ID of the project to delete
- * @returns {Promise<ProjectCrudResult>} Result object with success status, operation type, and message
- * - Success: {success: true, operation: DELETE, message: "Project deleted successfully"}
- * - Not found: {success: false, operation: DELETE, message: "Project not found"}
- * - Error: {success: false, operation: DELETE, message: "Error deleting project"}
+ * Defines the standard structure for the result object returned by project segmentation mask-related database operations
+ * (create, read, update, delete).
+ * @interface ProjectSegmentationMaskCrudResult
+ * @property {boolean} success - Indicates whether the operation completed successfully.
+ * @property {CRUDOperation} operation - The type of operation that was performed (e.g., CREATE, READ).
+ * @property {IProjectSegmentationMaskDocument} [projectsegmentationmask] - The resulting segmentation mask object, typically included on successful CREATE or UPDATE operations.
+ * @property {IProjectSegmentationMaskDocument[]} [projectsegmentationmasks] - An array of segmentation mask objects, typically included on successful READ operations. Can be empty if no segmentation masks match the criteria.
+ * @property {string} [message] - An optional message providing more details, especially in case of failure (e.g., validation error, segmentation mask not found) or warnings.
  */
 export interface ProjectSegmentationMaskCrudResult {
     success: boolean; // Indicates whether the operation was successful
