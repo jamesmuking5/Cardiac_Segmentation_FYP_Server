@@ -12,11 +12,14 @@ import {
     updateProject,
     deleteProject,
     UserRole,
+    createProjectSegmentationMask,
 } from '../services/database';
 import {
     FileType,
     FileDataType,
     IProject,
+    IProjectSegmentationMask,
+    ComponentBoundingBoxesClass,
 } from '../types/database_types';
 import logger from '../services/logger';
 
@@ -131,6 +134,78 @@ async function createTestProject(projectData: IProject) {
 
     logger.error("Manual Test: Project creation failed:", result.message);
     return false;
+}
+
+function generateSegmentationMaskData(projectId: string): IProjectSegmentationMask {
+    return {
+        projectid: projectId,
+        name: 'Test Segmentation Mask',
+        description: 'A test segmentation mask',
+        isSaved: true,
+        isMedSAMOutput: true,
+        frames: [
+            {
+                frameIndex: 0,
+                frameInferred: true,
+                slices: [
+                    {
+                        sliceindex: 0,
+                        slicepath: `s3://devel-visheart-s3-bucket/temp/${projectId}/slice_0.png`,
+                        componentboundingboxes: [
+                            {
+                                class: ComponentBoundingBoxesClass.LVC,
+                                x_min: 10,
+                                y_min: 10,
+                                x_max: 100,
+                                y_max: 100
+                            },
+                            {
+                                class: ComponentBoundingBoxesClass.MYO,
+                                x_min: 5,
+                                y_min: 5,
+                                x_max: 120,
+                                y_max: 120
+                            }
+                        ],
+                        segmentationmaskslocation: [
+                            {
+                                path: `s3://devel-visheart-s3-bucket/temp/${projectId}/mask_0_lvc.png`,
+                                isRLE: false
+                            },
+                            {
+                                path: `s3://devel-visheart-s3-bucket/temp/${projectId}/mask_0_myo.png`,
+                                isRLE: false
+                            }
+                        ]
+                    },
+                    {
+                        sliceindex: 1,
+                        slicepath: `s3://devel-visheart-s3-bucket/temp/${projectId}/slice_1.png`,
+                        segmentationmaskslocation: [
+                            {
+                                path: `s3://devel-visheart-s3-bucket/temp/${projectId}/mask_1_lvc.png`,
+                                isRLE: false
+                            }
+                        ]
+                    }
+                ]
+            }
+        ]
+    };
+}
+
+async function createTestSegmentationMask(projectId: string) {
+    const maskData = generateSegmentationMaskData(projectId);
+
+    const result = await createProjectSegmentationMask(maskData);
+
+    if (result.success) {
+        logger.info("Manual Test: Segmentation mask created:", result);
+        return result.projectsegmentationmask;
+    }
+
+    logger.error("Manual Test: Segmentation mask creation failed:", result.message);
+    return null;
 }
 
 async function verifyProjectCreation(userId: string, projectName: string) {
@@ -253,6 +328,7 @@ async function deleteTestProject(projectId: string) {
     }
 }
 
+// Modify runManualTests to include segmentation mask testing
 async function runManualTests(): Promise<void> {
     try {
         await connectToDatabase();
@@ -269,10 +345,18 @@ async function runManualTests(): Promise<void> {
                     const project = await verifyProjectCreation(projectData.userid, projectData.name);
 
                     if (project) {
-                        // Step 3: Update and verify project - pass the project ID
+                        // New Step: Create a segmentation mask for the project
+                        const segMask = await createTestSegmentationMask(String(project._id));
+                        if (segMask) {
+                            logger.info(`Manual Test: Segmentation mask created with ID: ${segMask._id}`);
+                            logger.info(`Manual Test: Segmentation mask has ${segMask.frames.length} frames`);
+                            logger.info(`Manual Test: First frame has ${segMask.frames[0].slices.length} slices`);
+                        }
+
+                        // Step 3: Update and verify project
                         await updateTestProject(String(project._id));
 
-                        // Step 4: Delete and verify project deletion
+                        // Step 4: Delete project (should cascade delete the segmentation masks)
                         await deleteTestProject(String(project._id));
                     }
                 }
@@ -281,7 +365,7 @@ async function runManualTests(): Promise<void> {
 
         // Delete the test user
         const userId = await getTestUserId('dbtest');
-        if (userId) { // Add null check
+        if (userId) {
             await deleteUser(userId);
         } else {
             logger.error("Manual Test: Could not find user to delete");
@@ -294,6 +378,5 @@ async function runManualTests(): Promise<void> {
         process.exit(0);
     }
 }
-
 // Run the tests
 runManualTests();
