@@ -90,6 +90,7 @@ export enum FileDataType {
     FLOAT32 = "float32", // common
     UINT16 = "uint16", // common
     UINT8 = "uint8", // common (often for segmentation masks)
+    INT16 = "int16"
     // To add if needed
 }
 
@@ -176,9 +177,9 @@ export interface IProjectDocument extends IProject, Document { }
  * @property {string} lvc - Represents the left ventricle cavity.
  */
 export enum ComponentBoundingBoxesClass {
-    rv = "rv",
-    myo = "myo",
-    lvc = "lvc",
+    RV = "rv",
+    MYO = "myo",
+    LVC = "lvc",
 }
 
 /**
@@ -240,10 +241,6 @@ export interface IProjectSegmentationMask {
             }[];
         }[];
     }[];
-
-    // Based on mongoose timestamp
-    createdAt?: Date; // Creation date of the project
-    updatedAt?: Date; // Last update date of the project
 }
 // Segmentation Mask Model Interface (single segmentation mask document in the database)
 export interface IProjectSegmentationMaskDocument extends IProjectSegmentationMask, Document {
@@ -315,5 +312,24 @@ export interface ProjectCrudResult {
     operation: CRUDOperation; // The type of operation performed (CREATE, READ, UPDATE, DELETE)
     project?: IProjectDocument; // The created or updated project document (applicable for CREATE and UPDATE operations)
     projects?: IProjectDocument[]; // Array of project documents (applicable for READ operation)
+    message?: string; // Message if error/warning occurred (applicable for all operations)
+}
+
+/**
+ * Deletes a project from the database by ID, triggering cascade deletion of all associated segmentation masks.
+ * 
+ * @async
+ * @function deleteProject
+ * @param {string} projectid - The ID of the project to delete
+ * @returns {Promise<ProjectCrudResult>} Result object with success status, operation type, and message
+ * - Success: {success: true, operation: DELETE, message: "Project deleted successfully"}
+ * - Not found: {success: false, operation: DELETE, message: "Project not found"}
+ * - Error: {success: false, operation: DELETE, message: "Error deleting project"}
+ */
+export interface ProjectSegmentationMaskCrudResult {
+    success: boolean; // Indicates whether the operation was successful
+    operation: CRUDOperation; // The type of operation performed (CREATE, READ, UPDATE, DELETE)
+    projectsegmentationmask?: IProjectSegmentationMaskDocument; // The created or updated segmentation mask document (applicable for CREATE and UPDATE operations)
+    projectsegmentationmasks?: IProjectSegmentationMaskDocument[]; // Array of segmentation mask documents (applicable for READ operation)
     message?: string; // Message if error/warning occurred (applicable for all operations)
 }
