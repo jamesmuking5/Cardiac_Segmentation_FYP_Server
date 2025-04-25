@@ -73,6 +73,8 @@ function toIUserSafe(user: IUserDocument): IUserSafe {
     email: user.email,
     phone: user.phone,
     role: user.role,
+    createdAt: user.createdAt,
+    updatedAt: user.updatedAt,
   };
 }
 
@@ -85,6 +87,32 @@ const userSchema = new Schema<IUserDocument>({
   phone: { type: String, required: true, unique: true },
   role: { type: String, required: true, enum: Object.values(UserRole), default: UserRole.User },
 }, { timestamps: true }); // Automatically add createdAt and updatedAt timestamps
+// Hooks for pre-save and pre-delete operations (must be before the model creation)
+// If a user is deleted, delete all their projects and segmentation masks (especially important for guest accounts)
+userSchema.pre('deleteOne', { document: true, query: false }, async function (next) {
+  const serviceLocationCascade = `${serviceLocation} - User Delete Hook`;
+  try {
+    logger.info(`Database: Cascade delete triggered for user ${this._id}`);
+    const projects = await projectModel.find({ userid: this._id }).select('_id').lean(); // Use lean for plain objects
+    const projectIds = projects.map(p => p._id);
+    if (projectIds.length > 0) {
+      logger.info(`Database: Deleting ${projectIds.length} projects and their associated masks for user ${this._id}`);
+      // Delete all masks for all found projects first
+      const maskDeleteResult = await projectSegmentationMaskModel.deleteMany({ projectid: { $in: projectIds } });
+      logger.info(`Database: Deleted ${maskDeleteResult.deletedCount} segmentation masks for user ${this._id}`);
+      // Then delete all projects for the user
+      const projectDeleteResult = await projectModel.deleteMany({ userid: this._id });
+      logger.info(`Database: Deleted ${projectDeleteResult.deletedCount} projects for user ${this._id}`);
+    } else {
+      logger.info(`Database: No projects found for user ${this._id}. No cascade delete needed for projects/masks.`);
+    }
+    next(); // Proceed to user deletion
+  } catch (error: unknown) {
+    LogError(error as Error, serviceLocationCascade, `Error during cascade delete for user ${this._id}.`);
+    // Halt the original user deletion by passing the error
+    next(error instanceof Error ? error : new Error('Failed to cascade delete projects/masks'));
+  }
+});
 // Create the model with proper typing
 const userModel = model<IUserDocument, Model<IUserDocument>>("User", userSchema);
 
@@ -271,7 +299,7 @@ const readUser = async (
       };
     }
   } catch (error: unknown) {
-    LogError(error as Error, serviceLocation, `Error reading user with ID: ${id}.`);
+    LogError(error as Error, serviceLocation, `Error reading user with ID: ${id} and error message: ${error}`);
     return { success: false, operation: CRUDOperation.READ, message: "Error reading user." };
   }
 };
@@ -413,59 +441,54 @@ const updateUser = async (
   }
 };
 
-// Should return a success message if the user is deleted successfully with UserCrudResult
-// Could possibly implement a 'move-to-deleted-users' collection instead of deleting the user, but for now, just delete the user.
-// Unit test should just check if the user is deleted with this function, by using readUser to check if the user exists after deletion since they read from  same collection.
-// This should also delete any files associated with the user, but that is not implemented yet. (TODO: Implement file deletion)
 /**
- * Deletes a user from the database, identified by their username.
+ * Deletes a user from the database by ID and cascade deletes all associated projects and segmentation masks.
  * Includes a safety check to prevent deletion of the last remaining administrator account.
- * TODO: Implement deletion of files associated with the user.
  *
  * @async
  * @function deleteUser
- * @param {string} username - The username of the user to delete.
+ * @param {string} user_id - The ID of the user to delete.
  * @returns {Promise<UserCrudResult>} A promise that resolves to a `UserCrudResult` object.
  * - On success: `{ success: true, operation: CRUDOperation.DELETE, message: "User ... deleted successfully." }`.
  * - On failure (user not found): `{ success: false, operation: CRUDOperation.DELETE, message: "User ... does not exist." }`.
  * - On failure (attempting to delete last admin): `{ success: false, operation: CRUDOperation.DELETE, message: "Cannot delete the last administrator account" }`.
- * - On failure (deletion confirmation failed or other error): `{ success: false, operation: CRUDOperation.DELETE, message: "Error when deleting user." / "User ... was not deleted successfully." }`.
+ * - On other errors: `{ success: false, operation: CRUDOperation.DELETE, message: "Error when deleting user." }`.
  */
-const deleteUser = async (username: string): Promise<UserCrudResult> => {
+const deleteUser = async (user_id: string): Promise<UserCrudResult> => {
   const operation = CRUDOperation.DELETE;
   try {
 
     // Check if the user exists
-    const existingUser = await userModel.findOne({ username: username });
+    const existingUser = await userModel.findOne({ _id: user_id });
     // Check if the user is an admin and if this is the last admin
     if (existingUser && existingUser.role === UserRole.Admin) {
       // Check if this is the last admin
       const adminCount = await userModel.countDocuments({ role: UserRole.Admin });
       if (adminCount <= 1) {
-        logger.warn(`Database: Attempted to delete last admin user: ${username}`);
+        logger.warn(`Database: Attempted to delete last admin user: ${existingUser.username}`);
         return { success: false, operation, message: 'Cannot delete the last administrator account' };
       }
     }
     if (!existingUser) {
-      logger.warn(`Database: User ${username} does not exist.`);
-      return { success: false, operation, message: `User ${username} does not exist.` };
+      logger.warn(`Database: User ${user_id} does not exist.`);
+      return { success: false, operation, message: `User ${user_id} does not exist.` };
     }
     // Delete the user
     await existingUser.deleteOne();
     // Check if the user was deleted successfully using readUser function
-    const deletedUserResult = await readUser(username);
+    const deletedUserResult = await readUser(user_id);
     if (deletedUserResult.success && deletedUserResult.users && deletedUserResult.users.length > 0) {
       // This condition should ideally not be met if deleteOne succeeded without error,
       // but it's kept as a safeguard based on the original code's logic.
-      logger.warn(`Database: User ${username} was not deleted successfully.`);
-      return { success: false, operation, message: `User ${username} was not deleted successfully.` };
+      logger.warn(`Database: User ${deletedUserResult.user?._id} was not deleted successfully.`);
+      return { success: false, operation, message: `User ${user_id} was not deleted successfully.` };
     }
     // User deleted successfully
-    logger.info(`Database: User ${username} deleted successfully.`);
-    return { success: true, operation, message: `User ${username} deleted successfully.` };
+    logger.info(`Database: User ${user_id} deleted successfully.`);
+    return { success: true, operation, message: `User ${user_id} deleted successfully.` };
 
   } catch (error: unknown) {
-    LogError(error as Error, serviceLocation, `Error deleting user ${username}.`);
+    LogError(error as Error, serviceLocation, `Error deleting user ${user_id} with error: ${error}.`);
     return { success: false, operation, message: "Error when deleting user." };
   }
 };
@@ -543,8 +566,7 @@ const authenticateUser = async (
   }
 };
 
-/*==================================================================================================== Project Section begins here ===================================================================================================================*/
-
+/* Project Section */
 /* Project Collection Creation */
 // Create status schema for use in project schema (Nest Depth: 1)
 const projectStatusSchema = new Schema({
@@ -595,6 +617,31 @@ const projectSchema = new Schema<IProject>({
   // Voxel size (future proofing for 3D segmentation)
   voxelsize: { type: projectVoxelsizeSchema, required: false }, // Voxel size of the image (e.g., x, y, z, t dimensions) - check for errors in the future (stored in nifti as pixdim = [?, 0.5, 0.5, 1.0, 2.0, 0, 0, 0])
 }, { timestamps: true }); // Automatically add createdAt and updatedAt timestamps
+// Hooks for pre-save and pre-delete operations (must be before the model creation)
+// Add validation to ensure userid exists before saving the project
+projectSchema.pre('save', async function (next) {
+  const userExists = await userModel.exists({ _id: this.userid });
+  if (!userExists) {
+    throw new Error('Referenced user does not exist');
+  }
+  next();
+});
+// When a project is deleted, delete ALL associated segmentation masks
+// THE S3 FILES STILL EXIST, API SIDE?
+projectSchema.pre('deleteOne', { document: true, query: false }, async function (next) {
+  const serviceLocationCascade = `${serviceLocation} - Project Delete Hook`;
+  try {
+    logger.info(`Database: Cascade delete triggered for project ${this._id}`);
+    // Delete all masks associated with this project
+    const maskDeleteResult = await projectSegmentationMaskModel.deleteMany({ projectid: this._id });
+    logger.info(`Database: Deleted ${maskDeleteResult.deletedCount} segmentation masks for project ${this._id}`);
+    next(); // Proceed to project deletion
+  } catch (error: unknown) {
+    LogError(error as Error, serviceLocationCascade, `Error during cascade delete for project ${this._id}.`);
+    // Halt the original project deletion by passing the error
+    next(error instanceof Error ? error : new Error('Failed to cascade delete segmentation masks'));
+  }
+});
 // Create the model with proper typing
 const projectModel = model<IProject, Model<IProject>>("Project", projectSchema);
 
@@ -625,6 +672,7 @@ const projectSegmentationMaskSliceSchema = new Schema({
 // Create frames schema (Nest Depth: 1)
 const projectSegmentationMaskFramesSchema = new Schema({
   frameIndex: { type: Number, required: true }, // Index of the frame (0-based)
+  frameInferred: { type: Boolean, required: true, default: false }, // Indicates if the frame is inferred (update if user runs MedSAM on the frame)
   slices: { type: [projectSegmentationMaskSliceSchema], required: true }, // Array of slices for the frame
 }, { _id: false }); // Disable automatic creation of an _id field for this subdocument
 
@@ -642,23 +690,7 @@ const projectSegmentationMaskSchema = new Schema<IProjectSegmentationMask>({
   frames: [{ type: projectSegmentationMaskFramesSchema, required: true }], // Array of frames for the segmentation mask
 }, { timestamps: true }); // Automatically add createdAt and updatedAt timestamps
 // Create the model with proper typing
-const projectSegmentationMaskModel = model<IProjectSegmentationMask, Model<IProjectSegmentationMask>>("Segmentation Masks", projectSegmentationMaskSchema);
-
-// Add an index to improve query performance
-projectSchema.index({ userid: 1, name: 1 }, { unique: true }); // Unique index on userid and name
-projectSegmentationMaskSchema.index({ projectid: 1 });
-
-/* ========================================= MongoDB Hooks ========================================== */
-
-// Add validation to ensure userid exists before saving the project
-projectSchema.pre('save', async function (next) {
-  const userExists = await userModel.exists({ _id: this.userid });
-  if (!userExists) {
-    throw new Error('Referenced user does not exist');
-  }
-  next();
-});
-
+// Hooks for pre-save and pre-delete operations (must be before the model creation)
 // Add validation to ensure projectid exists before saving
 projectSegmentationMaskSchema.pre('save', async function (next) {
   const projectExists = await projectModel.exists({ _id: this.projectid });
@@ -667,51 +699,11 @@ projectSegmentationMaskSchema.pre('save', async function (next) {
   }
   next();
 });
+const projectSegmentationMaskModel = model<IProjectSegmentationMask, Model<IProjectSegmentationMask>>("Segmentation Masks", projectSegmentationMaskSchema);
 
-// When a project is deleted, delete ALL associated segmentation masks
-// THE S3 FILES STILL EXIST, API SIDE?
-projectSchema.pre('deleteOne', { document: true, query: false }, async function (next) {
-  const serviceLocationCascade = `${serviceLocation} - Project Delete Hook`;
-  try {
-    logger.info(`Database: Cascade delete triggered for project ${this._id}`);
-    // Delete all masks associated with this project
-    const maskDeleteResult = await projectSegmentationMaskModel.deleteMany({ projectid: this._id });
-    logger.info(`Database: Deleted ${maskDeleteResult.deletedCount} segmentation masks for project ${this._id}`);
-    next(); // Proceed to project deletion
-  } catch (error: unknown) {
-    LogError(error as Error, serviceLocationCascade, `Error during cascade delete for project ${this._id}.`);
-    // Halt the original project deletion by passing the error
-    next(error instanceof Error ? error : new Error('Failed to cascade delete segmentation masks'));
-  }
-});
-
-
-// If a user is deleted, delete all their projects and segmentation masks (especially important for guest accounts)
-userSchema.pre('deleteOne', { document: true, query: false }, async function (next) {
-  const serviceLocationCascade = `${serviceLocation} - User Delete Hook`;
-  try {
-    logger.info(`Database: Cascade delete triggered for user ${this._id}`);
-    const projects = await projectModel.find({ userid: this._id }).select('_id').lean(); // Use lean for plain objects
-    const projectIds = projects.map(p => p._id);
-
-    if (projectIds.length > 0) {
-      logger.info(`Database: Deleting ${projectIds.length} projects and their associated masks for user ${this._id}`);
-      // Delete all masks for all found projects first
-      const maskDeleteResult = await projectSegmentationMaskModel.deleteMany({ projectid: { $in: projectIds } });
-      logger.info(`Database: Deleted ${maskDeleteResult.deletedCount} segmentation masks for user ${this._id}`);
-      // Then delete all projects for the user
-      const projectDeleteResult = await projectModel.deleteMany({ userid: this._id });
-      logger.info(`Database: Deleted ${projectDeleteResult.deletedCount} projects for user ${this._id}`);
-    } else {
-      logger.info(`Database: No projects found for user ${this._id}. No cascade delete needed for projects/masks.`);
-    }
-    next(); // Proceed to user deletion
-  } catch (error: unknown) {
-    LogError(error as Error, serviceLocationCascade, `Error during cascade delete for user ${this._id}.`);
-    // Halt the original user deletion by passing the error
-    next(error instanceof Error ? error : new Error('Failed to cascade delete projects/masks'));
-  }
-});
+// Add an index to improve query performance
+projectSchema.index({ userid: 1, name: 1 }, { unique: true }); // Unique index on userid and name
+projectSegmentationMaskSchema.index({ projectid: 1 });
 
 /**
  * Creates a new project record in the database.
@@ -728,6 +720,7 @@ userSchema.pre('deleteOne', { document: true, query: false }, async function (ne
  * @param {string} userid - The ID of the user creating the project.
  * @param {string} name - The name for the new project (must be unique for this user).
  * @param {string} originalfilename - The original name of the uploaded file.
+ * @param {boolean} isSaved - Indicates if the file should be saved (true) or not (false).
  * @param {string} filename - The server-generated unique filename, preferably using the format `userid_filehash.nii` as ObjectId has not been generated yet.
  * @param {FileType} filetype - The MIME type of the uploaded file.
  * @param {number} filesize - The size of the uploaded file in bytes.
@@ -784,7 +777,7 @@ const createProject = async (
     if (isNaN(filesize) || isNaN(dimensions.width) || isNaN(dimensions.height) || isNaN(dimensions.slices)) {
       logger.warn(`Database: Invalid numeric input parameters for project creation: ${JSON.stringify({ filesize, dimensions })}`);
       return { success: false, operation, message: `Invalid numeric input parameters for project creation.` };
-    }    
+    }
     // Check if all numeric inputs are more than 0
     const numericInputs = [filesize, dimensions.width, dimensions.height, dimensions.slices];
     const negativeNumericInputs = numericInputs.filter(input => input <= 0);
@@ -859,8 +852,253 @@ const createProject = async (
   }
 }
 
+/**
+ * Reads/searches for projects in the database based on various optional criteria.
+ * Dynamically constructs a MongoDB query based on the provided parameters.
+ * Supports filtering by ID, user, name (case-insensitive), description (case-insensitive),
+ * saved status, filename (case-insensitive), file types (array), file size range,
+ * processing status, data types (array), dimension ranges (AND logic), voxel size ranges (OR logic),
+ * and creation date range.
+ *
+ * @async
+ * @function readProject
+ * @param {string} [projectid] - Optional project ID to find a specific project.
+ * @param {string} [userid] - Optional user ID to filter projects by owner.
+ * @param {string} [name] - Optional project name fragment for case-insensitive search.
+ * @param {string} [description] - Optional description fragment for case-insensitive search.
+ * @param {boolean} [isSaved] - Optional boolean to filter by saved status.
+ * @param {string} [filename] - Optional filename fragment for case-insensitive search.
+ * @param {FileType[]} [filetype] - Optional array of file types (e.g., [FileType.NIFTI]) to filter by.
+ * @param {object} [filesize] - Optional object defining a file size range.
+ * @param {number} [filesize.minsize] - Minimum file size (inclusive).
+ * @param {number} [filesize.maxsize] - Maximum file size (inclusive).
+ * @param {object} [status] - Optional object to filter by processing status.
+ * @param {boolean} [status.upload] - Filter by upload status.
+ * @param {boolean} [status.extract] - Filter by extraction status.
+ * @param {FileDataType[]} [datatype] - Optional array of data types to filter by.
+ * @param {object} [dimensions] - Optional object defining dimension ranges. All provided dimension ranges must be met (AND logic).
+ * @param {object} [dimensions.width] - Width range { minsize?, maxsize? }.
+ * @param {object} [dimensions.height] - Height range { minsize?, maxsize? }.
+ * @param {object} [dimensions.slices] - Slices range { minsize?, maxsize? }.
+ * @param {object} [dimensions.frames] - Frames range { minsize?, maxsize? }.
+ * @param {object} [voxelsize] - Optional object defining voxel size ranges. At least one provided voxel size range must be met (OR logic).
+ * @param {object} [voxelsize.x] - Voxel X range { minsize?, maxsize? }.
+ * @param {object} [voxelsize.y] - Voxel Y range { minsize?, maxsize? }.
+ * @param {object} [voxelsize.z] - Voxel Z range { minsize?, maxsize? }.
+ * @param {object} [voxelsize.t] - Voxel T range { minsize?, maxsize? }.
+ * @param {object} [daterange] - Optional object defining a creation date range.
+ * @param {Date} [daterange.start] - Start date (inclusive).
+ * @param {Date} [daterange.end] - End date (inclusive).
+ * @returns {Promise<ProjectCrudResult>} A promise resolving to a ProjectCrudResult object.
+ * - On success with results: `{ success: true, operation: CRUDOperation.READ, projects: IProjectDocument[] }`.
+ * - On success with no results: `{ success: true, operation: CRUDOperation.READ, message: "No projects found..." }`.
+ * - On error: `{ success: false, operation: CRUDOperation.READ, message: "Error reading projects." }`.
+ */
+const readProject = async (
+  projectid?: string,
+  userid?: string,
+  name?: string,
+  description?: string,
+  isSaved?: boolean,
+  filename?: string,
+  filetype?: FileType[], // array of file types to filter by (e.g., [FileType.NIFTI, FileType.DICOM])
+  filesize?: { minsize?: number; maxsize?: number },
+  status?: { upload?: boolean; extract?: boolean },
+  datatype?: FileDataType[],
+  dimensions?: { width?: { minsize?: number; maxsize?: number }, height?: { minsize?: number; maxsize?: number }, slices?: { minsize?: number; maxsize?: number }, frames?: { minsize?: number; maxsize?: number }, },
+  voxelsize?: { x?: { minsize?: number; maxsize?: number }, y?: { minsize?: number; maxsize?: number }, z?: { minsize?: number; maxsize?: number }, t?: { minsize?: number; maxsize?: number }, },
+  daterange?: { start?: Date; end?: Date },
+): Promise<ProjectCrudResult> => {
+  const operation = CRUDOperation.READ;
+  // validate input parameters
+  const searchConditions: object[] = []; // Array to hold search conditions for the query
+  if (projectid) searchConditions.push({ _id: projectid }); // Search by project ID
+  if (userid) searchConditions.push({ userid: userid }); // Search by user ID
+  if (name) searchConditions.push({ name: { $regex: new RegExp(name, 'i') } }); // Case-insensitive search by name
+  if (description) searchConditions.push({ description: { $regex: new RegExp(description, 'i') } }); // Case-insensitive search by description
+  if (isSaved !== undefined) searchConditions.push({ isSaved: isSaved }); // Search by saved status
+  if (filename) searchConditions.push({ filename: { $regex: new RegExp(filename, 'i') } }); // Case-insensitive search by filename
+  if (filetype) searchConditions.push({ filetype: { $in: filetype } }); // Search by file type
+  if (filesize) {
+    if (filesize.minsize) searchConditions.push({ filesize: { $gte: filesize.minsize } }); // Search by minimum file size
+    if (filesize.maxsize) searchConditions.push({ filesize: { $lte: filesize.maxsize } }); // Search by maximum file size
+  }
+  if (status) {
+    if (status.upload !== undefined) searchConditions.push({ 'status.upload': status.upload }); // Search by upload status
+    if (status.extract !== undefined) searchConditions.push({ 'status.extract': status.extract }); // Search by extraction status
+  }
+  if (datatype) searchConditions.push({ datatype: { $in: datatype } }); // Search by data type
+  if (dimensions) searchConditions.push({
+    $and: [
+      dimensions.width?.minsize ? { 'dimensions.width': { $gte: dimensions.width.minsize } } : {},
+      dimensions.width?.maxsize ? { 'dimensions.width': { $lte: dimensions.width.maxsize } } : {},
+      dimensions.height?.minsize ? { 'dimensions.height': { $gte: dimensions.height.minsize } } : {},
+      dimensions.height?.maxsize ? { 'dimensions.height': { $lte: dimensions.height.maxsize } } : {},
+      dimensions.slices?.minsize ? { 'dimensions.slices': { $gte: dimensions.slices.minsize } } : {},
+      dimensions.slices?.maxsize ? { 'dimensions.slices': { $lte: dimensions.slices.maxsize } } : {},
+      dimensions.frames?.minsize ? { 'dimensions.frames': { $gte: dimensions.frames.minsize } } : {},
+      dimensions.frames?.maxsize ? { 'dimensions.frames': { $lte: dimensions.frames.maxsize } } : {},
+    ]
+  });
+  if (voxelsize) searchConditions.push({
+    $or: [
+      voxelsize.t?.minsize ? { 'voxelsize.t': { $gte: voxelsize.t.minsize } } : {},
+      voxelsize.t?.maxsize ? { 'voxelsize.t': { $lte: voxelsize.t.maxsize } } : {},
+
+      voxelsize.x?.minsize ? { 'voxelsize.x': { $gte: voxelsize.x.minsize } } : {},
+      voxelsize.x?.maxsize ? { 'voxelsize.x': { $lte: voxelsize.x.maxsize } } : {},
+
+      voxelsize.y?.minsize ? { 'voxelsize.y': { $gte: voxelsize.y.minsize } } : {},
+      voxelsize.y?.maxsize ? { 'voxelsize.y': { $lte: voxelsize.y.maxsize } } : {},
+
+      voxelsize.z?.minsize ? { 'voxelsize.z': { $gte: voxelsize.z.minsize } } : {},
+      voxelsize.z?.maxsize ? { 'voxelsize.z': { $lte: voxelsize.z.maxsize } } : {},
+
+    ]
+  });
+  if (daterange) {
+    if (daterange.start) searchConditions.push({ createdAt: { $gte: daterange.start } }); // Search by start date
+    if (daterange.end) searchConditions.push({ createdAt: { $lte: daterange.end } }); // Search by end date
+  }
+  // If no search conditions are provided, return all projects
+  if (searchConditions.length === 0) {
+    logger.warn(`Database: No search conditions provided. Returning all projects.`);
+    // Remove .lean() to return Mongoose documents (IProjectDocument) instead of plain objects
+    return { success: true, operation, projects: await projectModel.find({}) }; // Return all projects as Mongoose documents
+  }
+
+  // If there are search conditions, build the query
+  const query = { $and: searchConditions }; // Combine all conditions with $and
+  logger.info(`Database: Reading projects matching query: ${JSON.stringify(query)}`);
+
+  try {
+    const projects = await projectModel.find(query); // Execute the query
+
+    if (projects.length === 0) {
+      logger.info(`Database: No projects found matching the criteria.`);
+      return { success: true, operation, message: "No projects found matching the criteria." };
+    }
+
+    logger.info(`Database: Found ${projects.length} projects matching the criteria.`);
+    return { success: true, operation, projects: projects }; // Return found projects as Mongoose documents
+
+  } catch (error: unknown) {
+    LogError(error as Error, serviceLocation, `Error reading projects with query: ${JSON.stringify(query)}`);
+    return { success: false, operation, message: "Error reading projects." };
+  }
+}
+
+// updateProject function
+const updateProject = async (
+  // Identifying parameters:
+  projectid: string, // The ID of the project to update (unique)
+  // Update object
+  updates: {
+    userid?: string,
+    name?: string, // User-given name of the project (must be unique for the user)
+    originalfilename?: string, // The original name of the file when uploaded
+    isSaved?: boolean, // Indicates if the file should be saved (true) or not (false)
+    filename?: string, // server generated filename in the format of userid_filehash.nii (e.g., 1234567890_2630fcede25328c13a15c4dfe6376c068201eb1f8d871736cd8197c2b1463ed3.nii)
+    filetype?: FileType, // MIME type of the file (e.g., image/nifti, image/dicom) - should be detected by server
+    filesize?: number, // In bytes
+    filehash?: string, // SHA256 hash of the file (to be generated by the API developers)
+    basepath?: string, // Base path for the file storage (e.g., S3 bucket URL)
+    originalfilepath?: string, // Original file location (e.g., S3 bucket URL)
+    extractedfolderpath?: string, // Folder path for the extracted files (e.g., S3 bucket URL)
+    status?: { upload?: boolean; extract?: boolean }, // Status of the project processing (upload and extract) - default to false
+    datatype?: FileDataType, // Data type of the image (e.g., uint8, float32) - should be detected by server
+    dimensions?: { width?: number; height?: number; slices?: number; frames?: number },
+    voxelsize?: { x?: number; y?: number; z?: number; t?: number }, // Optional physical voxel dimensions (e.g., x, y, z, t dimensions) - should be detected by server
+    description?: string, // User-given description of the project (optional)
+  }
+): Promise<ProjectCrudResult> => {
+  const operation = CRUDOperation.UPDATE;
+  // Look for the project by id
+  const project = await projectModel.findById(projectid);
+  if (!project) {
+    logger.warn(`Database: Project ${projectid} not found.`);
+    return { success: false, operation, message: `Project ${projectid} not found.` };
+  }
+  try {
+    if (updates.userid) project.userid = updates.userid; // Update user ID if provided
+    if (updates.name) project.name = updates.name; // Update project name if provided
+    if (updates.originalfilename) project.originalfilename = updates.originalfilename;
+    if (updates.isSaved !== undefined) project.isSaved = updates.isSaved; // Update saved status if provided
+    if (updates.filename) project.filename = updates.filename; // Update server filename if provided
+    if (updates.filetype) project.filetype = updates.filetype; // Update file type if provided
+    if (updates.filesize) project.filesize = updates.filesize; // Update file size if provided
+    if (updates.filehash) project.filehash = updates.filehash; // Update file hash if provided
+    if (updates.basepath) project.basepath = updates.basepath; // Update base path if provided
+    if (updates.originalfilepath) project.originalfilepath = updates.originalfilepath; // Update original file path if provided
+    if (updates.extractedfolderpath) project.extractedfolderpath = updates.extractedfolderpath; // Update extracted folder path if provided
+    // Status updates
+    if (updates.status) {
+      if (updates.status.extract) project.status.extract = updates.status.extract; // Update extraction status if provided
+      if (updates.status.upload) project.status.upload = updates.status.upload; // Update upload status if provided
+    }
+    if (updates.datatype) project.datatype = updates.datatype; // Update data type if provided
+    // Dimensions updates
+    if (updates.dimensions) {
+      if (updates.dimensions.width) project.dimensions.width = updates.dimensions.width;
+      if (updates.dimensions.height) project.dimensions.height = updates.dimensions.height;
+      if (updates.dimensions.slices) project.dimensions.slices = updates.dimensions.slices;
+      if (updates.dimensions.frames) project.dimensions.frames = updates.dimensions.frames;
+    }
+    // Voxel size updates
+    if (updates.voxelsize) {
+      // Initialize voxelsize object if it doesn't exist
+      if (!project.voxelsize) {
+        project.voxelsize = { x: 0, y: 0 }; // Initialize with required fields
+      }
+      if (updates.voxelsize.x) project.voxelsize.x = updates.voxelsize.x;
+      if (updates.voxelsize.y) project.voxelsize.y = updates.voxelsize.y;
+      if (updates.voxelsize.z) project.voxelsize.z = updates.voxelsize.z;
+      if (updates.voxelsize.t) project.voxelsize.t = updates.voxelsize.t;
+    }
+    if (updates.description) project.description = updates.description; // Update description if provided
+
+    // Save the updated project to the database
+    await project.save();
+
+    logger.info(`Database: Project ${project._id} updated successfully.`);
+    return { success: true, operation, project: project }; // Return the updated project
+  } catch (error: unknown) {
+    LogError(error as Error, serviceLocation, `Error updating project ${projectid} with error: ${error}.`);
+    return { success: false, operation, message: "Error updating project." };
+  }
+}
+
+/**
+ * Deletes a project from the database by ID, triggering cascade deletion of all associated segmentation masks.
+ * 
+ * @async
+ * @function deleteProject
+ * @param {string} projectid - The ID of the project to delete
+ * @returns {Promise<ProjectCrudResult>} Result object with success status, operation type, and message
+ * - Success: {success: true, operation: DELETE, message: "Project deleted successfully"}
+ * - Not found: {success: false, operation: DELETE, message: "Project not found"}
+ * - Error: {success: false, operation: DELETE, message: "Error deleting project"}
+ */
+const deleteProject = async (projectid: string): Promise<ProjectCrudResult> => {
+  const operation = CRUDOperation.DELETE;
+  try {
+    // Find the project by ID
+    const project = await projectModel.findById(projectid);
+    if (!project) {
+      logger.warn(`Database: Project ${projectid} not found.`);
+      return { success: false, operation, message: `Project ${projectid} not found.` };
+    }
+    // Delete the project
+    await project.deleteOne();
+    logger.info(`Database: Project ${project._id} deleted successfully.`);
+    return { success: true, operation, message: `Project ${project._id} deleted successfully.` };
+  } catch (error: unknown) {
+    LogError(error as Error, serviceLocation, `Error deleting project ${projectid}.`);
+    return { success: false, operation, message: "Error deleting project." };
+  }
+}
 
 // Using ES modules instead of CommonJS which is module.exports = {connectToDatabase, User};
 // ONLY unit tests should use userModel, fileModel directly, otherwise use the created functions to create users/files.
-export { connectToDatabase, userModel, createUser, readUser, updateUser, deleteUser, authenticateUser, UserRole, IUserSafe, UserCrudResult, CRUDOperation, IUserDocument, IProject, IProjectSegmentationMask, projectModel, projectSegmentationMaskModel, createProject };
+export { connectToDatabase, userModel, createUser, readUser, updateUser, deleteUser, authenticateUser, UserRole, IUserSafe, UserCrudResult, CRUDOperation, IUserDocument, IProject, IProjectSegmentationMask, projectModel, projectSegmentationMaskModel, createProject, readProject, updateProject, deleteProject };
 // createFile, readFile, updateFile,

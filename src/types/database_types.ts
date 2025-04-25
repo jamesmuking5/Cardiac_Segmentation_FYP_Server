@@ -40,6 +40,8 @@ export interface IUser {
  * @property {string} email - The email address of the user.
  * @property {string} phone - The phone number of the user.
  * @property {UserRole} role - The role of the user (e.g., User, Admin).
+ * @property {Date} [createdAt] - The date when the user was created (optional).
+ * @property {Date} [updatedAt] - The date when the user was last updated (optional).
  */
 export interface IUserSafe {
     _id: string; // MongoDB Object ID of the user
@@ -47,9 +49,13 @@ export interface IUserSafe {
     email: string;
     phone: string;
     role: UserRole; // Default to "user" unless specified otherwise
+    createdAt?: Date; // Creation date of the user
+    updatedAt?: Date; // Last update date of the user
 }
 // User Model Interface (single user document in the database)
 export interface IUserDocument extends IUser, Document {
+    createdAt: Date; // Creation date of the user, commented out if extended with mongoose.Document
+    updatedAt: Date; // Last update date of the user, commented out if extended with mongoose.Document
 }
 
 
@@ -106,9 +112,7 @@ export enum FileDataType {
  * @property {string} extractedfolderpath - The folder where all the extracted JPEGs from NIfTI are saved. (e.g. s3://devel-visheart-s3-bucket/temp/${testUser._id}/${String(testUser._id)}_2630fcede25328c13a15c4dfe6376c068201eb1f8d871736cd8197c2b1463ed3/extracted)
  * @property {boolean} status.upload - Indicates if the file upload was successful.
  * @property {boolean} status.extract - Indicates if the file extraction was successful.
- * @property {boolean} status.component_bounding_box - Indicates if the component bounding box extraction was successful.
- * @property {boolean} status.segmentation - Indicates if the segmentation was successful.
- * @property {string} datatype - The data type of the image (e.g., uint8, float32).
+* @property {string} datatype - The data type of the image (e.g., uint8, float32).
  * @property {object} dimensions - The dimensions of the image.
  * @property {number} dimensions.width - The width of the image in pixels.
  * @property {number} dimensions.height - The height of the image in pixels.
@@ -190,6 +194,7 @@ export enum ComponentBoundingBoxesClass {
  * @property {boolean} isSaved - Indicates if the segmentation mask should be saved.
  * @property {boolean} isMedSAMOutput - Indicates if the segmentation mask is a MedSAM output (should not delete if its the output of MedSAM).
  * @property {object[]} frames - An array of frame objects, each containing slice information.
+ * @property {boolean} frameInferred - Indicates if the frame has been inferred (user must manually run MedSAM on it)
  * @property {number} frameIndex - The index of the frame (0-based).
  * @property {object[]} slices - An array of slice objects, each containing segmentation mask information.
  * @property {number} sliceindex - The index of the slice (0-based).
@@ -218,6 +223,8 @@ export interface IProjectSegmentationMask {
     // If the segmentation mask is a single frame, there will be only one entry in the frames array
     frames: {
         frameIndex: number;
+        // Since GPU limitaion, predict on only one frame at a time, this is a record
+        frameInferred: boolean; // Indicates if the frame has been inferred
         slices: {
             sliceindex: number;
             slicepath: string; // Path to the slice image (e.g., S3 bucket URL)
@@ -292,11 +299,22 @@ export interface UserCrudResult {
     message?: string; // Message if error/warning occurred (applicable for all operations)
 }
 
+// Define result type for project CRUD operations
+/**
+ * Defines the standard structure for the result object returned by project-related database operations
+ * (create, read, update, delete).
+ * @interface ProjectCrudResult
+ * @property {boolean} success - Indicates whether the operation completed successfully.
+ * @property {CRUDOperation} operation - The type of operation that was performed (e.g., CREATE, READ).
+ * @property {IProjectDocument} [project] - The resulting project object, typically included on successful CREATE or UPDATE operations.
+ * @property {IProjectDocument[]} [projects] - An array of project objects, typically included on successful READ operations. Can be empty if no projects match the criteria.
+ * @property {string} [message] - An optional message providing more details, especially in case of failure (e.g., validation error, project not found) or warnings.
+ * @property {IProjectSegmentationMask} [segmentationmask] - The segmentation mask object, typically included on successful READ operations.
+ */
 export interface ProjectCrudResult {
     success: boolean; // Indicates whether the operation was successful
     operation: CRUDOperation; // The type of operation performed (CREATE, READ, UPDATE, DELETE)
-    project?: IProject; // The created or updated project document (applicable for CREATE and UPDATE operations)
-    projects?: IProject[]; // Array of project documents (applicable for READ operation)
+    project?: IProjectDocument; // The created or updated project document (applicable for CREATE and UPDATE operations)
+    projects?: IProjectDocument[]; // Array of project documents (applicable for READ operation)
     message?: string; // Message if error/warning occurred (applicable for all operations)
-    // segmentationmask?: IProjectSegmentationMask; // Commented as it is inside the project document
 }
