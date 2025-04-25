@@ -1,202 +1,84 @@
-# VisHeart Cardiac Segmentation Server
+# Project README
 
-## Overview
+## Description
 
-VisHeart is a backend server built with Node.js and Express.js, utilizing TypeScript. It provides the foundational infrastructure for a cardiac segmentation application designed to work with NIFTI and DICOM medical imaging formats. The server currently focuses on user management, authentication, secure file metadata storage, and robust logging, setting the stage for future integration of segmentation processing capabilities.
+This project is a Node.js backend application built with TypeScript. It serves as an API for managing user accounts (registration, login with password hashing, guest access), handling file uploads (specifically NIfTI medical image files, `.nii` or `.nii.gz`), extracting metadata from these files using an integrated Python script, and interacting with a MongoDB database via Mongoose to store user and project information. It uses Express.js for routing and middleware. File storage can be configured for local disk or AWS S3.
 
-## Current Features
+## Interesting Techniques
 
-- **User Management System**
-  - User registration with unique username, email, and phone validation.
-  - Secure user authentication using Passport.js with the Local Strategy (username/password).
-  - Secure password storage using bcrypt hashing.
-  - Role-based access control (RBAC) distinguishing between 'user' and 'admin' roles.
-  - Middleware to protect routes based on authentication status (`isAuthenticated`) and admin privileges (`isAuthAndAdmin`).
-  - Session management handled via `express-session` for persistent logins.
-  - Automatic creation of a default 'admin' user on initial startup if no admin exists.
-- **Database Integration**
-  - MongoDB integration using the Mongoose ODM.
-  - Defined Mongoose schemas for User and File metadata.
-  - Database connection management with logging.
-  - Helper functions (`createUser`, `readUser`, `updateUser`, `authenticateUser`, `createFile`) for interacting with the database models.
-  - Sanitized user data (`IUserSafe`) returned from database functions, excluding sensitive information like passwords.
-- **API Endpoints**
-  - `/auth/register`: Handles new user registration with input validation (`express-validator`).
-  - `/auth/login`: Handles user login via Passport LocalStrategy with input validation.
-  - `/auth/logout`: Handles user logout and session destruction.
-  - `/auth/protected`: Example route accessible only to authenticated users.
-  - `/auth/admin`: Example route accessible only to authenticated admin users.
-- **Logging System**
-  - Advanced logging using `winston`.
-  - Daily log file rotation (`winston-daily-rotate-file`) stored in the `logs/winston_logger/` directory.
-  - Separate log files for different levels (info, error, warn).
-  - Colorized console output for improved readability during development.
-  - Dedicated error logging utility (`LogError`) for consistent error reporting.
-- **Development & Testing Environment**
-  - Developed using TypeScript, configured via `tsconfig.json`.
-  - Code linting and formatting enforced by ESLint and Prettier (`eslint.config.mjs`, `package.json`).
-  - Unit and integration testing setup with Jest (`jest.config.js`).
-  - Tests utilize `mongodb-memory-server` for isolated database testing.
-  - Example tests provided for authentication (`__tests__/auth.test.ts`) and database functions (`__tests__/database.test.ts`).
-  - Uses `nodemon` for automatic server restarts during development.
-  - Build process compiles TypeScript to JavaScript in the `dist/` directory.
+This codebase utilizes several modern backend techniques:
+
+* **Modular Routing and Middleware (Express.js)**: The application uses [Express.js](https://developer.mozilla.org/en-US/docs/Learn/Server-side/Express_Nodejs/Introduction) to define API routes (`./src/routes/authentication.ts`, `./src/routes/uploadroutes.ts`). It employs middleware extensively for handling JSON parsing, sessions, authentication (`./src/services/passportjs.ts`), input validation (`./src/middleware/field_validation.ts`), and file uploads (`./src/middleware/uploadmiddleware.ts`).
+* **Secure Password Hashing (bcrypt)**: User passwords are securely hashed using [`bcrypt`](https://www.npmjs.com/package/bcrypt) before being stored, significantly increasing security against breaches (`./src/services/database.ts`).
+* **Declarative Input Validation (express-validator)**: Uses [`express-validator`](https://express-validator.github.io/docs/) to define clear, chainable rules for validating incoming request data (`./src/middleware/field_validation.ts`, `./src/routes/authentication.ts`), ensuring data integrity before processing.
+* **Object Data Modeling & Hooks (Mongoose)**: Leverages [Mongoose](https://mongoosejs.com/) for schema definition (`./src/types/database_types.ts`), data validation, and interaction with MongoDB. It also utilizes Mongoose pre-hooks for lifecycle events, such as cascading deletes where deleting a user automatically removes their associated projects and masks (`./src/services/database.ts`).
+* **Asynchronous Operations (async/await)**: Modern JavaScript [`async/await`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Statements/async_function) syntax is used throughout the codebase (e.g., in `./src/services/database.ts`, `./src/index.ts`) for cleaner handling of asynchronous operations like database queries and file processing.
+* **Inter-process Communication (Node.js `child_process`)**: Executes a Python script (`./src/python/extract_metadata.py`) to parse NIfTI file metadata using Node.js's [`child_process`](https://nodejs.org/api/child_process.html) module, specifically `execFile`, demonstrating integration with other languages/processes (`./src/utils/nifti_parser.ts`).
+* **Configuration Management (dotenv)**: Manages environment-specific configurations (like database URIs, secrets, ports) using [`dotenv`](https://github.com/motdotla/dotenv), loading variables from a `.env` file into `process.env` (`./src/index.ts`, `./src/services/database.ts`).
+* **Logging (Winston)**: Implements structured, level-based logging using [`winston`](https://github.com/winstonjs/winston), including daily log rotation and separate files for different log levels (`./src/services/logger.ts`, `./src/utils/error_logger.ts`).
+* **Authentication Strategy (Passport.js)**: Employs [`Passport.js`](https://www.passportjs.org/docs/) with a local strategy (`passport-local`) for username/password authentication and manages user sessions (`./src/services/passportjs.ts`, `./src/services/express_app.ts`).
+
+## Technologies and Libraries
+
+* **Runtime**: Node.js
+* **Language**: TypeScript
+* **Web Framework**: [Express.js](https://developer.mozilla.org/en-US/docs/Learn/Server-side/Express_Nodejs/Introduction)
+* **Database ORM**: [Mongoose](https://mongoosejs.com/) (for MongoDB)
+* **Authentication**: [Passport.js](https://www.passportjs.org/docs/) (`passport-local`)
+* **Session Management**: `express-session` (Potentially with [Redis](https://redis.io/docs/latest/develop/clients/nodejs/) via `connect-redis`, though Redis store connection is commented out in `./src/services/express_app.ts`)
+* **Password Hashing**: [bcrypt](https://www.npmjs.com/package/bcrypt)
+* **Input Validation**: [express-validator](https://express-validator.github.io/docs/)
+* **File Uploads**: [Multer](https://github.com/expressjs/multer)
+* **Cloud Storage**: [AWS SDK for JavaScript (v2)](https://docs.aws.amazon.com/sdk-for-javascript/v2/developer-guide/aws-jsdk-reference.html) (for S3 interaction)
+* **Logging**: [Winston](https://github.com/winstonjs/winston) (`winston-daily-rotate-file`)
+* **Environment Variables**: [dotenv](https://github.com/motdotla/dotenv)
+* **NIfTI File Handling**: [Nibabel](https://nipy.org/nibabel/) (Python library accessed via `child_process`)
+* **UUID Generation**: `uuid` (for guest IDs in `./src/routes/authentication.ts`)
+
+*(Note: No specific custom fonts are referenced in the backend codebase.)*
+
+## API Routes
+
+The application exposes the following API endpoints (assuming routes are mounted at `/auth` and `/` respectively as configured in `./src/services/express_app.ts` and `./src/routes/uploadroutes.ts`):
+
+* **Authentication (`./src/routes/authentication.ts`)**:
+    * `POST /auth/login`: Authenticates a user based on username and password provided in the request body. Uses input validation.
+    * `POST /auth/register`: Creates a new user account. Requires username, password, email, and phone in the request body. Uses input validation.
+    * `POST /auth/guest`: Logs in a user as a temporary guest, creating a guest account automatically.
+    * `POST /auth/logout`: Logs out the currently authenticated user. Requires an active session/authentication.
+    * `GET /auth/protected`: An example route demonstrating endpoint protection. Requires authentication.
+    * `GET /auth/admin`: An example route demonstrating admin-level protection. Requires authentication and the user to have an 'Admin' role.
+* **File Upload (`./src/routes/uploadroutes.ts`)**:
+    * `POST /upload`: Handles file uploads. Expects `multipart/form-data` containing the file(s) and a `userId` field in the request body. Uses Multer middleware for processing.
+    * `GET /upload`: Returns a message indicating that this endpoint only accepts POST requests for file uploads.
 
 ## Project Structure
 
-```bash
+```
 .
-├── tests/                # Test files (Jest)
-│   ├── auth.test.ts
-│   └── database.test.ts
-├── dist/                     # Compiled JavaScript output
-├── logs/                     # Application logs
-│   └── winston_logger/       # Winston rotating logs
-├── node_modules/             # Project dependencies
-├── src/                      # Source code (TypeScript)
-│   ├── routes/               # API route definitions
-│   │   └── authentication.ts
-│   ├── services/             # Core service modules
-│   │   ├── database.ts       # MongoDB connection, schemas, CRUD functions
-│   │   ├── express_app.ts    # Express application setup and middleware
-│   │   ├── logger.ts         # Winston logging configuration
-│   │   └── passportjs.ts     # Passport.js authentication strategies
-│   ├── utils/                # Utility functions
-│   │   └── error_logger.ts
-│   └── index.ts              # Main application entry point
-├── .env                      # Environment variables (Gitignored)
-├── .gitignore                # Git ignore configuration
-├── eslint.config.mjs         # ESLint configuration
-├── jest.config.js            # Jest configuration
-├── package-lock.json         # Exact dependency versions
-├── package.json              # Project dependencies and scripts
-├── README.md                 # This file
-└── tsconfig.json             # TypeScript compiler options
+├── logs/
+│   └── winston_logger/
+├── src/
+│   ├── controllers/
+│   ├── middleware/
+│   ├── python/
+│   ├── routes/
+│   ├── services/
+│   ├── tests/
+│   ├── types/
+│   └── utils/
+├── uploads/
+└── index.ts
 ```
 
-## Installation
-
-1.  **Clone the repository:**
-
-    ```bash
-    git clone [https://github.com/jamesmuking5/Cardiac_Segmentation_FYP_Server.git](https://github.com/jamesmuking5/Cardiac_Segmentation_FYP_Server.git)
-    cd Cardiac_Segmentation_FYP_Server
-    ```
-
-2.  **Install dependencies:**
-
-    ```bash
-    npm install
-    ```
-
-3.  **Create `.env` file:**
-    Create a `.env` file in the root directory and add the following environment variables. **Ensure you use strong, unique secrets.**
-
-    ```dotenv
-    # Server configuration
-    PORT=3000
-
-    # Database configuration
-    MONGODB_URI=mongodb://127.0.0.1:27017/visheart # Or your MongoDB connection string
-
-    # Security
-    ADMIN_PASS=your_secure_default_admin_password # Password for the auto-created admin
-    SESSION_SECRET=your_very_secure_session_secret # Secret key for express-session
-    ```
-
-4.  **Run the development server:**
-    ```bash
-    npm run dev
-    ```
-    The server should start, connect to the database, create a default admin user if needed, and be accessible at `http://localhost:3000` (or the port specified in `.env`).
-
-## Usage
-
-### Development
-
-- Start the development server with TypeScript compilation and hot-reloading using `nodemon`:
-  ```bash
-  npm run dev
-  ```
-
-### Testing
-
-- Run the Jest test suite (uses in-memory MongoDB):
-  ```bash
-  npm test
-  ```
-
-### Production
-
-1.  **Build the project:** Compile TypeScript to JavaScript in the `dist/` directory:
-
-    ```bash
-    npm run build
-    ```
-
-2.  **Start the production server:** Run the compiled JavaScript code:
-    ```bash
-    npm start
-    ```
-    Ensure your `.env` file is configured correctly for your production environment (especially `MONGODB_URI` and secrets).
-
-## Planned Features
-
-_(This section remains largely unchanged as the code focuses on infrastructure)_
-
-### Short-term Roadmap
-
-1.  **File Upload System**
-    - Implement NIFTI and DICOM file upload endpoints using `multer` or similar.
-    - Add robust file validation (type, size limits) and integrity checking (hash verification).
-    - Implement secure file storage (local or cloud-based).
-2.  **Expanded API Endpoints**
-    - Develop RESTful API endpoints for file management (upload, download, list, delete, update metadata).
-    - Refine user management endpoints (e.g., update profile, password reset).
-3.  **Segmentation Processing**
-    - Integrate with external cardiac segmentation algorithms/scripts.
-    - Implement a job queue system (e.g., BullMQ, Kue) for handling asynchronous segmentation tasks.
-    - Design mechanisms for storing and retrieving segmentation results associated with uploaded files.
-
-### Long-term Roadmap
-
-1.  **Advanced Segmentation Features**
-    - Support for multiple segmentation algorithms.
-    - Tools for comparing segmentation results.
-    - Batch processing capabilities for multiple files.
-2.  **Analytics Dashboard**
-    - Track API usage statistics.
-    - Monitor segmentation processing times and resource usage.
-    - Log user activity for auditing purposes.
-3.  **Enhanced Security**
-    - Consider OAuth 2.0 integration for third-party authentication.
-    - Implement API key management for programmatic access.
-    - Add rate limiting to API endpoints to prevent abuse.
-4.  **Scalability Improvements**
-    - Containerize the application using Docker.
-    - Explore deployment options like Kubernetes.
-    - Integrate with cloud storage solutions (e.g., AWS S3, Google Cloud Storage).
-
-## Technical Details
-
-- **Framework:** Node.js with Express.js
-- **Language:** TypeScript
-- **Database:** MongoDB with Mongoose ODM
-- **Authentication:** Passport.js (Local Strategy) with `express-session`
-- **Password Hashing:** bcrypt
-- **Logging:** Winston with `winston-daily-rotate-file`
-- **Testing:** Jest with `ts-jest` and `mongodb-memory-server`
-- **Linting/Formatting:** ESLint and Prettier
-- **Input Validation:** `express-validator`
-
-### Database Schemas
-
-1.  **User Schema (`userModel`)**
-    - Fields: `username` (unique), `password` (hashed), `email` (unique), `phone` (unique), `role` (enum: 'user'/'admin').
-    - Ensures uniqueness for critical identifiers.
-2.  **File Schema (`fileModel`)**
-    - Fields: `filename`, `filepath`, `filetype` (MIME), `filehash` (unique), `filesize` (bytes), `createdAt`, `createdBy` (user reference), `description`.
-    - Designed to store metadata about uploaded medical image files.
-
-## License
-
-This project is licensed under the MIT License - see the LICENSE file for details.
+* `logs/winston_logger/`: Stores application logs generated by Winston. Rotated daily.
+* `src/controllers/`: Contains Express route handlers that orchestrate requests, typically calling service functions (e.g., `./src/controllers/uploadcontroller.ts`).
+* `src/middleware/`: Houses Express middleware for tasks like input validation (`./src/middleware/field_validation.ts`) and file upload handling (`./src/middleware/uploadmiddleware.ts`).
+* `src/python/`: Contains Python scripts intended to be called from the Node.js application (e.g., `./src/python/extract_metadata.py`).
+* `src/routes/`: Defines the API endpoints (URLs) and maps them to specific controllers or middleware chains (e.g., `./src/routes/authentication.ts`, `./src/routes/uploadroutes.ts`).
+* `src/services/`: Holds the core application logic, including database interactions (`./src/services/database.ts`), authentication logic (`./src/services/passportjs.ts`), logging setup (`./src/services/logger.ts`), Redis connection (`./src/services/redis.ts`), and file processing logic (`./src/services/upload.ts`). Also includes the Express app configuration (`./src/services/express_app.ts`).
+* `src/tests/`: Contains test scripts, including manual database tests (`./src/tests/_db_test.ts`) and utility tests (`./src/tests/test_nifti_extract.ts`).
+* `src/types/`: Defines shared TypeScript interfaces and enums, particularly for database schemas (`./src/types/database_types.ts`).
+* `src/utils/`: Contains utility functions used across the application, such as error logging (`./src/utils/error_logger.ts`), NIfTI metadata parsing (`./src/utils/nifti_parser.ts`), and file upload helpers (`./src/utils/upload_helper.ts`).
+* `uploads/`: The default directory for temporary storage of uploaded files when using Multer's disk storage configuration (`./src/middleware/uploadmiddleware.ts`).
+* `index.ts`: The main entry point of the application. It initializes configurations (like environment variables), connects to the database and Redis, and starts the Express server.
