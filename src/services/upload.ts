@@ -3,65 +3,114 @@
 // storing file metadata into the database, and preparing file details for response.
 
 import fs from "fs";
-import crypto from "crypto";
-import { createFile } from "./database"; // Handles database insert for file metadata
+import mongoose from "mongoose";
 import { Express } from "express";
+import { uploadToS3 } from "../middleware/uploadmiddleware";
+import { createProject } from "./database";
+import { IProject } from "../types/database_types";
+import { extractNiftiMetadata } from "../utils/nifti_parser";
+import {
+  isValidFileFormat,
+  computeFileHash,
+  isS3Storage,
+  isLocalStorage,
+  mapToFileDataType
+} from "../utils/upload_helper";
 
-/**
- * Processes uploaded files by generating hashes and saving metadata.
- * 
- * @param files - Array of uploaded files from Multer.
- * @param createdBy - ID of the user or guest who uploaded the files.
- * @returns An object indicating success or failure, with details of each uploaded file.
- */
 export const processUpload = async (
   files: Express.Multer.File[],
-  createdBy: string
+  userId: string
 ) => {
-  const uploadedFilesDetails = [];
+  const uploadedProjects: IProject[] = [];
+  const storageMode = process.env.STORAGE_MODE || "local";
 
   for (const file of files) {
-    const localPath = file.path;
+    const { originalname, mimetype, size, path: filePath } = file;
 
     try {
-      // Read the file from disk
-      const fileBuffer = fs.readFileSync(localPath);
+      // Validate file format
+      if (!isValidFileFormat(originalname)) {
+        return {
+          success: false,
+          error: "Invalid file format. Only .nii or .nii.gz allowed.",
+        };
+      }
 
-      // Generate a SHA-256 hash for integrity tracking
-      const fileHash = crypto.createHash("sha256").update(fileBuffer).digest("hex");
+      // Read file and compute SHA-256 hash
+      const fileBuffer = fs.readFileSync(filePath);
+      const fileHash = computeFileHash(fileBuffer);
 
-      const { originalname, mimetype, size } = file;
+      // Handle file storage (local or S3)
+      const storedPath = isS3Storage(storageMode)
+        ? await uploadToS3(file)
+        : filePath;
 
-      // Save file metadata to the database
-      const result = await createFile(
-        originalname,  // Original filename
-        localPath,     // Server-side file path
-        mimetype,      // File MIME type
-        fileHash,      // Content hash
-        size,          // File size in bytes
-        createdBy,     // User or guest ID
-        undefined      // Optional description (not used here)
+      const projectId = new mongoose.Types.ObjectId();
+      const generatedFilename = `${userId}_${projectId.toHexString()}.nii`;
+
+      // Extract NIfTI metadata using the Python integration
+      const niftiMetadata = await extractNiftiMetadata(filePath);
+
+      // Construct project metadata object
+      const project: IProject = {
+        userid: userId,
+        name: originalname,
+        originalfilename: originalname,
+        description: "",
+        isSaved: true,
+        filename: generatedFilename,
+        filetype: mimetype as any, 
+        filesize: size,
+        filehash: fileHash,
+        basepath: storedPath,
+        originalfilepath: storedPath,
+        extractedfolderpath: "",
+        status: {
+          upload: true,
+          extract: true,
+        },
+        datatype: mapToFileDataType(niftiMetadata.datatype),
+        dimensions: {
+          width: niftiMetadata.dimensions.width ?? 0,
+          height: niftiMetadata.dimensions.height ?? 0,
+          slices: niftiMetadata.dimensions.slices ?? 0,
+        },
+        voxelsize: {
+          x: niftiMetadata.voxelsize.x ?? 0,
+          y: niftiMetadata.voxelsize.y ?? 0,
+          z: niftiMetadata.voxelsize.z ?? 0,
+          t: niftiMetadata.voxelsize.t ?? 0,
+        },
+      };
+
+      // Insert metadata into the database
+      const result = await createProject(
+        project.userid,
+        project.name,
+        project.originalfilename,
+        project.isSaved,
+        project.filename,
+        project.filetype,
+        project.filesize,
+        project.filehash,
+        project.basepath,
+        project.originalfilepath,
+        project.extractedfolderpath,
+        project.status,
+        project.datatype,
+        project.dimensions,
+        project.voxelsize,
       );
 
-      // Handle potential DB error
       if (!result.success) {
         return { success: false, error: result.error };
       }
 
-      // Push file details to the response array
-      uploadedFilesDetails.push({
-        originalName: originalname,
-        storedAs: file.filename,
-        size: file.size,
-        path: localPath
-      });
-
-    } catch (error) {
-      // Catch any processing errors and return failure immediately
-      return { success: false, error };
+      uploadedProjects.push(project);
+    } catch (err) {
+      return { success: false, error: (err as Error).message };
     }
   }
 
-  // Final response with success and all uploaded file info
-  return { success: true, uploadedFiles: uploadedFilesDetails };
+  return { success: true, uploadedProjects };
 };

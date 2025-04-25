@@ -9,7 +9,6 @@ import logger from "../services/logger"; // Import logger
 import validateFields from "../utils/field_validation"; // Import reusable validation middleware
 import { body, validationResult } from 'express-validator'; // Import express-validator for input validation
 import { v4 as uuidv4 } from 'uuid'; // Import UUID for generating unique guest IDs
-import LogError  from "../utils/error_logger"; // Import custom error logging utility
 
 const router = express.Router();
 
@@ -88,7 +87,7 @@ router.post("/register",
 );
 
 // Guest login route
-router.post("/guest", async (req: Request, res: Response): Promise<void> => {
+router.post("/guest", async (req: Request, res: Response) => {
   try {
     const guestID = uuidv4();
     const username = `guest_${guestID}`;
@@ -100,20 +99,18 @@ router.post("/guest", async (req: Request, res: Response): Promise<void> => {
 
     if (!result.success || !result.user) {
       logger.error(`Guest registration failed: ${result.message}`);
-      res.status(500).json({ login: false, message: "Failed to create guest account." });
-      return;
+      return res.status(500).json({ login: false, message: "Failed to create guest account." });
     }
 
     if (!result.user) {
       logger.error("Guest login failed: User is undefined.");
-      res.status(500).json({ message: "Guest login failed." });
-      return;
+      return res.status(500).json({ message: "Guest login failed." });
     }
+
     return req.logIn(result.user, (err) => {
       if (err) {
         logger.error(`Guest login error: ${err}`);
-        res.status(500).json({ message: "Guest login failed." });
-        return;
+        return res.status(500).json({ message: "Guest login failed." });
       }
 
       logger.info(`Guest user ${result.user!.username} logged in successfully.`);
@@ -125,14 +122,19 @@ router.post("/guest", async (req: Request, res: Response): Promise<void> => {
         message: "Logged in as guest.",
       });
     });
-  } catch (error: unknown) {
-    LogError(error as Error, "Guest Login", "Unexpected error during guest login.");
-    res.status(500).json({ message: "Unexpected error during guest login." });
-    return;
+  } catch (error: any) {
+    logger.error(`Unexpected guest login error: ${error.message}`);
+    return res.status(500).json({ message: "Unexpected error during guest login." });
   }
 });
 
-router.post("/logout", isAuth, (req: Request, res: Response): void => {
+router.post("/logout", (req: Request, res: Response): void => {
+  // Check if the user is authenticated before logging out
+  if (!req.isAuthenticated()) {
+    res.status(401).json({ message: "User not logged in" });
+    return; // Stop further execution
+  }
+
   // Logout the user and destroy the session
   req.logout((err: Error | null) => {
     if (err) {
@@ -141,6 +143,7 @@ router.post("/logout", isAuth, (req: Request, res: Response): void => {
     } else {
       res.status(200).json({ message: "Logout successful." });
     }
+    res.status(200).json({ message: "Logout successful." });
   });
 });
 

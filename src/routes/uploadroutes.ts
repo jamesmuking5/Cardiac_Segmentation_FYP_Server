@@ -1,4 +1,4 @@
-// File: src/routes/uploadRoutes.ts
+// File: src/routes/uploadroutes.ts
 // Description: Routes for handling file uploads using Multer middleware and Express framework.
 // This module defines the routes for uploading files, including a POST route for handling file uploads and a GET route to inform about the expected HTTP method.
 
