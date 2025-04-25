@@ -90,6 +90,7 @@ export enum FileDataType {
     FLOAT32 = "float32", // common
     UINT16 = "uint16", // common
     UINT8 = "uint8", // common (often for segmentation masks)
+    INT16 = "int16"
     // To add if needed
 }
 
