@@ -87,6 +87,7 @@ describe('Project Model', () => {
                 name: 'Test Project',
                 originalfilename: 'turtles',
                 description: 'A test project description, I love turtles, I love turtles',
+                isSaved: false,
                 filename: `${String(testUser._id)}_2630fcede25328c13a15c4dfe6376c068201eb1f8d871736cd8197c2b1463ed3`,
                 filetype: FileType.NIFTI_GZ,
                 filesize: 33400000, // 33.4 MB
@@ -104,6 +105,7 @@ describe('Project Model', () => {
                 projectData.userid,
                 projectData.name,
                 projectData.originalfilename,
+                projectData.isSaved,
                 projectData.filename,
                 projectData.filetype,
                 projectData.filesize,
@@ -125,6 +127,7 @@ describe('Project Model', () => {
             expect(result.project?.name).toEqual(projectData.name);
             expect(result.project?.description).toEqual(projectData.description);
             expect(result.project?.originalfilename).toEqual(projectData.originalfilename);
+            expect(result.project?.isSaved).toEqual(projectData.isSaved);
             expect(result.project?.filename).toEqual(projectData.filename);
             expect(result.project?.filetype).toEqual(projectData.filetype);
             expect(result.project?.filesize).toEqual(projectData.filesize);
@@ -167,6 +170,7 @@ describe('Project Model', () => {
                 userid: String(testUser._id), // Use the test user's inherent _id
                 name: 'Test Project',
                 originalfilename: 'turtles',
+                isSaved: false,
                 filename: `${String(testUser._id)}_2630fcede25328c13a15c4dfe6376c068201eb1f8d871736cd8197c2b1463ed3`,
                 filetype: FileType.NIFTI_GZ,
                 filesize: 33400000, // 33.4 MB
@@ -183,6 +187,7 @@ describe('Project Model', () => {
                 projectData.userid,
                 projectData.name,
                 projectData.originalfilename,
+                projectData.isSaved,
                 projectData.filename,
                 projectData.filetype,
                 projectData.filesize,
@@ -200,6 +205,7 @@ describe('Project Model', () => {
             expect(result.project?.userid).toEqual(projectData.userid);
             expect(result.project?.name).toEqual(projectData.name);
             expect(result.project?.originalfilename).toEqual(projectData.originalfilename);
+            expect(result.project?.isSaved).toEqual(projectData.isSaved);
             expect(result.project?.filename).toEqual(projectData.filename);
             expect(result.project?.filetype).toEqual(projectData.filetype);
             expect(result.project?.filesize).toEqual(projectData.filesize);
