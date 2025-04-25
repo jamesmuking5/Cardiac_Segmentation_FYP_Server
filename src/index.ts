@@ -5,6 +5,7 @@ import dotenv from 'dotenv';
 import path from 'path';
 
 import logger from './services/logger'; // Import Winston Logger
+import { connectRedis, checkRedisHealth } from './services/redis'; // Import Redis connection and health check
 
 // Service Location for logging within this file
 const serviceLocation = 'Main';
@@ -28,8 +29,18 @@ const PORT = process.env.PORT || 3000;
 // Connect to MongoDB and start server
 (async (): Promise<void> => {
   try {
+    // Connect to Redis
+    await connectRedis();
+    logger.info(`${serviceLocation}: Successfully connected to Redis.`);
+
+    // Optionally check Redis health
+    const isRedisHealthy = await checkRedisHealth();
+    if (!isRedisHealthy) {
+      throw new Error('Redis health check failed.');
+    }
+
     await connectToDatabase();
-    // Start the server only after successful DB connection
+    // Start the server only a4fter successful DB connection
     app.listen(PORT, () => {
       logger.info(`Server running at http://localhost:${PORT}`);
     });
