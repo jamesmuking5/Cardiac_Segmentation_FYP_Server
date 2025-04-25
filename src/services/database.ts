@@ -1202,7 +1202,46 @@ const createProjectSegmentationMask = async (
   }
 }
 
+/**
+ * Reads all segmentation masks associated with a specific project ID.
+ * Validates the existence of the project ID before querying the database.
+ *
+ * @async
+ * @function readProjectSegmentationMask
+ * @param {string} projectid - The ID of the project whose segmentation masks are to be retrieved.
+ * @returns {Promise<ProjectSegmentationMaskCrudResult>} A promise resolving to a ProjectSegmentationMaskCrudResult object.
+ * - On success with results: `{ success: true, operation: CRUDOperation.READ, projectsegmentationmasks: IProjectSegmentationMaskDocument[] }`.
+ * - On success with no results: `{ success: true, operation: CRUDOperation.READ, message: "No segmentation masks found for this project." }`.
+ * - On failure (project not found): `{ success: false, operation: CRUDOperation.READ, message: "Project ID ... does not exist." }`.
+ * - On database error: `{ success: false, operation: CRUDOperation.READ, message: "Error reading project segmentation mask." }`.
+ */
+const readProjectSegmentationMask = async (
+  projectid: string,
+): Promise<ProjectSegmentationMaskCrudResult> => {
+  const operation = CRUDOperation.READ;
+  try {
+    // validate the project id
+    const projectidexists = await projectModel.exists({ _id: projectid });
+    if (!projectidexists) {
+      logger.warn(`Database: Project ID ${projectid} does not exist.`);
+      return { success: false, operation, message: `Project ID ${projectid} does not exist.` };
+    }
+    // Find all segmentation masks for the project
+    const projectSegmentationMasks = await projectSegmentationMaskModel.find({ projectid: projectid });
+    if (!projectSegmentationMasks || projectSegmentationMasks.length === 0) {
+      logger.info(`Database: No segmentation masks found for project ID ${projectid}.`);
+      return { success: true, operation, message: "No segmentation masks found for this project." };
+    }
+    logger.info(`Database: Found ${projectSegmentationMasks.length} segmentation masks for project ID ${projectid}.`);
+    return { success: true, operation, projectsegmentationmasks: projectSegmentationMasks }; // Return the found segmentation masks
+
+  } catch (error: unknown) {
+    LogError(error as Error, serviceLocation, `Error reading project segmentation mask, ${error}`);
+    return { success: false, operation, message: "Error reading project segmentation mask." };
+  }
+}
+
 // Using ES modules instead of CommonJS which is module.exports = {connectToDatabase, User};
 // ONLY unit tests should use userModel, fileModel directly, otherwise use the created functions to create users/files.
-export { connectToDatabase, userModel, createUser, readUser, updateUser, deleteUser, authenticateUser, UserRole, IUserSafe, UserCrudResult, CRUDOperation, IUserDocument, IProject, IProjectSegmentationMask, projectModel, projectSegmentationMaskModel, createProject, readProject, updateProject, deleteProject, createProjectSegmentationMask };
+export { connectToDatabase, userModel, createUser, readUser, updateUser, deleteUser, authenticateUser, UserRole, IUserSafe, UserCrudResult, CRUDOperation, IUserDocument, IProject, IProjectSegmentationMask, projectModel, projectSegmentationMaskModel, createProject, readProject, updateProject, deleteProject, createProjectSegmentationMask, readProjectSegmentationMask };
 // createFile, readFile, updateFile,

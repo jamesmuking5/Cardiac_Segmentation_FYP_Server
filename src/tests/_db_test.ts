@@ -13,6 +13,7 @@ import {
     deleteProject,
     UserRole,
     createProjectSegmentationMask,
+    readProjectSegmentationMask,
 } from '../services/database';
 import {
     FileType,
@@ -187,11 +188,33 @@ function generateSegmentationMaskData(projectId: string): IProjectSegmentationMa
                                 isRLE: false
                             }
                         ]
+                    },
+                    {
+                        sliceindex: 2,
+                        slicepath: `s3://devel-visheart-s3-bucket/temp/${projectId}/slice_2.png`,
+                        segmentationmaskslocation: [
+                            {
+                                path: `s3://devel-visheart-s3-bucket/temp/${projectId}/mask_2_lvc.png`,
+                                isRLE: false
+                            }
+                        ]
                     }
                 ]
             }
         ]
     };
+}
+
+async function readSegmentationMask(projectId: string) {
+    const result = await readProjectSegmentationMask(projectId);
+
+    if (result.success && result.projectsegmentationmasks && result.projectsegmentationmasks.length > 0) {
+        logger.info("Manual Test: Segmentation mask read successfully:", result);
+        return result.projectsegmentationmasks[0];
+    }
+
+    logger.error("Manual Test: Segmentation mask read failed:", result.message || "Segmentation mask not found");
+    return null;
 }
 
 async function createTestSegmentationMask(projectId: string) {
@@ -353,8 +376,27 @@ async function runManualTests(): Promise<void> {
                             logger.info(`Manual Test: First frame has ${segMask.frames[0].slices.length} slices`);
                         }
 
+                        // Read segmentation mask
+                        const readSegMask = await readSegmentationMask(String(project._id));
+                        if (readSegMask) {
+                            logger.info(`Manual Test: Segmentation mask read successfully with ID: ${readSegMask._id}`);
+                            logger.info(`Manual Test: Segmentation mask has ${readSegMask.frames.length} frames`);
+                            logger.info(`Manual Test: First frame has ${readSegMask.frames[0].slices.length} slices`);
+                        }
+
                         // Step 3: Update and verify project
                         await updateTestProject(String(project._id));
+
+                        const updatedProject = await readProject(String(project._id));
+                        if (updatedProject.success && updatedProject.projects && updatedProject.projects.length > 0) {
+                            const updated = updatedProject.projects[0];
+                            logger.info("Manual Test: Updated project details:");
+                            logger.info(`- Name: ${updated.name}`);
+                            logger.info(`- Description: ${updated.description}`);
+                            logger.info(`- isSaved: ${updated.isSaved}`);
+                            logger.info(`- Dimensions: ${updated.dimensions.width}x${updated.dimensions.height}x${updated.dimensions.slices}x${updated.dimensions.frames}`);
+                            logger.info(`- Voxel size: ${updated.voxelsize?.x}x${updated.voxelsize?.y}x${updated.voxelsize?.z}x${updated.voxelsize?.t}`);
+                        }
 
                         // Step 4: Delete project (should cascade delete the segmentation masks)
                         await deleteTestProject(String(project._id));
