@@ -11,8 +11,8 @@ import LogError from "../utils/error_logger"; // Import the error logging utilit
 const serviceLocation = "Database"; // Service location for error logging
 
 // Import Types
-import { IUser, IUserDocument, IUserSafe, UserRole, CRUDOperation, UserCrudResult, IProjectDocument } from "../types/database_types"; // Import the user types
-import { FileType, FileDataType, ComponentBoundingBoxesClass, IProject, IProjectSegmentationMask, ProjectCrudResult } from "../types/database_types"; // Import the project types
+import { IUser, IUserDocument, IUserSafe, UserRole, CRUDOperation, UserCrudResult, IProjectDocument, IProjectSegmentationMaskDocument } from "../types/database_types"; // Import the user types
+import { FileType, FileDataType, ComponentBoundingBoxesClass, IProject, IProjectSegmentationMask, ProjectCrudResult, ProjectSegmentationMaskCrudResult } from "../types/database_types"; // Import the project types
 
 // Load environment variables from .env file
 try {
@@ -765,6 +765,13 @@ const createProject = async (
 ): Promise<ProjectCrudResult> => {
   const operation = CRUDOperation.CREATE;
   try {
+    // If user does not exist, return error
+    const user = await userModel.findById(userid);
+    if (!user) {
+      logger.warn(`Database: User ${userid} does not exist.`);
+      return { success: false, operation, message: `User ${userid} does not exist.` };
+    }
+
     // Validate input parameters
     // Check if all the string inputs are non-empty strings
     const stringInputs = [userid, name, originalfilename, filename, filehash, basepath, originalfilepath, extractedfolderpath, datatype];
@@ -794,12 +801,6 @@ const createProject = async (
       }
     }
 
-    // If user does not exist, return error
-    const user = await userModel.findById(userid);
-    if (!user) {
-      logger.warn(`Database: User ${userid} does not exist.`);
-      return { success: false, operation, message: `User ${userid} does not exist.` };
-    }
     // Check conflicting fields (name, filehash, originalfilepath, extractedfolderpath, filename) 
     const existingProject = await projectModel.findOne({
       $or: [
@@ -1098,7 +1099,110 @@ const deleteProject = async (projectid: string): Promise<ProjectCrudResult> => {
   }
 }
 
+/* Project Segmentation Mask section */
+
+/**
+ * Creates a new project segmentation mask record in the database.
+ * Validates the provided data, including checking for the existence of the referenced project ID,
+ * ensuring string inputs are not empty, and numeric inputs (indices, coordinates) are non-negative.
+ *
+ * @async
+ * @function createProjectSegmentationMask
+ * @param {IProjectSegmentationMask} projectsegmentationmask - An object containing the details of the segmentation mask to create.
+ * @returns {Promise<ProjectSegmentationMaskCrudResult>} A promise resolving to a ProjectSegmentationMaskCrudResult object.
+ * - On success: `{ success: true, operation: CREATE, projectsegmentationmask: IProjectSegmentationMaskDocument }` containing the created mask document.
+ * - On failure (project not found): `{ success: false, operation: CREATE, message: "Project ID ... does not exist." }`.
+ * - On failure (invalid input): `{ success: false, operation: CREATE, message: "Invalid input parameters..." }`.
+ * - On database error: `{ success: false, operation: CREATE, message: "Error creating project segmentation mask." }`.
+ */
+const createProjectSegmentationMask = async (
+  projectsegmentationmask: IProjectSegmentationMask
+): Promise<ProjectSegmentationMaskCrudResult> => {
+  const operation = CRUDOperation.CREATE;
+  const psm = projectsegmentationmask;
+  try {
+    // Validate the project ID 
+    const projectid = projectsegmentationmask.projectid;
+    const projectidexists = await projectModel.exists({ _id: projectid });
+    if (!projectidexists) {
+      logger.warn(`Database: Project ID ${projectid} does not exist.`);
+      return { success: false, operation, message: `Project ID ${projectid} does not exist.` };
+    }
+    // Validate the contents
+    // Check if same name exists
+    const projectsegmasknameexists = await projectSegmentationMaskModel.exists({ name: psm.name, projectid: psm.projectid })
+    if (projectsegmasknameexists) {
+      logger.warn(`Database: Invalid input parameters for project segmentation mask creation: Segmentation mask name ${psm.name} already exists for this project.`);
+      return { success: false, operation, message: `Invalid input parameters for project segmentation mask creation: Segmentation mask name ${psm.name} already exists for this project.` };
+    }
+    // Validate empty strings 
+    const stringInputs = [
+      psm.name,
+      ...psm.frames.flatMap(frame => frame.slices.map(slices => slices.slicepath)),
+      ...psm.frames.flatMap(frame => frame.slices.flatMap(slices => slices.segmentationmaskslocation?.map(location => location.path) || []))
+    ]
+    const emptyStringInputs = stringInputs.filter(input => !input || typeof input !== 'string' || input.trim() === '');
+    if (emptyStringInputs.length > 0) {
+      logger.warn(`Database: Invalid input parameters for project segmentation mask creation: ${emptyStringInputs.join(", ")}`);
+      return { success: false, operation, message: `Invalid input parameters for project segmentation mask creation: ${emptyStringInputs.join(", ")}` };
+    }
+    // Validate numeric inputs
+    const numericInputs = [
+      ...psm.frames.flatMap(frame => frame.slices.map(slices => slices.sliceindex)),
+      ...psm.frames.flatMap(frame => frame.frameIndex),
+      ...psm.frames.flatMap(frame => frame.slices.map(slices => slices.componentboundingboxes?.map(box => box.x_min) || [])),
+      ...psm.frames.flatMap(frame => frame.slices.map(slices => slices.componentboundingboxes?.map(box => box.y_min) || [])),
+      ...psm.frames.flatMap(frame => frame.slices.map(slices => slices.componentboundingboxes?.map(box => box.x_max) || [])),
+      ...psm.frames.flatMap(frame => frame.slices.map(slices => slices.componentboundingboxes?.map(box => box.y_max) || [])),
+    ];
+    const negativeNumericInputs = numericInputs.filter(input => typeof input === 'number' && input < 0);
+    if (negativeNumericInputs.length > 0) {
+      logger.warn(`Database: Invalid numeric input parameters for project segmentation mask creation: ${negativeNumericInputs.join(", ")}`);
+      return { success: false, operation, message: `Invalid numeric input parameters for project segmentation mask creation.` };
+    }
+    // Validate that bounding boxes's x_max >= x_min and y_max >= y_min
+    const invalidBoundingBoxes = psm.frames.flatMap(frame => frame.slices.flatMap(slices => slices.componentboundingboxes?.filter(box => box.x_max < box.x_min || box.y_max < box.y_min) || []));
+    if (invalidBoundingBoxes.length > 0) {
+      const invalidBoundingBoxesResult = invalidBoundingBoxes.map(box => `(${box.x_min}, ${box.y_min}) to (${box.x_max}, ${box.y_max})`).join(", ");
+      logger.warn(`Database: Invalid bounding box coordinates for project segmentation mask creation: ${invalidBoundingBoxesResult}`);
+      return { success: false, operation, message: `Invalid bounding box coordinates for project segmentation mask creation: ${invalidBoundingBoxesResult}.` };
+    }
+    // Validate that frames array is populated
+    if (!psm.frames || !Array.isArray(psm.frames) || psm.frames.length === 0) {
+      logger.warn(`Database: Invalid input parameters for project segmentation mask creation: frames array must be populated with at least one frame.`);
+      return { success: false, operation, message: `Invalid input parameters for project segmentation mask creation: frames array must be populated with at least one frame.` };
+    }
+
+    // Validate that each frame has a slices array that is populated
+    const framesWithEmptySlices = psm.frames.filter(frame =>
+      !frame.slices || !Array.isArray(frame.slices) || frame.slices.length === 0
+    );
+
+    if (framesWithEmptySlices.length > 0) {
+      const frameIndexesWithEmptySlices = framesWithEmptySlices.map(frame => frame.frameIndex).join(", ");
+      logger.warn(`Database: Invalid input parameters for project segmentation mask creation: frames with indexes [${frameIndexesWithEmptySlices}] have empty slices arrays.`);
+      return { success: false, operation, message: `Invalid input parameters for project segmentation mask creation: each frame must have at least one slice.` };
+    }
+
+
+    // Create new project segmentation mask instance
+    const newProjectSegmentationMask = new projectSegmentationMaskModel(psm);
+
+    // Save the new project segmentation mask to the database
+    const result = await newProjectSegmentationMask.save();
+    if (!result) {
+      logger.warn(`Database: Error creating project segmentation mask.`);
+      return { success: false, operation, message: "Error creating project segmentation mask." };
+    }
+    logger.info(`Database: Project segmentation mask ${result._id} created successfully.`);
+    return { success: true, operation, projectsegmentationmask: result }; // Return the created project segmentation mask
+  } catch (error: unknown) {
+    LogError(error as Error, serviceLocation, `Error creating project segmentation mask, ${error}`);
+    return { success: false, operation, message: "Error creating project segmentation mask." };
+  }
+}
+
 // Using ES modules instead of CommonJS which is module.exports = {connectToDatabase, User};
 // ONLY unit tests should use userModel, fileModel directly, otherwise use the created functions to create users/files.
-export { connectToDatabase, userModel, createUser, readUser, updateUser, deleteUser, authenticateUser, UserRole, IUserSafe, UserCrudResult, CRUDOperation, IUserDocument, IProject, IProjectSegmentationMask, projectModel, projectSegmentationMaskModel, createProject, readProject, updateProject, deleteProject };
+export { connectToDatabase, userModel, createUser, readUser, updateUser, deleteUser, authenticateUser, UserRole, IUserSafe, UserCrudResult, CRUDOperation, IUserDocument, IProject, IProjectSegmentationMask, projectModel, projectSegmentationMaskModel, createProject, readProject, updateProject, deleteProject, createProjectSegmentationMask };
 // createFile, readFile, updateFile,
