@@ -1224,13 +1224,13 @@ const readProjectSegmentationMask = async (
     const projectidexists = await projectModel.exists({ _id: projectid });
     if (!projectidexists) {
       logger.warn(`Database: Project ID ${projectid} does not exist.`);
-      return { success: false, operation, message: `Project ID ${projectid} does not exist.` };
+      return { success: false, operation, message: `Project ID ${projectid} does not exist.` }; // Project ID does not exist
     }
     // Find all segmentation masks for the project
     const projectSegmentationMasks = await projectSegmentationMaskModel.find({ projectid: projectid });
     if (!projectSegmentationMasks || projectSegmentationMasks.length === 0) {
       logger.info(`Database: No segmentation masks found for project ID ${projectid}.`);
-      return { success: true, operation, message: "No segmentation masks found for this project." };
+      return { success: true, operation, message: "No segmentation masks found for this project." }; // true success, but no results found
     }
     logger.info(`Database: Found ${projectSegmentationMasks.length} segmentation masks for project ID ${projectid}.`);
     return { success: true, operation, projectsegmentationmasks: projectSegmentationMasks }; // Return the found segmentation masks
@@ -1241,7 +1241,108 @@ const readProjectSegmentationMask = async (
   }
 }
 
+// only input what needs to be updated, the rest will be unchanged
+const updateProjectSegmentationMask = async (
+  maskid: string,
+  maskupdates: Partial<IProjectSegmentationMaskDocument>
+): Promise<ProjectSegmentationMaskCrudResult> => {
+  const operation = CRUDOperation.UPDATE;
+  try {
+    // Find the segmentation mask by ID
+    const mask = await projectSegmentationMaskModel.findById(maskid);
+    if (!mask) {
+      logger.warn(`Database: Project segmentation mask ${maskid} not found.`);
+      return { success: false, operation, message: `Project segmentation mask ${maskid} not found.` };
+    }
+    
+    // Validate updates based on what's being changed
+    
+    // 1. If updating name, check for uniqueness
+    if (maskupdates.name && maskupdates.name !== mask.name) {
+      const nameExists = await projectSegmentationMaskModel.exists({ 
+        projectid: mask.projectid,
+        name: maskupdates.name,
+        _id: { $ne: maskid }
+      });
+      
+      if (nameExists) {
+        return { success: false, operation, message: `Segmentation mask name '${maskupdates.name}' already exists for this project.` };
+      }
+      
+      // Set the name property directly
+      mask.name = maskupdates.name;
+    }
+    
+    // 2. Update description if provided
+    if (maskupdates.description !== undefined) {
+      mask.description = maskupdates.description;
+    }
+    
+    // 3. Update saved status if provided
+    if (maskupdates.isSaved !== undefined) {
+      mask.isSaved = maskupdates.isSaved;
+    }
+    
+    // 4. Update MedSAM output status if provided
+    if (maskupdates.isMedSAMOutput !== undefined) {
+      mask.isMedSAMOutput = maskupdates.isMedSAMOutput;
+    }
+    
+    // 5. Handle frames update - requires special validation
+    if (maskupdates.frames) {
+      // Validate frames exist and are not empty
+      if (!Array.isArray(maskupdates.frames) || maskupdates.frames.length === 0) {
+        return { success: false, operation, message: "Frames array must contain at least one frame." };
+      }
+
+      // Validate each frame has a valid index
+      const invalidFrameIndices = maskupdates.frames.filter(frame => 
+        frame.frameIndex === undefined || typeof frame.frameIndex !== 'number' || frame.frameIndex < 0
+      );
+      if (invalidFrameIndices.length > 0) {
+        const indices = invalidFrameIndices.map(f => f.frameIndex).join(", ");
+        return { success: false, operation, message: `Invalid frame indices: [${indices}]. Frame index must be a non-negative number.` };
+      }      
+      
+      // Validate each frame has slices
+      const framesWithEmptySlices = maskupdates.frames.filter(frame => 
+        !frame.slices || !Array.isArray(frame.slices) || frame.slices.length === 0
+      );
+      
+      if (framesWithEmptySlices.length > 0) {
+        const indices = framesWithEmptySlices.map(f => f.frameIndex).join(", ");
+        return { success: false, operation, message: `Frames with indices [${indices}] must have at least one slice.` };
+      }
+      
+      // Validate bounding boxes
+      const invalidBoundingBoxes = maskupdates.frames.flatMap(frame => 
+        frame.slices.flatMap(slice => 
+          slice.componentboundingboxes?.filter(box => 
+            box.x_max < box.x_min || box.y_max < box.y_min
+          ) || []
+        )
+      );
+      
+      if (invalidBoundingBoxes.length > 0) {
+        return { success: false, operation, message: "Invalid bounding box coordinates: max values must be greater than or equal to min values." };
+      }
+      
+      // Update the entire frames array if all validations pass
+      mask.frames = maskupdates.frames;
+    }
+    
+    // Save the updated document
+    await mask.save();
+    
+    logger.info(`Database: Project segmentation mask ${maskid} updated successfully.`);
+    return { success: true, operation, projectsegmentationmask: mask };
+    
+  } catch (error: unknown) {
+    LogError(error as Error, serviceLocation, `Error updating project segmentation mask, ${error}`);
+    return { success: false, operation, message: "Error updating project segmentation mask." };
+  }
+};
+
 // Using ES modules instead of CommonJS which is module.exports = {connectToDatabase, User};
 // ONLY unit tests should use userModel, fileModel directly, otherwise use the created functions to create users/files.
-export { connectToDatabase, userModel, createUser, readUser, updateUser, deleteUser, authenticateUser, UserRole, IUserSafe, UserCrudResult, CRUDOperation, IUserDocument, IProject, IProjectSegmentationMask, projectModel, projectSegmentationMaskModel, createProject, readProject, updateProject, deleteProject, createProjectSegmentationMask, readProjectSegmentationMask };
-// createFile, readFile, updateFile,
+export { connectToDatabase, userModel, createUser, readUser, updateUser, deleteUser, authenticateUser, UserRole, IUserSafe, UserCrudResult, CRUDOperation, IUserDocument, IProject, IProjectSegmentationMask, projectModel, projectSegmentationMaskModel, createProject, readProject, updateProject, deleteProject, createProjectSegmentationMask, readProjectSegmentationMask, updateProjectSegmentationMask };
