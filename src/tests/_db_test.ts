@@ -246,7 +246,7 @@ async function updateTestSegmentationMask(maskId: string) {
                             ],
                             segmentationmaskslocation: [
                                 {
-                                    path: `s3://devel-visheart-s3-bucket/temp/updated_mask_0.png`,
+                                    path: `THIS SHOULD CHANGE`,
                                     isRLE: true
                                 }
                             ]
