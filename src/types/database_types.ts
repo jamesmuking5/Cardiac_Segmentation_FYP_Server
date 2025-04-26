@@ -275,6 +275,10 @@ export enum CRUDOperation {
      */
     AUTHENTICATE = "authenticate",
     // Project specific operations
+
+    // // Project Segmentation Mask specific operations
+    // UPDATE_SINGLE_SLICE = "update_single_slice", // Update a single slice in the segmentation mask
+    // UPDATE_SINGLE_FRAME = "update_single_frame", // Update a single frame in the segmentation mask
 }
 // Define result type for user CRUD operations
 /**
