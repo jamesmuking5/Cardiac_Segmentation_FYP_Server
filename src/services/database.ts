@@ -1108,7 +1108,7 @@ const deleteProject = async (projectid: string): Promise<ProjectCrudResult> => {
  *
  * @async
  * @function createProjectSegmentationMask
- * @param {IProjectSegmentationMask} projectsegmentationmask - An object containing the details of the segmentation mask to create.
+ * @param {IProjectSegmentationMask} projectsegmentationmask - An object containing the details of the segmentation mask to create. Import this interface from the database's types file.
  * @returns {Promise<ProjectSegmentationMaskCrudResult>} A promise resolving to a ProjectSegmentationMaskCrudResult object.
  * - On success: `{ success: true, operation: CREATE, projectsegmentationmask: IProjectSegmentationMaskDocument }` containing the created mask document.
  * - On failure (project not found): `{ success: false, operation: CREATE, message: "Project ID ... does not exist." }`.
@@ -1245,6 +1245,7 @@ const readProjectSegmentationMask = async (
  * Updates an existing project segmentation mask in the database.
  * Validates the existence of the mask ID and the project ID before applying updates.
  * Checks for uniqueness of the name and validates the contents of the mask.
+ * Should be used for large updates, as it almost replaces the entire mask object (especially the frame).
  * 
  * @async
  * @function updateProjectSegmentationMask
@@ -1358,6 +1359,30 @@ const updateProjectSegmentationMask = async (
   }
 };
 
+// deleteProjectSegmentationMask function
+const deleteProjectSegmentationMask = async (maskid: string): Promise<ProjectSegmentationMaskCrudResult> => {
+  const operation = CRUDOperation.DELETE;
+  try {
+    // Find the segmentation mask by ID
+    const mask = await projectSegmentationMaskModel.findById(maskid);
+    if (!mask) {
+      logger.warn(`Database: Project segmentation mask ${maskid} not found.`);
+      return { success: false, operation, message: `Project segmentation mask ${maskid} not found.` };
+    }
+    // Delete the segmentation mask
+    await mask.deleteOne();
+    logger.info(`Database: Project segmentation mask ${mask._id} deleted successfully.`);
+    return { success: true, operation, message: `Project segmentation mask ${mask._id} deleted successfully.` };
+  } catch (error: unknown) {
+    LogError(error as Error, serviceLocation, `Error deleting project segmentation mask ${maskid}.`);
+    return { success: false, operation, message: "Error deleting project segmentation mask." };
+  }
+}
+
+// Auxiliary Project Segmentation Mask functions
+// For granular updates, such as adding/removing slices or frames
+// const 
+
 // Using ES modules instead of CommonJS which is module.exports = {connectToDatabase, User};
 // ONLY unit tests should use userModel, fileModel directly, otherwise use the created functions to create users/files.
-export { connectToDatabase, userModel, createUser, readUser, updateUser, deleteUser, authenticateUser, UserRole, IUserSafe, UserCrudResult, CRUDOperation, IUserDocument, IProject, IProjectSegmentationMask, projectModel, projectSegmentationMaskModel, createProject, readProject, updateProject, deleteProject, createProjectSegmentationMask, readProjectSegmentationMask, updateProjectSegmentationMask };
+export { connectToDatabase, userModel, createUser, readUser, updateUser, deleteUser, authenticateUser, UserRole, IUserSafe, UserCrudResult, CRUDOperation, IUserDocument, IProject, IProjectSegmentationMask, projectModel, projectSegmentationMaskModel, createProject, readProject, updateProject, deleteProject, createProjectSegmentationMask, readProjectSegmentationMask, updateProjectSegmentationMask, deleteProjectSegmentationMask };
