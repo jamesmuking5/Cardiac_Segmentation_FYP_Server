@@ -13,6 +13,9 @@ import {
     deleteProject,
     UserRole,
     createProjectSegmentationMask,
+    readProjectSegmentationMask,
+    updateProjectSegmentationMask,
+    deleteProjectSegmentationMask,
 } from '../services/database';
 import {
     FileType,
@@ -187,11 +190,117 @@ function generateSegmentationMaskData(projectId: string): IProjectSegmentationMa
                                 isRLE: false
                             }
                         ]
+                    },
+                    {
+                        sliceindex: 2,
+                        slicepath: `s3://devel-visheart-s3-bucket/temp/${projectId}/slice_2.png`,
+                        segmentationmaskslocation: [
+                            {
+                                path: `s3://devel-visheart-s3-bucket/temp/${projectId}/mask_2_lvc.png`,
+                                isRLE: false
+                            }
+                        ]
                     }
                 ]
             }
         ]
     };
+}
+
+
+
+async function readSegmentationMask(projectId: string) {
+    const result = await readProjectSegmentationMask(projectId);
+
+    if (result.success && result.projectsegmentationmasks && result.projectsegmentationmasks.length > 0) {
+        logger.info("Manual Test: Segmentation mask read successfully:", result);
+        return result.projectsegmentationmasks[0];
+    }
+
+    logger.error("Manual Test: Segmentation mask read failed:", result.message || "Segmentation mask not found");
+    return null;
+}
+
+async function updateTestSegmentationMask(maskId: string) {
+    try {
+        // Create update data with various changes
+        const updateData = {
+            name: 'Updated Segmentation Mask',
+            description: 'This mask has been updated via testing',
+            isSaved: true,
+            frames: [
+                {
+                    frameIndex: 0,
+                    frameInferred: true,
+                    slices: [
+                        {
+                            sliceindex: 0,
+                            slicepath: `s3://devel-visheart-s3-bucket/temp/updated_slice_0.png`,
+                            componentboundingboxes: [
+                                {
+                                    class: ComponentBoundingBoxesClass.LVC,
+                                    x_min: 15,
+                                    y_min: 15,
+                                    x_max: 105,
+                                    y_max: 105
+                                }
+                            ],
+                            segmentationmaskslocation: [
+                                {
+                                    path: `THIS SHOULD CHANGE`,
+                                    isRLE: true
+                                }
+                            ]
+                        },
+                        {
+                            sliceindex: 1,
+                            slicepath: `s3://devel-visheart-s3-bucket/temp/updated_slice_1.png`,
+                            segmentationmaskslocation: [
+                                {
+                                    path: `s3://devel-visheart-s3-bucket/temp/updated_mask_1.png`,
+                                    isRLE: true
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        };
+
+        // Call the update function
+        const result = await updateProjectSegmentationMask(maskId, updateData);
+
+        if (!result.success) {
+            logger.error("Manual Test: Segmentation mask update failed:", result.message);
+            return false;
+        }
+
+        logger.info("Manual Test: Segmentation mask updated successfully:", result);
+
+        // Verify the changes
+        const updatedMask = result.projectsegmentationmask;
+        if (updatedMask) {
+            logger.info("Manual Test: Updated segmentation mask details:");
+            logger.info(`- Name: ${updatedMask.name}`);
+            logger.info(`- Description: ${updatedMask.description}`);
+            logger.info(`- isSaved: ${updatedMask.isSaved}`);
+            logger.info(`- isMedSAMOutput: ${updatedMask.isMedSAMOutput}`);
+            logger.info(`- Number of frames: ${updatedMask.frames.length}`);
+            logger.info(`- First frame slices: ${updatedMask.frames[0].slices.length}`);
+            logger.info(`- First slice path: ${updatedMask.frames[0].slices[0].slicepath}`);
+
+            // Log bounding box details if available
+            if (updatedMask.frames[0].slices[0].componentboundingboxes?.length) {
+                const box = updatedMask.frames[0].slices[0].componentboundingboxes[0];
+                logger.info(`- First bounding box: (${box.x_min},${box.y_min}) to (${box.x_max},${box.y_max})`);
+            }
+        }
+
+        return true;
+    } catch (error) {
+        logger.error("Manual Test: An error occurred while updating the segmentation mask:", error);
+        return false;
+    }
 }
 
 async function createTestSegmentationMask(projectId: string) {
@@ -327,8 +436,30 @@ async function deleteTestProject(projectId: string) {
         return false;
     }
 }
+// Add this new function to delete and verify a segmentation mask
+async function deleteTestSegmentationMask(maskId: string) {
+    try {
+        // Delete the segmentation mask
+        const result = await deleteProjectSegmentationMask(maskId);
 
-// Modify runManualTests to include segmentation mask testing
+        if (!result.success) {
+            logger.error("Manual Test: Segmentation mask deletion failed:", result.message);
+            return false;
+        }
+
+        logger.info("Manual Test: Segmentation mask deleted successfully:", result.message);
+
+        // Try to read the deleted mask to verify it's gone
+        // Since we don't have a direct way to read a mask by ID, we'll assume success if deletion reports success
+        return true;
+    } catch (error) {
+        logger.error("Manual Test: An error occurred while deleting the segmentation mask:", error);
+        return false;
+    }
+}
+
+
+// Modify the runManualTests function to include multiple segmentation mask testing
 async function runManualTests(): Promise<void> {
     try {
         await connectToDatabase();
@@ -345,18 +476,77 @@ async function runManualTests(): Promise<void> {
                     const project = await verifyProjectCreation(projectData.userid, projectData.name);
 
                     if (project) {
-                        // New Step: Create a segmentation mask for the project
-                        const segMask = await createTestSegmentationMask(String(project._id));
-                        if (segMask) {
-                            logger.info(`Manual Test: Segmentation mask created with ID: ${segMask._id}`);
-                            logger.info(`Manual Test: Segmentation mask has ${segMask.frames.length} frames`);
-                            logger.info(`Manual Test: First frame has ${segMask.frames[0].slices.length} slices`);
+                        // Step 3: Create three segmentation masks with different names
+                        logger.info("Manual Test: Creating 3 segmentation masks...");
+
+                        // Create first mask - original test mask
+                        const maskData1 = generateSegmentationMaskData(String(project._id));
+                        maskData1.name = "Test Mask 1";
+                        const segMask1 = await createProjectSegmentationMask(maskData1);
+
+                        // Create second mask - with different name and path
+                        const maskData2 = generateSegmentationMaskData(String(project._id));
+                        maskData2.name = "Test Mask 2";
+                        // Make a small change to make it distinct
+                        maskData2.frames[0].slices[0].slicepath = `s3://devel-visheart-s3-bucket/temp/${project._id}/mask2_slice_0.png`;
+                        const segMask2 = await createProjectSegmentationMask(maskData2);
+
+                        // Create third mask
+                        const maskData3 = generateSegmentationMaskData(String(project._id));
+                        maskData3.name = "Test Mask 3";
+                        // Make it different
+                        maskData3.frames[0].slices[0].slicepath = `s3://devel-visheart-s3-bucket/temp/${project._id}/mask3_slice_0.png`;
+                        const segMask3 = await createProjectSegmentationMask(maskData3);
+
+                        // Verify all masks were created
+                        const allMasks = await readProjectSegmentationMask(String(project._id));
+                        if (allMasks.success && allMasks.projectsegmentationmasks) {
+                            logger.info(`Manual Test: Created ${allMasks.projectsegmentationmasks.length} segmentation masks`);
+
+                            // Step 4: Comprehensively update the second mask
+                            if (segMask2.success && segMask2.projectsegmentationmask) {
+                                const maskId = String(segMask2.projectsegmentationmask._id);
+                                logger.info(`Manual Test: Updating mask with ID: ${maskId}`);
+
+                                if (await updateTestSegmentationMask(maskId)) {
+                                    // Step 5: Verify update worked
+                                    const updatedMasks = await readProjectSegmentationMask(String(project._id));
+                                    if (updatedMasks.success && updatedMasks.projectsegmentationmasks) {
+                                        const updated = updatedMasks.projectsegmentationmasks.find(m => String(m._id) === maskId);
+                                        if (updated && updated.name === "Updated Segmentation Mask") {
+                                            logger.info("Manual Test: Segmentation mask update verified!");
+                                        }
+                                    }
+
+                                    // Step 6: Delete the third mask
+                                    if (segMask3.success && segMask3.projectsegmentationmask) {
+                                        const maskToDeleteId = String(segMask3.projectsegmentationmask._id);
+                                        logger.info(`Manual Test: Deleting mask with ID: ${maskToDeleteId}`);
+
+                                        if (await deleteTestSegmentationMask(maskToDeleteId)) {
+                                            // Step 7: Verify deletion worked
+                                            const remainingMasks = await readProjectSegmentationMask(String(project._id));
+                                            if (remainingMasks.success && remainingMasks.projectsegmentationmasks) {
+                                                const deletedStillExists = remainingMasks.projectsegmentationmasks.some(m =>
+                                                    String(m._id) === maskToDeleteId);
+
+                                                if (!deletedStillExists) {
+                                                    logger.info("Manual Test: Segmentation mask deletion verified!");
+                                                    logger.info(`Manual Test: ${remainingMasks.projectsegmentationmasks.length} masks remaining`);
+                                                } else {
+                                                    logger.error("Manual Test: Mask still exists after deletion!");
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                         }
 
-                        // Step 3: Update and verify project
+                        // Step 8: Update and verify project
                         await updateTestProject(String(project._id));
 
-                        // Step 4: Delete project (should cascade delete the segmentation masks)
+                        // Step 9: Delete project (will cascade delete remaining segmentation masks)
                         await deleteTestProject(String(project._id));
                     }
                 }
@@ -378,5 +568,7 @@ async function runManualTests(): Promise<void> {
         process.exit(0);
     }
 }
+
+
 // Run the tests
 runManualTests();
