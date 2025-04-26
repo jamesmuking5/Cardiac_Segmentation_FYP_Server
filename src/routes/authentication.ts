@@ -10,51 +10,27 @@ import validateFields from "../utils/field_validation"; // Import reusable valid
 import { body, validationResult } from 'express-validator'; // Import express-validator for input validation
 import { v4 as uuidv4 } from 'uuid'; // Import UUID for generating unique guest IDs
 import LogError  from "../utils/error_logger"; // Import custom error logging utility
+import { sessionMiddleware } from "../services/express_app";
 
 const router = express.Router();
 
-router.post("/login",
-  // Use only username and password validation for login
-  [validateFields[0], validateFields[1]], // Username and password validation
-  (req: Request, res: Response, next: NextFunction): void => {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      // If validation fails, return a 400 response with error details
-      res.status(400).json({ login: false, errors: errors.array() });
-    } else {
-      next(); // Proceed to authentication if validation passes
-    }
-  },
-  (req: Request, res: Response, next: NextFunction): void => {
-    passport.authenticate("local",
-      (err: Error | null, user: IUserSafe, info?: { message: string }) => {
-        if (err) {
-          logger.error(err);
-          return res.status(500).json({ message: "Internal error" });
-        }
-        if (!user) {
-          return res.status(401).json({ login: false, message: info?.message });
-        }
-
-        // If user is found, log them in
-        return req.logIn(user, (loginErr) => {
-          if (loginErr) {
-            logger.error(loginErr);
-            return res.status(500).json({ message: "Internal error during login." });
-          }
-          // Successful login, send user info back to client
-          logger.info(`User ${user.username} logged in successfully.`);
-          return res.status(200).json({
-            login: true,
-            username: user.username,
-            role: user.role,
-            message: "Login successful.",
-          });
-        });
-      }
-    )(req, res, next);
+router.use((req, res, next) => {
+  if (req.path === '/register') {
+    // Skip sessionMiddleware for the /register route
+    return next();
   }
-);
+  // Apply sessionMiddleware for all other routes
+  sessionMiddleware(req, res, next);
+});
+
+// Logging middleware (runs after sessionMiddleware)
+router.use((req, res, next) => {
+  console.info(`Requestinauthentiacationoutside to: ${req.path}`);
+  console.debug(`Session ID: ${req.sessionID}`);
+  console.debug(`User: ${req.user || 'No user in req'}`);
+  console.debug(`Full Session: ${req.session ? JSON.stringify(req.session) : 'No session object'}`);
+  next();
+});
 
 router.post("/register",
   // Use all validation fields for registration
@@ -87,50 +63,57 @@ router.post("/register",
   }
 );
 
-// Guest login route
-router.post("/guest", async (req: Request, res: Response): Promise<void> => {
-  try {
-    const guestID = uuidv4();
-    const username = `guest_${guestID}`;
-    const password = `pass_${uuidv4()}`;
-    const email = `${guestID}@guestmail.com`;
-    const phone = `000-${Math.floor(10000000 + Math.random() * 90000000)}`;
-
-    const result = await createUser(username, password, email, phone);
-
-    if (!result.success || !result.user) {
-      logger.error(`Guest registration failed: ${result.message}`);
-      res.status(500).json({ login: false, message: "Failed to create guest account." });
-      return;
+router.post("/login",
+  // Use only username and password validation for login
+  [validateFields[0], validateFields[1]], // Username and password validation
+  (req: Request, res: Response, next: NextFunction): void => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      // If validation fails, return a 400 response with error details
+      res.status(400).json({ login: false, errors: errors.array() });
+    } else {
+      next(); // Proceed to authentication if validation passes
     }
+  },
+  (req: Request, res: Response, next: NextFunction): void => {
+    passport.authenticate("local",
+      (err: Error | null, user: IUserSafe, info?: { message: string }) => {
+        if (err) {
+          logger.error(err);
+          return res.status(500).json({ message: "Internal error" });
+        }
+        if (!user) {
+          return res.status(401).json({ login: false, message: info?.message });
+        }
 
-    if (!result.user) {
-      logger.error("Guest login failed: User is undefined.");
-      res.status(500).json({ message: "Guest login failed." });
-      return;
-    }
-    return req.logIn(result.user, (err) => {
-      if (err) {
-        logger.error(`Guest login error: ${err}`);
-        res.status(500).json({ message: "Guest login failed." });
-        return;
+        // If user is found, log them in
+        return req.logIn(user, (loginErr) => {
+          if (loginErr) {
+            logger.error(loginErr);
+            return res.status(500).json({ message: "Internal error during login." });
+          }
+        
+          // Manually set req.user after login
+          req.user = user;
+        
+          // Log session details after login
+          console.info(`Requesniiiit to: /login`);
+          console.debug(`Session ID: ${req.sessionID}`);
+          console.debug(`User: ${req.user ? JSON.stringify(req.user) : 'No user in req'}`);
+          console.debug(`Full Session: ${req.session ? JSON.stringify(req.session) : 'No session object'}`);
+        
+          logger.info(`User ${user.username} logged in successfully.`);
+          return res.status(200).json({
+            login: true,
+            username: user.username,
+            role: user.role,
+            message: "Login successful.",
+          });
+        });
       }
-
-      logger.info(`Guest user ${result.user!.username} logged in successfully.`);
-      return res.status(200).json({
-        login: true,
-        guest: true,
-        username: result.user!.username,
-        role: result.user!.role,
-        message: "Logged in as guest.",
-      });
-    });
-  } catch (error: unknown) {
-    LogError(error as Error, "Guest Login", "Unexpected error during guest login.");
-    res.status(500).json({ message: "Unexpected error during guest login." });
-    return;
+    )(req, res, next);
   }
-});
+);
 
 router.post("/logout", isAuth, (req: Request, res: Response): void => {
   // Logout the user and destroy the session
@@ -139,7 +122,22 @@ router.post("/logout", isAuth, (req: Request, res: Response): void => {
       logger.error(err);
       res.status(500).json({ message: "Internal error when logging out." });
     } else {
-      res.status(200).json({ message: "Logout successful." });
+      console.info(`User ${req.user?.username} logged out successfully.`);
+      // Log session details after logout
+      console.info(`solosolosolo to: /logout`);
+      console.debug(`Session ID: ${req.sessionID}`);
+      console.debug(`User: ${req.user ? JSON.stringify(req.user) : 'No user in req'}`);
+      console.debug(`Full Session: ${req.session ? JSON.stringify(req.session) : 'No session object'}`);
+
+      req.session?.destroy((destroyErr) => {
+        if (destroyErr) {
+          logger.error('Error destroying session:', destroyErr);
+          res.status(500).json({ message: "Error destroying session." });
+        } else {
+          res.clearCookie('connect.sid'); // Clear session cookie
+          res.status(200).json({ message: "Logout successful." });
+        }
+      });
     }
   });
 });
