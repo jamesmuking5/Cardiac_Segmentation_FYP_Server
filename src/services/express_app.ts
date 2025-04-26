@@ -1,8 +1,8 @@
 import express, { Request, Response } from 'express';
 import session from 'express-session';
 import passport from 'passport';
-// import { RedisStore } from 'connect-redis';
-// import { redisClient } from './redis';
+import { RedisStore } from 'connect-redis';
+import { redisClient } from './redis';
 import authenticationRoute from '../routes/authentication';
 import logger from './logger';
 
@@ -14,43 +14,40 @@ const app = express();
 app.use(express.json());
 
 // Setup Redis session store
-// const redisStore = new RedisStore({
-//   client: redisClient,
-//   prefix: 'visheart:',
-// });
+const redisStore = new RedisStore({
+  client: redisClient,
+  prefix: 'visheart:',
+});
 
-// Configure express-session with Redis store
-// Note: Ensure SESSION_SECRET is loaded before this runs (e.g., via dotenv in index.ts)
-app.use(
-  session({
-    // store: redisStore,
-    secret: process.env.SESSION_SECRET || 'default_secret',
-    resave: false,
-    saveUninitialized: false,
-    cookie: {
-      secure: process.env.NODE_ENV === 'production',
-      httpOnly: true,
-      maxAge: 1000 * 60 * 60 * 24, // 1 day
-    },
-  })
-)
-
-// For logging middleware here
-// This helps verify session state in Redis, especially after login.
-// change from console to logger later~
-// app.use((req, res, next) => {
-//   console.log('Session ID:', req.sessionID);
-//   console.log('User:', req.user || 'Not logged in');
-//   console.log('Full Session:', req.session);
-//   next();
-// });
+// Define session configuration - We'll apply this selectively in the router
+// Export it so the router can use the same config
+export const sessionMiddleware = session({
+  store: redisStore,
+  secret: process.env.SESSION_SECRET || 'default_secret', // Ensure this is securely managed
+  resave: false, // Don't save session if unmodified
+  saveUninitialized: false, // Don't create session until something stored
+  cookie: {
+    secure: process.env.NODE_ENV === 'production', // Use secure cookies in production
+    httpOnly: true, // Prevent client-side JS from reading the cookie
+    maxAge: 1000 * 60 * 60 * 24, // Session duration: 1 day
+  },
+});
 
 // Initialize Passport.js
 app.use(passport.initialize());
-app.use(passport.session()); // Enable persistent login sessions
+
+// app.use(passport.session()); // Enable persistent login sessions
+
+app.use((req, res, next) => {
+  console.info(`Requestexternal inexperessapp to: ${req.path}`);
+  console.debug(`Session ID: ${req.sessionID}`);
+  console.debug(`User: ${req.user || 'No user in req'}`);
+  console.debug(`Full Session: ${req.session ? JSON.stringify(req.session) : 'No session object'}`);
+  next();
+});
 
 /* Routes */
-// Mount authentication routes
+// Mount authentication routes under '/auth'
 app.use('/auth', authenticationRoute);
 
 // Root Route
