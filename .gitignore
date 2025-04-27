@@ -2,3 +2,5 @@
 /node_modules
 /logs/winston_logger/*
 /dist
+
+# Adding this to see if GitHub auto merge works
