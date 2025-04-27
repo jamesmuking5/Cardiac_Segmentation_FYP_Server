@@ -70,4 +70,11 @@ const isAuthAndAdmin = (req: Request, res: Response, next: NextFunction): void =
   else res.status(403).json({ message: "Forbidden. Admin access required." });
 };
 
-export { isAuth, isAuthAndAdmin };
+// Middleware to check if the user is authenticated and is a user/admin
+const isAuthAndUser = (req: Request, res: Response, next: NextFunction): void => {
+  if (req.isAuthenticated() && req.user.role !== UserRole.Guest) next();
+  else res.status(403).json({ message: "Forbidden. Admin or regular user access required." });
+};
+
+
+export { isAuth, isAuthAndAdmin, isAuthAndUser };

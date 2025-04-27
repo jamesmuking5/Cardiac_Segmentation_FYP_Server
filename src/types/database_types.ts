@@ -110,8 +110,6 @@ export enum FileDataType {
  * @property {string} basepath - The base path for the file storage (e.g., s3://devel-visheart-s3-bucket/temp/"the-user-id"/"the-user-id"_2630fcede25328c13a15c4dfe6376c068201eb1f8d871736cd8197c2b1463ed3).
  * @property {string} originalfilepath - The original file location (e.g., s3://devel-visheart-s3-bucket/temp/"the-user-id"/"the-user-id"_2630fcede25328c13a15c4dfe6376c068201eb1f8d871736cd8197c2b1463ed3/"the-user-id"_2630fcede25328c13a15c4dfe6376c068201eb1f8d871736cd8197c2b1463ed3.nii.gz). 
  * @property {string} extractedfolderpath - The folder where all the extracted JPEGs from NIfTI are saved. (e.g. s3://devel-visheart-s3-bucket/temp/${testUser._id}/${String(testUser._id)}_2630fcede25328c13a15c4dfe6376c068201eb1f8d871736cd8197c2b1463ed3/extracted)
- * @property {boolean} status.upload - Indicates if the file upload was successful.
- * @property {boolean} status.extract - Indicates if the file extraction was successful.
 * @property {string} datatype - The data type of the image (e.g., uint8, float32).
  * @property {object} dimensions - The dimensions of the image.
  * @property {number} dimensions.width - The width of the image in pixels.
@@ -142,11 +140,6 @@ export interface IProject {
     basepath: string // Base path for the file storage (e.g., S3 bucket URL + user + filehash)
     originalfilepath: string; // Original (nifti/dicom) file location (e.g., S3 bucket URL)
     extractedfolderpath: string; // Saves the folder where all the extracted jpeg from nifti are saved. Use naming convention for each extracted jpeg as filename_slice_frame.jpeg
-    // Processing status (might be issue since >1 bounding box and segmentation mask)
-    status: {
-        upload: boolean; // File upload status
-        extract: boolean; // File extraction status
-    }
     // File specifics
     datatype: FileDataType; // Data type of the image (e.g., uint8, float32)
     dimensions: {
@@ -192,42 +185,41 @@ export enum ComponentBoundingBoxesClass {
  * @property {string} name - The name of the segmentation mask.
  * @property {string} description - A description of the segmentation mask (optional).
  * @property {boolean} isSaved - Indicates if the segmentation mask should be saved.
+ * @property {string} segmentationmaskpath - The path to the segmentation mask tar (e.g., S3 bucket URL) (optional).
+ * @property {boolean} segmentationmaskRLE - Indicates if the mask is in RLE format (optional).
  * @property {boolean} isMedSAMOutput - Indicates if the segmentation mask is a MedSAM output (should not delete if its the output of MedSAM).
  * @property {object[]} frames - An array of frame objects, each containing slice information.
- * @property {boolean} frameInferred - Indicates if the frame has been inferred (user must manually run MedSAM on it)
- * @property {number} frameIndex - The index of the frame (0-based).
+ * @property {boolean} frameinferred - Indicates if the frame has been inferred (user must manually run MedSAM on it)
+ * @property {number} frameindex - The index of the frame (0-based).
  * @property {object[]} slices - An array of slice objects, each containing segmentation mask information.
  * @property {number} sliceindex - The index of the slice (0-based).
- * @property {string} slicepath - The path to the slice image (e.g., S3 bucket URL).
- * @property {object[]} componentboundingboxes - An array of component bounding box objects.
+ * @property {object[]} componentboundingboxes - An array of component bounding box objects (optional).
  * @property {string} class - The class of the component (e.g., rv, myo, lvc).
  * @property {number} x_min - The X coordinate of the minimum bounding box corner.
  * @property {number} y_min - The Y coordinate of the minimum bounding box corner.
  * @property {number} x_max - The X coordinate of the maximum bounding box corner.
  * @property {number} y_max - The Y coordinate of the maximum bounding box corner.
- * @property {object[]} segmentationmaskslocation - An array of segmentation mask location objects.
  * @property {string} path - The path to the segmentation mask CSV (e.g., S3 bucket URL).
  * @property {boolean} isRLE - Indicates if the mask is in RLE format.
  */
 export interface IProjectSegmentationMask {
     // Identifiers
-    // _id:  string; // MongoDB Object ID of the segmentation mask
     projectid: string; // MongoDB Project ID of the project to which the segmentation mask belongs
     // User inputs
     name: string; // Name of the segmentation mask
     description?: string; // Description of the segmentation mask
     isSaved: boolean; // Indicates if the segmentation mask is saved in the database
+    segmentationmaskpath: string; // Path to the segmentation mask tar (e.g., S3 bucket URL)
+    segmentationmaskRLE: boolean; // Indicates if the mask is in RLE format
     isMedSAMOutput: boolean; // Indicates if the segmentation mask is a MedSAM output (should not delete if its the output of MedSAM)
-    // Properties of the extracted folder + location tracking
-    // Note - index are 0-based
+    // Properties of the bounding box coordinates used to input into MedSAM for segmentation
     // If the segmentation mask is a single frame, there will be only one entry in the frames array
     frames: {
-        frameIndex: number;
+        frameindex: number; // The index of the frame (0-based)
         // Since GPU limitaion, predict on only one frame at a time, this is a record
-        frameInferred: boolean; // Indicates if the frame has been inferred
+        frameinferred: boolean; // Indicates if the frame has been inferred
         slices: {
-            sliceindex: number;
-            slicepath: string; // Path to the slice image (e.g., S3 bucket URL)
+            sliceindex: number; // The index of the slice (0-based)
             componentboundingboxes?: {
                 class: ComponentBoundingBoxesClass; // Class of the component (e.g., rv, myo, lvc)
                 x_min: number; // X coordinate of the minimum bounding box corner
@@ -235,18 +227,14 @@ export interface IProjectSegmentationMask {
                 x_max: number; // X coordinate of the maximum bounding box corner
                 y_max: number; // Y coordinate of the maximum bounding box corner
             }[];
-            segmentationmaskslocation?: { // 3 CSV(?) per class mask
-                path: string; // Path to the segmentation mask csv(?) (e.g., S3 bucket URL)
-                isRLE: boolean; // Indicates if the mask is in RLE format
-            }[];
         }[];
     }[];
 }
 // Segmentation Mask Model Interface (single segmentation mask document in the database)
 export interface IProjectSegmentationMaskDocument extends IProjectSegmentationMask, Document {
 }
-/*==================================== Project Section ends here =============================================*/
 
+/*==================================== Project Section ends here =============================================*/
 
 /* Database Functions */
 /**

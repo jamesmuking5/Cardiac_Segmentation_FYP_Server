@@ -568,11 +568,6 @@ const authenticateUser = async (
 
 /* Project Section */
 /* Project Collection Creation */
-// Create status schema for use in project schema (Nest Depth: 1)
-const projectStatusSchema = new Schema({
-  upload: { type: Boolean, default: false, required: true }, // Indicates if the file has been uploaded
-  extract: { type: Boolean, default: false, required: true }, // Indicates if the file has been extracted
-}, { _id: false }); // Disable automatic creation of an _id field for this subdocument
 
 // Create dimension schema for use in project schema (Nest Depth: 1)
 const projectDimensionSchema = new Schema({
@@ -609,8 +604,7 @@ const projectSchema = new Schema<IProject>({
   basepath: { type: String, required: true }, // Base path for the file storage (e.g., S3 bucket URL)
   originalfilepath: { type: String, required: true }, // Original (nifti/dicom) file location (e.g., S3 bucket URL)
   extractedfolderpath: { type: String, required: true }, // Folder path for the extracted files (e.g., S3 bucket URL)
-  // Processing status
-  status: { type: projectStatusSchema, required: true, default: {} }, // Status of the project processing, default: {} tells mongoose to use the default values defined in the statusSchema
+
   // File specifics
   datatype: { type: String, required: true }, // Data type of the image (e.g., uint8, float32)
   dimensions: { type: projectDimensionSchema, required: true }, // Dimensions of the image (e.g., width, height, slices, frames)
@@ -655,24 +649,16 @@ const projectSegmentationMaskSliceComponentBoundingBoxesSchema = new Schema({
   y_max: { type: Number, required: true }, // Maximum Y coordinate of the bounding box
 }, { _id: false }); // Disable automatic creation of an _id field for this subdocument
 
-// Create Segmentation Mask Location Schema (Nest Depth: 3)
-const projectSegmentationMasksSliceSegmentationMasksLocationSchema = new Schema({
-  path: { type: String, required: true }, // Path to the segmentation mask image (e.g., S3 bucket URL)
-  isRLE: { type: Boolean, required: true }, // Indicates if the segmentation mask is in RLE format
-}, { _id: false }); // Disable automatic creation of an _id field for this subdocument
-
 // Create slice schema (Nest Depth: 2)
 const projectSegmentationMaskSliceSchema = new Schema({
   sliceindex: { type: Number, required: true }, // Index of the slice (0-based)
-  slicepath: { type: String, required: true }, // Path to the slice image (e.g., S3 bucket URL)
-  componentboundingboxes: [{ type: projectSegmentationMaskSliceComponentBoundingBoxesSchema, required: false }], // Array of component bounding boxes for the slice
-  segmentationmaskslocation: [{ type: projectSegmentationMasksSliceSegmentationMasksLocationSchema, required: false }], // Path to the segmentation mask image (e.g., S3 bucket URL) - assume CSV? or RLE?
+  componentboundingboxes: [{ type: projectSegmentationMaskSliceComponentBoundingBoxesSchema, required: false }], // Array of component bounding boxes for the slicesegmentation mask image (e.g., S3 bucket URL) - assume CSV? or RLE?
 }, { _id: false }); // Disable automatic creation of an _id field for this subdocument
 
 // Create frames schema (Nest Depth: 1)
 const projectSegmentationMaskFramesSchema = new Schema({
-  frameIndex: { type: Number, required: true }, // Index of the frame (0-based)
-  frameInferred: { type: Boolean, required: true, default: false }, // Indicates if the frame is inferred (update if user runs MedSAM on the frame)
+  frameindex: { type: Number, required: true }, // Index of the frame (0-based)
+  frameinferred: { type: Boolean, required: true, default: false }, // Indicates if the frame is inferred (update if user runs MedSAM on the frame)
   slices: { type: [projectSegmentationMaskSliceSchema], required: true }, // Array of slices for the frame
 }, { _id: false }); // Disable automatic creation of an _id field for this subdocument
 
@@ -684,11 +670,14 @@ const projectSegmentationMaskSchema = new Schema<IProjectSegmentationMask>({
   name: { type: String, required: true }, // Name of the segmentation mask
   description: { type: String, required: false }, // Description of the segmentation mask
   isSaved: { type: Boolean, required: true, default: false }, // Indicates if the segmentation mask is saved
+  segmentationmaskpath: { type: String, required: false }, // Path to the segmentation mask file (e.g., S3 bucket URL)
+  segmentationmaskRLE: { type: Boolean, required: false }, // RLE of the segmentation mask (e.g., S3 bucket URL)
   isMedSAMOutput: { type: Boolean, required: true, default: false }, // Indicates if the segmentation mask is a MedSAM output
   // Properties of extracted folder + location tracking
   // Index should be 0 based
   frames: [{ type: projectSegmentationMaskFramesSchema, required: true }], // Array of frames for the segmentation mask
 }, { timestamps: true }); // Automatically add createdAt and updatedAt timestamps
+
 // Create the model with proper typing
 // Hooks for pre-save and pre-delete operations (must be before the model creation)
 // Add validation to ensure projectid exists before saving
@@ -757,7 +746,6 @@ const createProject = async (
   basepath: string, // Base path for the file storage (e.g., S3 bucket URL)
   originalfilepath: string, // Original file location (e.g., S3 bucket URL)
   extractedfolderpath: string, // Folder path for the extracted files (e.g., S3 bucket URL)
-  status: { upload: boolean; extract: boolean }, // Status of the project processing (upload and extract) - default to false
   datatype: FileDataType, // Data type of the image (e.g., uint8, float32) - should be detected by server
   dimensions: { width: number; height: number; slices: number; frames?: number },
   voxelsize?: { x: number; y: number; z?: number; t?: number }, // Optional physical voxel dimensions (e.g., x, y, z, t dimensions) - should be detected by server
@@ -836,7 +824,6 @@ const createProject = async (
       basepath: basepath,
       originalfilepath: originalfilepath,
       extractedfolderpath: extractedfolderpath,
-      status: status,
       datatype: datatype,
       dimensions: dimensions,
       voxelsize: voxelsize, // Optional
@@ -858,7 +845,7 @@ const createProject = async (
  * Dynamically constructs a MongoDB query based on the provided parameters.
  * Supports filtering by ID, user, name (case-insensitive), description (case-insensitive),
  * saved status, filename (case-insensitive), file types (array), file size range,
- * processing status, data types (array), dimension ranges (AND logic), voxel size ranges (OR logic),
+ * data types (array), dimension ranges (AND logic), voxel size ranges (OR logic),
  * and creation date range.
  *
  * @async
@@ -873,9 +860,6 @@ const createProject = async (
  * @param {object} [filesize] - Optional object defining a file size range.
  * @param {number} [filesize.minsize] - Minimum file size (inclusive).
  * @param {number} [filesize.maxsize] - Maximum file size (inclusive).
- * @param {object} [status] - Optional object to filter by processing status.
- * @param {boolean} [status.upload] - Filter by upload status.
- * @param {boolean} [status.extract] - Filter by extraction status.
  * @param {FileDataType[]} [datatype] - Optional array of data types to filter by.
  * @param {object} [dimensions] - Optional object defining dimension ranges. All provided dimension ranges must be met (AND logic).
  * @param {object} [dimensions.width] - Width range { minsize?, maxsize? }.
@@ -904,7 +888,6 @@ const readProject = async (
   filename?: string,
   filetype?: FileType[], // array of file types to filter by (e.g., [FileType.NIFTI, FileType.DICOM])
   filesize?: { minsize?: number; maxsize?: number },
-  status?: { upload?: boolean; extract?: boolean },
   datatype?: FileDataType[],
   dimensions?: { width?: { minsize?: number; maxsize?: number }, height?: { minsize?: number; maxsize?: number }, slices?: { minsize?: number; maxsize?: number }, frames?: { minsize?: number; maxsize?: number }, },
   voxelsize?: { x?: { minsize?: number; maxsize?: number }, y?: { minsize?: number; maxsize?: number }, z?: { minsize?: number; maxsize?: number }, t?: { minsize?: number; maxsize?: number }, },
@@ -923,10 +906,6 @@ const readProject = async (
   if (filesize) {
     if (filesize.minsize) searchConditions.push({ filesize: { $gte: filesize.minsize } }); // Search by minimum file size
     if (filesize.maxsize) searchConditions.push({ filesize: { $lte: filesize.maxsize } }); // Search by maximum file size
-  }
-  if (status) {
-    if (status.upload !== undefined) searchConditions.push({ 'status.upload': status.upload }); // Search by upload status
-    if (status.extract !== undefined) searchConditions.push({ 'status.extract': status.extract }); // Search by extraction status
   }
   if (datatype) searchConditions.push({ datatype: { $in: datatype } }); // Search by data type
   if (dimensions) searchConditions.push({
@@ -1006,7 +985,6 @@ const updateProject = async (
     basepath?: string, // Base path for the file storage (e.g., S3 bucket URL)
     originalfilepath?: string, // Original file location (e.g., S3 bucket URL)
     extractedfolderpath?: string, // Folder path for the extracted files (e.g., S3 bucket URL)
-    status?: { upload?: boolean; extract?: boolean }, // Status of the project processing (upload and extract) - default to false
     datatype?: FileDataType, // Data type of the image (e.g., uint8, float32) - should be detected by server
     dimensions?: { width?: number; height?: number; slices?: number; frames?: number },
     voxelsize?: { x?: number; y?: number; z?: number; t?: number }, // Optional physical voxel dimensions (e.g., x, y, z, t dimensions) - should be detected by server
@@ -1032,11 +1010,6 @@ const updateProject = async (
     if (updates.basepath) project.basepath = updates.basepath; // Update base path if provided
     if (updates.originalfilepath) project.originalfilepath = updates.originalfilepath; // Update original file path if provided
     if (updates.extractedfolderpath) project.extractedfolderpath = updates.extractedfolderpath; // Update extracted folder path if provided
-    // Status updates
-    if (updates.status) {
-      if (updates.status.extract) project.status.extract = updates.status.extract; // Update extraction status if provided
-      if (updates.status.upload) project.status.upload = updates.status.upload; // Update upload status if provided
-    }
     if (updates.datatype) project.datatype = updates.datatype; // Update data type if provided
     // Dimensions updates
     if (updates.dimensions) {
@@ -1138,9 +1111,8 @@ const createProjectSegmentationMask = async (
     // Validate empty strings 
     const stringInputs = [
       psm.name,
-      ...psm.frames.flatMap(frame => frame.slices.map(slices => slices.slicepath)),
-      ...psm.frames.flatMap(frame => frame.slices.flatMap(slices => slices.segmentationmaskslocation?.map(location => location.path) || []))
     ]
+    if (psm.segmentationmaskpath) stringInputs.push(psm.segmentationmaskpath); // Optional field
     const emptyStringInputs = stringInputs.filter(input => !input || typeof input !== 'string' || input.trim() === '');
     if (emptyStringInputs.length > 0) {
       logger.warn(`Database: Invalid input parameters for project segmentation mask creation: ${emptyStringInputs.join(", ")}`);
@@ -1149,7 +1121,7 @@ const createProjectSegmentationMask = async (
     // Validate numeric inputs
     const numericInputs = [
       ...psm.frames.flatMap(frame => frame.slices.map(slices => slices.sliceindex)),
-      ...psm.frames.flatMap(frame => frame.frameIndex),
+      ...psm.frames.flatMap(frame => frame.frameindex),
       ...psm.frames.flatMap(frame => frame.slices.map(slices => slices.componentboundingboxes?.map(box => box.x_min) || [])),
       ...psm.frames.flatMap(frame => frame.slices.map(slices => slices.componentboundingboxes?.map(box => box.y_min) || [])),
       ...psm.frames.flatMap(frame => frame.slices.map(slices => slices.componentboundingboxes?.map(box => box.x_max) || [])),
@@ -1179,8 +1151,8 @@ const createProjectSegmentationMask = async (
     );
 
     if (framesWithEmptySlices.length > 0) {
-      const frameIndexesWithEmptySlices = framesWithEmptySlices.map(frame => frame.frameIndex).join(", ");
-      logger.warn(`Database: Invalid input parameters for project segmentation mask creation: frames with indexes [${frameIndexesWithEmptySlices}] have empty slices arrays.`);
+      const frameindexesWithEmptySlices = framesWithEmptySlices.map(frame => frame.frameindex).join(", ");
+      logger.warn(`Database: Invalid input parameters for project segmentation mask creation: frames with indexes [${frameindexesWithEmptySlices}] have empty slices arrays.`);
       return { success: false, operation, message: `Invalid input parameters for project segmentation mask creation: each frame must have at least one slice.` };
     }
 
@@ -1313,10 +1285,10 @@ const updateProjectSegmentationMask = async (
 
       // Validate each frame has a valid index
       const invalidFrameIndices = maskupdates.frames.filter(frame =>
-        frame.frameIndex === undefined || typeof frame.frameIndex !== 'number' || frame.frameIndex < 0
+        frame.frameindex === undefined || typeof frame.frameindex !== 'number' || frame.frameindex < 0
       );
       if (invalidFrameIndices.length > 0) {
-        const indices = invalidFrameIndices.map(f => f.frameIndex).join(", ");
+        const indices = invalidFrameIndices.map(f => f.frameindex).join(", ");
         return { success: false, operation, message: `Invalid frame indices: [${indices}]. Frame index must be a non-negative number.` };
       }
 
@@ -1326,7 +1298,7 @@ const updateProjectSegmentationMask = async (
       );
 
       if (framesWithEmptySlices.length > 0) {
-        const indices = framesWithEmptySlices.map(f => f.frameIndex).join(", ");
+        const indices = framesWithEmptySlices.map(f => f.frameindex).join(", ");
         return { success: false, operation, message: `Frames with indices [${indices}] must have at least one slice.` };
       }
 

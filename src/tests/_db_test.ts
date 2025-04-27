@@ -103,7 +103,6 @@ function generateProjectData(userId: string): IProject {
         basepath: basePath,
         originalfilepath: `${basePath}/${filename}.nii.gz`,
         extractedfolderpath: `${basePath}/extracted`,
-        status: { upload: true, extract: true },
         datatype: FileDataType.FLOAT32,
         dimensions: { width: 216, height: 256, slices: 10, frames: 30 },
         voxelsize: { x: 1, y: 1, z: 1, t: 1 },
@@ -123,7 +122,6 @@ async function createTestProject(projectData: IProject) {
         projectData.basepath,
         projectData.originalfilepath,
         projectData.extractedfolderpath,
-        projectData.status,
         projectData.datatype,
         projectData.dimensions,
         projectData.voxelsize,
@@ -145,15 +143,16 @@ function generateSegmentationMaskData(projectId: string): IProjectSegmentationMa
         name: 'Test Segmentation Mask',
         description: 'A test segmentation mask',
         isSaved: true,
+        segmentationmaskpath: `s3://devel-visheart-s3-bucket/temp/${projectId}/segmentation_mask.png`,
+        segmentationmaskRLE: false,
         isMedSAMOutput: true,
         frames: [
             {
-                frameIndex: 0,
-                frameInferred: true,
+                frameindex: 0,
+                frameinferred: true,
                 slices: [
                     {
                         sliceindex: 0,
-                        slicepath: `s3://devel-visheart-s3-bucket/temp/${projectId}/slice_0.png`,
                         componentboundingboxes: [
                             {
                                 class: ComponentBoundingBoxesClass.LVC,
@@ -170,36 +169,12 @@ function generateSegmentationMaskData(projectId: string): IProjectSegmentationMa
                                 y_max: 120
                             }
                         ],
-                        segmentationmaskslocation: [
-                            {
-                                path: `s3://devel-visheart-s3-bucket/temp/${projectId}/mask_0_lvc.png`,
-                                isRLE: false
-                            },
-                            {
-                                path: `s3://devel-visheart-s3-bucket/temp/${projectId}/mask_0_myo.png`,
-                                isRLE: false
-                            }
-                        ]
                     },
                     {
                         sliceindex: 1,
-                        slicepath: `s3://devel-visheart-s3-bucket/temp/${projectId}/slice_1.png`,
-                        segmentationmaskslocation: [
-                            {
-                                path: `s3://devel-visheart-s3-bucket/temp/${projectId}/mask_1_lvc.png`,
-                                isRLE: false
-                            }
-                        ]
                     },
                     {
                         sliceindex: 2,
-                        slicepath: `s3://devel-visheart-s3-bucket/temp/${projectId}/slice_2.png`,
-                        segmentationmaskslocation: [
-                            {
-                                path: `s3://devel-visheart-s3-bucket/temp/${projectId}/mask_2_lvc.png`,
-                                isRLE: false
-                            }
-                        ]
                     }
                 ]
             }
@@ -230,12 +205,11 @@ async function updateTestSegmentationMask(maskId: string) {
             isSaved: true,
             frames: [
                 {
-                    frameIndex: 0,
-                    frameInferred: true,
+                    frameindex: 0,
+                    frameinferred: true,
                     slices: [
                         {
                             sliceindex: 0,
-                            slicepath: `s3://devel-visheart-s3-bucket/temp/updated_slice_0.png`,
                             componentboundingboxes: [
                                 {
                                     class: ComponentBoundingBoxesClass.LVC,
@@ -245,22 +219,9 @@ async function updateTestSegmentationMask(maskId: string) {
                                     y_max: 105
                                 }
                             ],
-                            segmentationmaskslocation: [
-                                {
-                                    path: `THIS SHOULD CHANGE`,
-                                    isRLE: true
-                                }
-                            ]
                         },
                         {
                             sliceindex: 1,
-                            slicepath: `s3://devel-visheart-s3-bucket/temp/updated_slice_1.png`,
-                            segmentationmaskslocation: [
-                                {
-                                    path: `s3://devel-visheart-s3-bucket/temp/updated_mask_1.png`,
-                                    isRLE: true
-                                }
-                            ]
                         }
                     ]
                 }
@@ -287,7 +248,6 @@ async function updateTestSegmentationMask(maskId: string) {
             logger.info(`- isMedSAMOutput: ${updatedMask.isMedSAMOutput}`);
             logger.info(`- Number of frames: ${updatedMask.frames.length}`);
             logger.info(`- First frame slices: ${updatedMask.frames[0].slices.length}`);
-            logger.info(`- First slice path: ${updatedMask.frames[0].slices[0].slicepath}`);
 
             // Log bounding box details if available
             if (updatedMask.frames[0].slices[0].componentboundingboxes?.length) {
@@ -487,15 +447,11 @@ async function runManualTests(): Promise<void> {
                         // Create second mask - with different name and path
                         const maskData2 = generateSegmentationMaskData(String(project._id));
                         maskData2.name = "Test Mask 2";
-                        // Make a small change to make it distinct
-                        maskData2.frames[0].slices[0].slicepath = `s3://devel-visheart-s3-bucket/temp/${project._id}/mask2_slice_0.png`;
                         const segMask2 = await createProjectSegmentationMask(maskData2);
 
                         // Create third mask
                         const maskData3 = generateSegmentationMaskData(String(project._id));
                         maskData3.name = "Test Mask 3";
-                        // Make it different
-                        maskData3.frames[0].slices[0].slicepath = `s3://devel-visheart-s3-bucket/temp/${project._id}/mask3_slice_0.png`;
                         const segMask3 = await createProjectSegmentationMask(maskData3);
 
                         // Verify all masks were created
