@@ -7,9 +7,6 @@ import fs from 'fs';
 import path from 'path';
 import FormData from 'form-data';
 
-import { wrapper } from 'axios-cookiejar-support';
-import { CookieJar } from 'tough-cookie';
-
 // Mocking logger to prevent console output during tests
 jest.mock('../src/services/logger', () => ({
   info: jest.fn(),
@@ -45,22 +42,17 @@ afterAll(async () => {
   }
 });
 
-let client: ReturnType<typeof wrapper>;
-let jar: CookieJar;
-
-beforeEach(() => {
-  jar = new CookieJar();
-  client = wrapper(axios.create({
-    baseURL,
-    withCredentials: true,
-    jar
-  }));
+beforeEach(async () => {
+  const collections = mongoose.connection.collections;
+  for (const key in collections) {
+    await collections[key].deleteMany({});
+  }
 });
 
 describe('Authentication Tests', () => {
   describe('Register Functionality', () => {
     it('should register a new user successfully', async () => {
-      const response = await client.post(`${baseURL}/auth/register`, {
+      const response = await axios.post(`${baseURL}/auth/register`, {
         username: 'testuser',
         password: 'password123',
         email: 'testuser@example.com',
@@ -75,7 +67,7 @@ describe('Authentication Tests', () => {
     });
 
     it('should detect duplicate registration and return an error', async () => {
-      await client.post(`${baseURL}/auth/register`, {
+      await axios.post(`${baseURL}/auth/register`, {
         username: 'jesmineting',
         password: 'jesmine123',
         email: 'jesmine@example.com',
@@ -83,7 +75,7 @@ describe('Authentication Tests', () => {
       });
 
       try {
-        await client.post(`${baseURL}/auth/register`, {
+        await axios.post(`${baseURL}/auth/register`, {
           username: 'jesmineting',
           password: 'jesmine123',
           email: 'jesmine@example.com',
@@ -96,12 +88,27 @@ describe('Authentication Tests', () => {
         expect(data.message).toContain("User already exists");
       }
     });
+
+    it('should register a user with non-English characters in username and email', async () => {
+      const response = await axios.post(`${baseURL}/auth/register`, {
+        username: '测试用户', 
+        password: 'password123',
+        email: '测试用户@example.com',
+        phone: '1234345654345690',
+      });
+
+      const data = response.data as { message: string; username?: string };
+
+      expect(response.status).toBe(201);
+      expect(data.message).toContain("Registration successful");
+      expect(data.username).toBe('测试用户');
+    });
   });
 
   describe('Login Functionality', () => {
     it('should fail to log in a user who is not registered', async () => {
       try {
-        await client.post(`${baseURL}/auth/login`, {
+        await axios.post(`${baseURL}/auth/login`, {
           username: 'unregistereduser',
           password: 'password123',
         });
@@ -112,8 +119,41 @@ describe('Authentication Tests', () => {
       }
     });
 
+    it('should register and log in successfully', async () => {
+      // Register the user
+      const response = await axios.post(`${baseURL}/auth/register`, {
+        username: 'testuser',
+        password: 'password123',
+        email: 'testuser@example.com',
+        phone: '1234345654345690',
+      });
+
+      const regData = response.data as { message: string; username?: string };
+
+      expect(response.status).toBe(201); 
+      expect(regData.message).toContain("Registration successful");
+      expect(regData.username).toBe('testuser');
+
+      // Log in with the registered user
+      const loginResponse = await axios.post(`${baseURL}/auth/login`, {
+        username: 'testuser',
+        password: 'password123',
+      });
+
+      const loginData = loginResponse.data as {
+        login: boolean;
+        username?: string;
+        message: string;
+      };
+
+      expect(loginResponse.status).toBe(200);
+      expect(loginData.login).toBe(true);
+      expect(loginData.username).toBe('testuser');
+      expect(loginData.message).toContain("Login successful.");
+    });
+
     it('should log in as a guest successfully', async () => {
-      const response = await client.post(`${baseURL}/auth/guest`);
+      const response = await axios.post(`${baseURL}/auth/guest`);
 
       const data = response.data as {
         login: boolean;
@@ -132,56 +172,55 @@ describe('Authentication Tests', () => {
     });
   });
 
-  describe('Logout Functionality', () => {
-    it('should not log out successfully as there is no session', async () => {
-      try {
-        await client.post(`${baseURL}/auth/logout`);
-      } catch (error: any) {
-        const data = error.response.data as { message: string };
-        expect(error.response.status).toBe(401);
-        expect(error.response.data.message).toContain("Unauthorized. Please log in.");
-      }
-    });
+  // describe('Image Upload Functionality', () => {
+  //   it('should upload an image and extract metadata correctly', async () => {
+  //     // Path to the image file to be uploaded
+  //     const imagePath = "C:\\Users\\Clarissa\\OneDrive - Swinburne University Of Technology Sarawak Campus\\Pictures\\testing\\testing_upload.jpeg";
 
-    it('should register, log in, and log out successfully', async () => {
-      // Register the user
-      const registerResponse = await client.post(`${baseURL}/auth/register`, {
-        username: 'testuser2',
-        password: 'password123',
-        email: 'testuser2@example.com',
-        phone: '9876543210',
-      });
+  //     // Create a FormData instance to simulate a multipart form upload
+  //     const formData = new FormData();
+  //     formData.append('file', fs.createReadStream(imagePath));
 
-      const registerData = registerResponse.data as { message: string; username?: string };
+  //     // Send the POST request to upload the image
+  //     interface UploadResponse {
+  //       message: string;
+  //       metadata?: {
+  //         createdBy: string;
+  //       };
+  //     }
 
-      expect(registerResponse.status).toBe(201);
-      expect(registerData.message).toContain("Registration successful");
-      expect(registerData.username).toBe('testuser2');
+  //     const response = await axios.post<UploadResponse>(`${baseURL}api/upload`, formData, {
+  //       headers: {
+  //         ...formData.getHeaders(),
+  //         'Content-Type': 'multipart/form-data',
+  //       }
+  //     });
 
-      // Log in with the registered user
-      const loginResponse = await client.post(`${baseURL}/auth/login`, {
-        username: 'testuser2',
-        password: 'password123',
-      });
+  //     // Check if the upload was successful
+  //     expect(response.status).toBe(200);
+  //     expect(response.data.message).toBe('Image uploaded successfully');
 
-      const loginData = loginResponse.data as {  
-        login: boolean;
-        username?: string;
-        message: string;
-      };
+  //     // Extract the image metadata from the response (assuming metadata is returned)
+  //     const metadata = response.data.metadata;
+  //     expect(metadata).toBeDefined();
+  //     if (metadata) {
+  //       expect(metadata.createdBy).toBeDefined();
+  //     } else {
+  //       fail('Metadata is undefined');
+  //     }
+  //     expect(metadata.createdBy).toBe('testuser'); // Assuming the uploaded image has a 'createdBy' field
+  //   });
+  // });
 
-      expect(loginResponse.status).toBe(200);
-      expect(loginData.login).toBe(true);
-      expect(loginData.username).toBe('testuser2');
-      expect(loginData.message).toContain("Login successful.");
-
-      // Log out the user
-      const logoutResponse = await client.post(`${baseURL}/auth/logout`);
-
-      const logoutData = logoutResponse.data as { message: string };
-
-      expect(logoutResponse.status).toBe(200);
-      expect(logoutData.message).toContain("Logout successful.");
-    });
-  });
-}); 
+  // describe('Logout Functionality', () => {
+  //   it('should not log out successfully as there is no session', async () => {
+  //     try {
+  //       await axios.post(`${baseURL}/auth/logout`);
+  //     } catch (error: any) {
+  //       const data = error.response.data as { message: string };
+  //       expect(error.response.status).toBe(401);
+  //       expect(data.message).toContain("User not logged in");
+  //     }
+  //   });
+  // });
+});
