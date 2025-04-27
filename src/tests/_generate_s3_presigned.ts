@@ -1,6 +1,6 @@
 // This script generates a presigned URL for an S3 object.
 // It is used for testing purposes to verify that the S3 client is working correctly.
-// Run with: npx node-ts dist/tests/_generate_s3_presigned.js <bucket-name> <object-key> [expiresIn-seconds]
+// Run with: npx ts-node ./src/tests/_generate_s3_presigned.ts <bucket-name> <object-key> [expiresIn-seconds]
 // Or add in .env files:
 // DEV_S3_BUCKET_NAME=<your-bucket-name>
 // DEV_S3_OBJECT_KEY=<your-object-key>
