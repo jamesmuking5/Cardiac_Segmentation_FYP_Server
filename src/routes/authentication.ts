@@ -98,17 +98,31 @@ router.post("/logout", (req: Request, res: Response): void => {
     res.status(401).json({ message: "User not logged in" });
     return; // Stop further execution
   }
+
+  // Log the user attempting to log out (if available)
+  if (req.user) {
+    logger.info(`User ${req.user.username || req.user._id} attempting to log out.`); // <--- Added debug log
+  } else {
+      logger.info("Authenticated user attempting to log out (username/ID not available on req.user)."); // <--- Added debug log
+  }
+
   // Your /logout route calls req.logout(...). Passport's req.logout method is designed to clear 
   // the login state from req.session and terminate the session. When req.logout is used, 
   // it typically destroys the session in the session store. 
   // So, the session data is destroyed in Redis when a user logs out via this route.
   // Logout the user and destroy the session
   req.logout((err: Error | null) => {
+    logger.info("req.logout() callback executed.");
+
     if (err) {
       logger.error(err);
       res.status(500).json({ message: "Internal error when logging out." });
       return; // Stop further execution
     }
+    
+    // Add a log to indicate successful session destruction
+    logger.info("Session successfully destroyed after logout.");
+
     // Send a single response indicating successful logout
     res.status(200).json({ message: "Logout successful." });
   });
