@@ -5,6 +5,7 @@ import { RedisStore } from 'connect-redis';
 import { redisClient } from './redis';
 import authenticationRoute from '../routes/authentication';
 import logger from './logger';
+import cors from 'cors';
 
 // Create express app instance
 const app = express();
@@ -49,6 +50,12 @@ app.use(
     },
   })
 )
+
+// Enable CORS for all routes (adjust as needed for production)
+app.use(cors({
+  origin: process.env.CORS_ORIGIN || 'http://localhost:5371', // Adjust as needed
+  credentials: true, // Allow credentials (cookies) to be sent
+}));
 
 // For logging middleware here
 // This helps verify session state in Redis, especially after login.
