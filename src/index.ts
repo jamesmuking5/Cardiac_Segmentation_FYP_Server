@@ -5,7 +5,7 @@ import dotenv from 'dotenv';
 import path from 'path';
 import logger from './services/logger'; // Import Winston Logger
 import { connectRedis, checkRedisHealth } from './services/redis'; // Import Redis connection and health check
-import { scheduleGuestCleanup } from './jobs/guestcleanup'; // Import guest cleanup job
+import { scheduleGuestCleanup } from './jobs/guestcleanupjob'; // Import guest cleanup job
 
 // Service Location for logging within this file
 const serviceLocation = 'Main';
