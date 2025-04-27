@@ -3,14 +3,15 @@
 
 import express, { Request, Response, NextFunction } from "express";
 import passport from "passport";
-import { IUserSafe, createUser } from "../services/database"; // CRUD + Auth functions for User
+import { IUser, IUserSafe, UserRole, createUser, deleteUser } from "../services/database"; // CRUD + Auth functions for User
 import { isAuth, isAuthAndAdmin } from "../services/passportjs"; // Import Passport.js middleware
 import logger from "../services/logger"; // Import logger
 import validateFields from "../utils/field_validation"; // Import reusable validation middleware
-import { body, validationResult } from 'express-validator'; // Import express-validator for input validation
+import { validationResult } from 'express-validator'; // Import express-validator for input validation
 import { v4 as uuidv4 } from 'uuid'; // Import UUID for generating unique guest IDs
 
 const router = express.Router();
+const serviceLocation = "API(Authentication)"; // Service location for logging
 
 router.post("/register",
   // Use all validation fields for registration
@@ -26,17 +27,25 @@ router.post("/register",
   },
   async (req: Request, res: Response): Promise<void> => {
     const { username, password, email, phone } = req.body;
-    const result = await createUser(username, password, email, phone);
+    // Create new IUser object
+    const newUser: IUser = {
+      username,
+      password,
+      email,
+      phone,
+      role: UserRole.User, // Default role for new users
+    };
+    const result = await createUser(newUser);
     if (!result.success) {
       res.status(400).json({ register: false, message: result.message });
       return;
     }
     if (result.success && result.user) {
-      logger.info(`User ${result.user.username} registered successfully.`);
+      logger.info(`${serviceLocation}: ${result.user.username} registered successfully.`);
       res.status(201).json({
         register: true,
-        username: result.user.username,
         message: "Registration successful.",
+        user: result.user,
       });
       return;
     }
@@ -44,80 +53,94 @@ router.post("/register",
 );
 
 router.post("/login",
-  // Use only username and password validation for login
-  [validateFields[0], validateFields[1]], // Username and password validation
+  [validateFields[0], validateFields[1]],  // Username and password validation
   (req: Request, res: Response, next: NextFunction): void => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
-      // If validation fails, return a 400 response with error details
       res.status(400).json({ login: false, errors: errors.array() });
     } else {
-      next(); // Proceed to authentication if validation passes
+      next();
     }
   },
   (req: Request, res: Response, next: NextFunction): void => {
-    passport.authenticate("local",
-      (err: Error | null, user: IUserSafe, info?: { message: string }) => {
-        if (err) {
-          logger.error(err);
-          return res.status(500).json({ message: "Internal error" });
-        }
-        if (!user) {
-          return res.status(401).json({ login: false, message: info?.message });
-        }
-
-        // This is where the session becomes initialized and is saved to the store. 
-        // If user is found, log them in
-
-        // Passport's req.logIn method serializes the user (using your passport.serializeUser function 
-        // which saves the user ID to req.session), and express-session, detecting that req.session has been modified, 
-        // will then save the session data (including the user ID) to your Redis store. 
-        // So, a session is created and saved to Redis upon successful login.
-        return req.logIn(user, (loginErr) => {
-          if (loginErr) {
-            logger.error(loginErr);
-            return res.status(500).json({ message: "Internal error during login." });
-          }
-        
-          logger.info(`User ${user.username} logged in successfully.`);
-          return res.status(200).json({
-            login: true,
-            username: user.username,
-            role: user.role,
-            message: "Login successful.",
-          });
-        });
+    passport.authenticate("local", (err: Error | null, user: IUserSafe, info?: { message: string }) => {
+      if (err) {
+        logger.error(`${serviceLocation}: Authentication error: ${err}`);
+        return res.status(500).json({ message: "Internal error" });
       }
-    )(req, res, next);
+      if (!user) {
+        return res.status(401).json({ login: false, message: info?.message });
+      }
+
+      return req.logIn(user, (loginErr) => {
+        if (loginErr) {
+          logger.error(`${serviceLocation}: Login error: ${loginErr}`);
+          return res.status(500).json({ message: "Internal error during login." });
+        }
+
+        logger.info(`${serviceLocation}: User ${user.username} logged in successfully.`);
+        return res.status(200).json({
+          login: true,
+          username: user.username,
+          role: user.role,
+          message: "Login successful.",
+        });
+      });
+    })(req, res, next);
   }
 );
 
-router.post("/logout", isAuth, (req: Request, res: Response): void => {
-  // Log the user attempting to log out (if available)
-  if (req.user) {
-    logger.info(`User ${req.user.username || req.user._id} attempting to log out.`); // <--- Added debug log
+router.post("/logout", isAuth, async (req: Request, res: Response): Promise<void> => {
+  // Store user info before logout for potential guest cleanup
+  const user = req.user;
+  const isGuest = user && typeof user.username === 'string' && user.username.startsWith('guest_');
+  const userId = user?._id;
+  const username = user?.username;
+
+  // Log the user attempting to log out
+  if (user) {
+    logger.info(`${serviceLocation}: User ${username || userId} attempting to log out.`);
   } else {
-      logger.info("Authenticated user attempting to log out (username/ID not available on req.user)."); // <--- Added debug log
+    logger.info(`${serviceLocation}: Authenticated user attempting to log out (username/ID not available on req.user).`);
   }
 
-  // Your /logout route calls req.logout(...). Passport's req.logout method is designed to clear 
-  // the login state from req.session and terminate the session. When req.logout is used, 
-  // it typically destroys the session in the session store. 
-  // So, the session data is destroyed in Redis when a user logs out via this route.
-  // Logout the user and destroy the session
-  req.logout((err: Error | null) => {
-    logger.info("req.logout() callback executed.");
+  // Handle the logout process
+  req.logout(async (err: Error | null) => {
+    logger.info(`${serviceLocation}: req.logout() callback executed.`);
 
     if (err) {
       logger.error(err);
       res.status(500).json({ message: "Internal error when logging out." });
       return; // Stop further execution
     }
-    
-    // Add a log to indicate successful session destruction
-    logger.info("Session successfully destroyed after logout.");
 
-    // Send a single response indicating successful logout
+    // If this is a guest user, delete their account after logout
+    if (isGuest && userId) {
+      try {
+        logger.info(`${serviceLocation}: Cleaning up guest user account: ${username}`);
+
+        // Here you would add your S3 cleanup code
+        // For example:
+        // await cleanupUserS3Storage(userId);
+
+        // Delete the user which will cascade delete all associated records
+        const deleteResult = await deleteUser(userId);
+
+        if (deleteResult.success) {
+          logger.info(`${serviceLocation}: Guest user ${username} (${userId}) and all associated data deleted successfully.`);
+        } else {
+          logger.warn(`${serviceLocation}: Failed to delete guest user ${username} (${userId}): ${deleteResult.message}`);
+        }
+      } catch (cleanupError) {
+        logger.error(`${serviceLocation}: Error during guest cleanup for ${username} (${userId}): ${cleanupError}`);
+        // Continue with response even if cleanup fails - the user is still logged out
+      }
+    }
+
+    // Add a log to indicate successful session destruction
+    logger.info(`${serviceLocation}: Session successfully destroyed after logout.`);
+
+    // Send response indicating successful logout
     res.status(200).json({ message: "Logout successful." });
   });
 });
@@ -131,28 +154,36 @@ router.post("/guest", async (req: Request, res: Response): Promise<void> => {
     const email = `${guestID}@guestmail.com`;
     const phone = `000-${Math.floor(10000000 + Math.random() * 90000000)}`;
 
-    const result = await createUser(username, password, email, phone);
+    // Create a new guest user with the generated credentials
+    const newGuestUser: IUser = {
+      username,
+      password,
+      email,
+      phone,
+      role: UserRole.Guest, // Default role for guest users
+    };
+    const result = await createUser(newGuestUser);
 
     if (!result.success || !result.user) {
-      logger.error(`Guest registration failed: ${result.message}`);
+      logger.error(`${serviceLocation}: Guest registration failed: ${result.message}`);
       res.status(500).json({ login: false, message: "Failed to create guest account." });
       return;
     }
 
     if (!result.user) {
-      logger.error("Guest login failed: User is undefined.");
+      logger.error(`${serviceLocation}: Guest login failed: User is undefined.`);
       res.status(500).json({ message: "Guest login failed." });
       return;
     }
 
     return req.logIn(result.user, (err) => {
       if (err) {
-        logger.error(`Guest login error: ${err}`);
+        logger.error(`${serviceLocation}: Guest login error: ${err}`);
         res.status(500).json({ message: "Guest login failed." });
         return;
       }
 
-      logger.info(`Guest user ${result.user!.username} logged in successfully.`);
+      logger.info(`${serviceLocation}: Guest user ${result.user!.username} logged in successfully.`);
       return res.status(200).json({
         login: true,
         guest: true,
@@ -162,7 +193,7 @@ router.post("/guest", async (req: Request, res: Response): Promise<void> => {
       });
     });
   } catch (error: unknown) {
-    logger.error(`Guest Login - Unexpected error during guest login: ${error}`);
+    logger.error(`${serviceLocation}: Guest Login - Unexpected error during guest login: ${error}`);
     res.status(500).json({ message: "Unexpected error during guest login." });
     return;
   }

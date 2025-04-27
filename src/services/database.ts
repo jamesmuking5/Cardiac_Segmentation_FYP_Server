@@ -27,7 +27,7 @@ const DB_NAME = "visheart";
 const DB_URI: string = process.env.MONGODB_URI || "mongodb://127.0.0.1:27017/visheart";
 
 // Fetch default admin password
-const adminPass: string = process.env.ADMIN_PASS || "admin"; // Default to "admin" if not set
+const adminPass: string = process.env.ADMIN_PASS || "P@ssw0rd123!"; // Default to "P@ssw0rd123!" (follows the validation) if not set
 
 // Connect to MongoDB (called in index.ts)
 // Added parameter so can be used in test files to connect to a different database if needed, but default is the environment variable
@@ -173,84 +173,91 @@ const createAdminUser = async (): Promise<void> => {
  *
  * @async
  * @function createUser
- * @param {string} username - The desired username for the new user (must be unique).
- * @param {string} password - The plain-text password for the new user.
- * @param {string} email - The email address for the new user (must be unique).
- * @param {string} phone - The phone number for the new user (must be unique).
- * @param {UserRole} [role=UserRole.User] - The role to assign to the user. Defaults to `UserRole.User`.
+ * @param {IUser} user - The user object containing the details for the new user.
+ * @param {string} user.username - The desired username for the new user (must be unique).
+ * @param {string} user.password - The plain-text password for the new user.
+ * @param {string} user.email - The email address for the new user (must be unique).
+ * @param {string} user.phone - The phone number for the new user (must be unique).
+ * @param {UserRole} [user.role=UserRole.User] - The role to assign to the user. Defaults to `UserRole.User`.
  * @returns {Promise<UserCrudResult>} A promise that resolves to a `UserCrudResult` object.
  * - On success: `{ success: true, operation: CRUDOperation.CREATE, user: IUserSafe }` containing the sanitized created user.
  * - On validation failure (duplicate username/email/phone): `{ success: false, operation: CRUDOperation.CREATE, message: string }` detailing the conflict.
  * - On other errors: `{ success: false, operation: CRUDOperation.CREATE, message: "Error creating user." }`.
  */
 const createUser = async (
-  username: string,
-  password: string,
-  email: string,
-  phone: string,
-  role: UserRole = UserRole.User, // Default role is "user" unless specified otherwise
+  user: IUser,
 ): Promise<UserCrudResult> => {
   try {
     // Use a single query with $or to check all unique constraints
     const existingUser = await userModel.findOne({
-      $or: [{ username: username }, { email: email }, { phone: phone }],
+      $or: [{ username: user.username }, { email: user.email }, { phone: user.phone }],
     });
     if (existingUser) {
       let reasons = `User already exists:`;
-      if (existingUser.username === username) {
-        reasons += ` Username "${username}" already exists.`;
+      if (existingUser.username === user.username) {
+        reasons += ` Username "${user.username}" already exists.`;
       }
-      if (existingUser.email === email) {
-        reasons += ` Email "${email}" already exists.`;
+      if (existingUser.email === user.email) {
+        reasons += ` Email "${user.email}" already exists.`;
       }
-      if (existingUser.phone === phone) {
-        reasons += ` Phone "${phone}" already exists.`;
+      if (existingUser.phone === user.phone) {
+        reasons += ` Phone "${user.phone}" already exists.`;
       }
       logger.warn(`Database: Error creating user: ${reasons}`);
       return { success: false, operation: CRUDOperation.CREATE, message: reasons };
     }
     // Hash the password before saving it to the database
-    const hashedPassword = await bcrypt.hash(password, 10);
+    const hashedPassword = await bcrypt.hash(user.password, 10);
     // Create a new user instance
     const newUser: IUserDocument = new userModel({
-      username: username,
+      username: user.username,
       password: hashedPassword,
-      email: email,
-      phone: phone,
-      role: role,
+      email: user.email,
+      phone: user.phone,
+      role: user.role,
     });
     // Save the new user to the database
     await newUser.save();
     logger.info(`Database: User ${newUser._id} created successfully: ${newUser.username}, ${newUser.email}, ${newUser.phone}, ${newUser.role}`);
     return { success: true, operation: CRUDOperation.CREATE, user: toIUserSafe(newUser) };
   } catch (error: unknown) {
-    LogError(error as Error, serviceLocation, `Error creating user ${username}.`);
+    logger.error(`${serviceLocation}: Error creating user ${user.username}: ${error}`);
+    LogError(error as Error, serviceLocation, `Error creating user ${user.username}.`);
     return { success: false, operation: CRUDOperation.CREATE, message: "Error creating user." };
   }
 };
 
 /**
- * Searches/Finds/Reads for users in the database. If no criteria is provided, it returns all users.
- * @param id {string} - The ID of the user to read (optional)
- * @param username {string} - The username of the user to read (optional)
- * @param email {string} - The email of the user to read (optional)
- * @param phone {string} - The phone number of the user to read (optional)
- * @param role {UserRole} - The role of the user to read (optional)
- * @returns {UserCrudResult} - A promise that resolves to an object indicating success or failure.
+ * Reads user(s) from the database based on various optional search criteria.
+ * If an `id` is provided, it attempts to find a single user by their MongoDB ObjectId.
+ * If a `user` object is provided, it searches for users matching any of the provided fields
+ * (username, email, phone, role) using an OR condition.
+ * If neither `id` nor `user` criteria are provided, it returns all users.
+ * All returned user data is sanitized using `toIUserSafe` to exclude sensitive information like passwords.
+ *
+ * @async
+ * @function readUser
+ * @param {string} [id] - Optional MongoDB ObjectId string of the specific user to retrieve.
+ * @param {Partial<IUser>} [user] - Optional object containing user fields to filter by.
+ *                                  Supports `username`, `email`, `phone`, and `role`.
+ *                                  If multiple fields are provided, users matching *any* of them are returned.
+ * @returns {Promise<UserCrudResult>} A promise that resolves to a `UserCrudResult` object.
+ * - On success (found by ID): `{ success: true, operation: CRUDOperation.READ, user: IUserSafe }` containing the sanitized user.
+ * - On success (found by criteria or all users): `{ success: true, operation: CRUDOperation.READ, users: IUserSafe[] }` containing an array of sanitized users.
+ * - On success (no users found): `{ success: true, operation: CRUDOperation.READ, users: [], message: "No users found..." }`.
+ * - On error: `{ success: false, operation: CRUDOperation.READ, message: "Error reading user." }`.
  */
 const readUser = async (
   id?: string,
-  username?: string,
-  email?: string,
-  phone?: string,
-  role?: UserRole,
+  user?: Partial<IUser>
 ): Promise<UserCrudResult> => {
+
   const searchConditions: object[] = [];
   if (id) searchConditions.push({ _id: id }); // Add support for searching by ID
-  if (username) searchConditions.push({ username: username });
-  if (email) searchConditions.push({ email: email });
-  if (phone) searchConditions.push({ phone: phone });
-  if (role) searchConditions.push({ role: role });
+  if (user?.username) searchConditions.push({ username: user?.username });
+  if (user?.email) searchConditions.push({ email: user?.email });
+  if (user?.phone) searchConditions.push({ phone: user?.phone });
+  if (user?.role) searchConditions.push({ role: user?.role });
 
   const filterCriteriaString = searchConditions.length > 0
     ? searchConditions.map(cond => JSON.stringify(cond)).join(' OR ')
@@ -1357,4 +1364,4 @@ const deleteProjectSegmentationMask = async (maskid: string): Promise<ProjectSeg
 
 // Using ES modules instead of CommonJS which is module.exports = {connectToDatabase, User};
 // ONLY unit tests should use userModel, fileModel directly, otherwise use the created functions to create users/files.
-export { connectToDatabase, userModel, createUser, readUser, updateUser, deleteUser, authenticateUser, UserRole, IUserSafe, UserCrudResult, CRUDOperation, IUserDocument, IProject, IProjectSegmentationMask, projectModel, projectSegmentationMaskModel, createProject, readProject, updateProject, deleteProject, createProjectSegmentationMask, readProjectSegmentationMask, updateProjectSegmentationMask, deleteProjectSegmentationMask };
+export { connectToDatabase, userModel, createUser, readUser, updateUser, deleteUser, authenticateUser, UserRole, IUser, IUserSafe, UserCrudResult, CRUDOperation, IUserDocument, IProject, IProjectSegmentationMask, projectModel, projectSegmentationMaskModel, createProject, readProject, updateProject, deleteProject, createProjectSegmentationMask, readProjectSegmentationMask, updateProjectSegmentationMask, deleteProjectSegmentationMask };

@@ -3,9 +3,9 @@
 
 import dotenv from 'dotenv';
 import path from 'path';
-
 import logger from './services/logger'; // Import Winston Logger
 import { connectRedis, checkRedisHealth } from './services/redis'; // Import Redis connection and health check
+import { scheduleGuestCleanup } from './jobs/guestcleanupjob'; // Import guest cleanup job
 
 // Service Location for logging within this file
 const serviceLocation = 'Main';
@@ -31,19 +31,21 @@ const PORT = process.env.PORT || 3000;
   try {
     // Connect to Redis
     await connectRedis();
-    logger.info(`${serviceLocation}: Successfully connected to Redis.`);
-
     // Optionally check Redis health
     const isRedisHealthy = await checkRedisHealth();
     if (!isRedisHealthy) {
-      throw new Error('Redis health check failed.');
+      throw new Error(`${serviceLocation}: Redis health check failed.`);
     }
 
     await connectToDatabase();
     // Start the server only a4fter successful DB connection
     app.listen(PORT, () => {
-      logger.info(`Server running at http://localhost:${PORT}`);
+      logger.info(`${serviceLocation}: Server running at http://localhost:${PORT}`);
     });
+
+    // Schedule the guest cleanup job (if applicable)
+    await scheduleGuestCleanup();
+
   } catch (error: unknown) {
     LogError(error as Error, serviceLocation, 'Error during initial database connection or server startup.');
     // process.exit(1); // Optionally exit on critical error
