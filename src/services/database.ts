@@ -27,7 +27,7 @@ const DB_NAME = "visheart";
 const DB_URI: string = process.env.MONGODB_URI || "mongodb://127.0.0.1:27017/visheart";
 
 // Fetch default admin password
-const adminPass: string = process.env.ADMIN_PASS || "admin"; // Default to "admin" if not set
+const adminPass: string = process.env.ADMIN_PASS || "P@ssw0rd123!"; // Default to "P@ssw0rd123!" (follows the validation) if not set
 
 // Connect to MongoDB (called in index.ts)
 // Added parameter so can be used in test files to connect to a different database if needed, but default is the environment variable
