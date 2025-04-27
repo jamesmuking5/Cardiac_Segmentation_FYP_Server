@@ -3,11 +3,11 @@
 
 import express, { Request, Response, NextFunction } from "express";
 import passport from "passport";
-import { IUserSafe, createUser } from "../services/database"; // CRUD + Auth functions for User
+import { IUserSafe, createUser, deleteUser } from "../services/database"; // CRUD + Auth functions for User
 import { isAuth, isAuthAndAdmin } from "../services/passportjs"; // Import Passport.js middleware
 import logger from "../services/logger"; // Import logger
 import validateFields from "../utils/field_validation"; // Import reusable validation middleware
-import { body, validationResult } from 'express-validator'; // Import express-validator for input validation
+import { validationResult } from 'express-validator'; // Import express-validator for input validation
 import { v4 as uuidv4 } from 'uuid'; // Import UUID for generating unique guest IDs
 
 const router = express.Router();
@@ -78,7 +78,7 @@ router.post("/login",
             logger.error(loginErr);
             return res.status(500).json({ message: "Internal error during login." });
           }
-        
+
           logger.info(`User ${user.username} logged in successfully.`);
           return res.status(200).json({
             login: true,
@@ -92,20 +92,22 @@ router.post("/login",
   }
 );
 
-router.post("/logout", isAuth, (req: Request, res: Response): void => {
-  // Log the user attempting to log out (if available)
-  if (req.user) {
-    logger.info(`User ${req.user.username || req.user._id} attempting to log out.`); // <--- Added debug log
+router.post("/logout", isAuth, async (req: Request, res: Response): Promise<void> => {
+  // Store user info before logout for potential guest cleanup
+  const user = req.user;
+  const isGuest = user && typeof user.username === 'string' && user.username.startsWith('guest_');
+  const userId = user?._id;
+  const username = user?.username;
+
+  // Log the user attempting to log out
+  if (user) {
+    logger.info(`User ${username || userId} attempting to log out.`);
   } else {
-      logger.info("Authenticated user attempting to log out (username/ID not available on req.user)."); // <--- Added debug log
+    logger.info("Authenticated user attempting to log out (username/ID not available on req.user).");
   }
 
-  // Your /logout route calls req.logout(...). Passport's req.logout method is designed to clear 
-  // the login state from req.session and terminate the session. When req.logout is used, 
-  // it typically destroys the session in the session store. 
-  // So, the session data is destroyed in Redis when a user logs out via this route.
-  // Logout the user and destroy the session
-  req.logout((err: Error | null) => {
+  // Handle the logout process
+  req.logout(async (err: Error | null) => {
     logger.info("req.logout() callback executed.");
 
     if (err) {
@@ -113,11 +115,34 @@ router.post("/logout", isAuth, (req: Request, res: Response): void => {
       res.status(500).json({ message: "Internal error when logging out." });
       return; // Stop further execution
     }
-    
+
+    // If this is a guest user, delete their account after logout
+    if (isGuest && userId) {
+      try {
+        logger.info(`Cleaning up guest user account: ${username}`);
+
+        // Here you would add your S3 cleanup code
+        // For example:
+        // await cleanupUserS3Storage(userId);
+
+        // Delete the user which will cascade delete all associated records
+        const deleteResult = await deleteUser(userId);
+
+        if (deleteResult.success) {
+          logger.info(`Guest user ${username} (${userId}) and all associated data deleted successfully.`);
+        } else {
+          logger.warn(`Failed to delete guest user ${username} (${userId}): ${deleteResult.message}`);
+        }
+      } catch (cleanupError) {
+        logger.error(`Error during guest cleanup for ${username} (${userId}): ${cleanupError}`);
+        // Continue with response even if cleanup fails - the user is still logged out
+      }
+    }
+
     // Add a log to indicate successful session destruction
     logger.info("Session successfully destroyed after logout.");
 
-    // Send a single response indicating successful logout
+    // Send response indicating successful logout
     res.status(200).json({ message: "Logout successful." });
   });
 });
@@ -179,5 +204,7 @@ router.get("/protected", isAuth, (req: Request, res: Response) => {
 router.get("/admin", isAuthAndAdmin, (req: Request, res: Response) => {
   res.status(200).json({ message: "You are an admin!" });
 });
+
+
 
 export default router;
