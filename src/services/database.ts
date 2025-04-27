@@ -228,27 +228,36 @@ const createUser = async (
 };
 
 /**
- * Searches/Finds/Reads for users in the database. If no criteria is provided, it returns all users.
- * @param id {string} - The ID of the user to read (optional)
- * @param username {string} - The username of the user to read (optional)
- * @param email {string} - The email of the user to read (optional)
- * @param phone {string} - The phone number of the user to read (optional)
- * @param role {UserRole} - The role of the user to read (optional)
- * @returns {UserCrudResult} - A promise that resolves to an object indicating success or failure.
+ * Reads user(s) from the database based on various optional search criteria.
+ * If an `id` is provided, it attempts to find a single user by their MongoDB ObjectId.
+ * If a `user` object is provided, it searches for users matching any of the provided fields
+ * (username, email, phone, role) using an OR condition.
+ * If neither `id` nor `user` criteria are provided, it returns all users.
+ * All returned user data is sanitized using `toIUserSafe` to exclude sensitive information like passwords.
+ *
+ * @async
+ * @function readUser
+ * @param {string} [id] - Optional MongoDB ObjectId string of the specific user to retrieve.
+ * @param {Partial<IUser>} [user] - Optional object containing user fields to filter by.
+ *                                  Supports `username`, `email`, `phone`, and `role`.
+ *                                  If multiple fields are provided, users matching *any* of them are returned.
+ * @returns {Promise<UserCrudResult>} A promise that resolves to a `UserCrudResult` object.
+ * - On success (found by ID): `{ success: true, operation: CRUDOperation.READ, user: IUserSafe }` containing the sanitized user.
+ * - On success (found by criteria or all users): `{ success: true, operation: CRUDOperation.READ, users: IUserSafe[] }` containing an array of sanitized users.
+ * - On success (no users found): `{ success: true, operation: CRUDOperation.READ, users: [], message: "No users found..." }`.
+ * - On error: `{ success: false, operation: CRUDOperation.READ, message: "Error reading user." }`.
  */
 const readUser = async (
   id?: string,
-  username?: string,
-  email?: string,
-  phone?: string,
-  role?: UserRole,
+  user?: Partial<IUser>
 ): Promise<UserCrudResult> => {
+
   const searchConditions: object[] = [];
   if (id) searchConditions.push({ _id: id }); // Add support for searching by ID
-  if (username) searchConditions.push({ username: username });
-  if (email) searchConditions.push({ email: email });
-  if (phone) searchConditions.push({ phone: phone });
-  if (role) searchConditions.push({ role: role });
+  if (user?.username) searchConditions.push({ username: user?.username });
+  if (user?.email) searchConditions.push({ email: user?.email });
+  if (user?.phone) searchConditions.push({ phone: user?.phone });
+  if (user?.role) searchConditions.push({ role: user?.role });
 
   const filterCriteriaString = searchConditions.length > 0
     ? searchConditions.map(cond => JSON.stringify(cond)).join(' OR ')
