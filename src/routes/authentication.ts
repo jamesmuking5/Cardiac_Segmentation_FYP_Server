@@ -9,28 +9,8 @@ import logger from "../services/logger"; // Import logger
 import validateFields from "../utils/field_validation"; // Import reusable validation middleware
 import { body, validationResult } from 'express-validator'; // Import express-validator for input validation
 import { v4 as uuidv4 } from 'uuid'; // Import UUID for generating unique guest IDs
-import LogError  from "../utils/error_logger"; // Import custom error logging utility
-import { sessionMiddleware } from "../services/express_app";
 
 const router = express.Router();
-
-router.use((req, res, next) => {
-  if (req.path === '/register') {
-    // Skip sessionMiddleware for the /register route
-    return next();
-  }
-  // Apply sessionMiddleware for all other routes
-  sessionMiddleware(req, res, next);
-});
-
-// Logging middleware (runs after sessionMiddleware)
-router.use((req, res, next) => {
-  console.info(`Requestinauthentiacationoutside to: ${req.path}`);
-  console.debug(`Session ID: ${req.sessionID}`);
-  console.debug(`User: ${req.user || 'No user in req'}`);
-  console.debug(`Full Session: ${req.session ? JSON.stringify(req.session) : 'No session object'}`);
-  next();
-});
 
 router.post("/register",
   // Use all validation fields for registration
@@ -86,21 +66,18 @@ router.post("/login",
           return res.status(401).json({ login: false, message: info?.message });
         }
 
+        // This is where the session becomes initialized and is saved to the store. 
         // If user is found, log them in
+
+        // Passport's req.logIn method serializes the user (using your passport.serializeUser function 
+        // which saves the user ID to req.session), and express-session, detecting that req.session has been modified, 
+        // will then save the session data (including the user ID) to your Redis store. 
+        // So, a session is created and saved to Redis upon successful login.
         return req.logIn(user, (loginErr) => {
           if (loginErr) {
             logger.error(loginErr);
             return res.status(500).json({ message: "Internal error during login." });
           }
-        
-          // Manually set req.user after login
-          req.user = user;
-        
-          // Log session details after login
-          console.info(`Requesniiiit to: /login`);
-          console.debug(`Session ID: ${req.sessionID}`);
-          console.debug(`User: ${req.user ? JSON.stringify(req.user) : 'No user in req'}`);
-          console.debug(`Full Session: ${req.session ? JSON.stringify(req.session) : 'No session object'}`);
         
           logger.info(`User ${user.username} logged in successfully.`);
           return res.status(200).json({
@@ -115,30 +92,25 @@ router.post("/login",
   }
 );
 
-router.post("/logout", isAuth, (req: Request, res: Response): void => {
+router.post("/logout", (req: Request, res: Response): void => {
+  // Check if the user is authenticated before logging out
+  if (!req.isAuthenticated()) {
+    res.status(401).json({ message: "User not logged in" });
+    return; // Stop further execution
+  }
+  // Your /logout route calls req.logout(...). Passport's req.logout method is designed to clear 
+  // the login state from req.session and terminate the session. When req.logout is used, 
+  // it typically destroys the session in the session store. 
+  // So, the session data is destroyed in Redis when a user logs out via this route.
   // Logout the user and destroy the session
   req.logout((err: Error | null) => {
     if (err) {
       logger.error(err);
       res.status(500).json({ message: "Internal error when logging out." });
-    } else {
-      console.info(`User ${req.user?.username} logged out successfully.`);
-      // Log session details after logout
-      console.info(`solosolosolo to: /logout`);
-      console.debug(`Session ID: ${req.sessionID}`);
-      console.debug(`User: ${req.user ? JSON.stringify(req.user) : 'No user in req'}`);
-      console.debug(`Full Session: ${req.session ? JSON.stringify(req.session) : 'No session object'}`);
-
-      req.session?.destroy((destroyErr) => {
-        if (destroyErr) {
-          logger.error('Error destroying session:', destroyErr);
-          res.status(500).json({ message: "Error destroying session." });
-        } else {
-          res.clearCookie('connect.sid'); // Clear session cookie
-          res.status(200).json({ message: "Logout successful." });
-        }
-      });
+      return; // Stop further execution
     }
+    // Send a single response indicating successful logout
+    res.status(200).json({ message: "Logout successful." });
   });
 });
 
