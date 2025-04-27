@@ -92,13 +92,7 @@ router.post("/login",
   }
 );
 
-router.post("/logout", (req: Request, res: Response): void => {
-  // Check if the user is authenticated before logging out
-  if (!req.isAuthenticated()) {
-    res.status(401).json({ message: "User not logged in" });
-    return; // Stop further execution
-  }
-
+router.post("/logout", isAuth, (req: Request, res: Response): void => {
   // Log the user attempting to log out (if available)
   if (req.user) {
     logger.info(`User ${req.user.username || req.user._id} attempting to log out.`); // <--- Added debug log
