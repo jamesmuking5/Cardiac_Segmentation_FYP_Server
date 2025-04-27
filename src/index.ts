@@ -5,6 +5,7 @@ import dotenv from 'dotenv';
 import path from 'path';
 import logger from './services/logger'; // Import Winston Logger
 import { connectRedis, checkRedisHealth } from './services/redis'; // Import Redis connection and health check
+import { scheduleGuestCleanup } from './jobs/guestcleanup'; // Import guest cleanup job
 
 // Service Location for logging within this file
 const serviceLocation = 'Main';
@@ -41,6 +42,10 @@ const PORT = process.env.PORT || 3000;
     app.listen(PORT, () => {
       logger.info(`${serviceLocation}: Server running at http://localhost:${PORT}`);
     });
+
+    // Schedule the guest cleanup job (if applicable)
+    await scheduleGuestCleanup();
+
   } catch (error: unknown) {
     LogError(error as Error, serviceLocation, 'Error during initial database connection or server startup.');
     // process.exit(1); // Optionally exit on critical error
