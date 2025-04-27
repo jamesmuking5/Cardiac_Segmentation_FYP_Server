@@ -128,6 +128,52 @@ router.post("/logout", (req: Request, res: Response): void => {
   });
 });
 
+// Guest login route
+router.post("/guest", async (req: Request, res: Response): Promise<void> => {
+  try {
+    const guestID = uuidv4();
+    const username = `guest_${guestID}`;
+    const password = `pass_${uuidv4()}`;
+    const email = `${guestID}@guestmail.com`;
+    const phone = `000-${Math.floor(10000000 + Math.random() * 90000000)}`;
+
+    const result = await createUser(username, password, email, phone);
+
+    if (!result.success || !result.user) {
+      logger.error(`Guest registration failed: ${result.message}`);
+      res.status(500).json({ login: false, message: "Failed to create guest account." });
+      return;
+    }
+
+    if (!result.user) {
+      logger.error("Guest login failed: User is undefined.");
+      res.status(500).json({ message: "Guest login failed." });
+      return;
+    }
+
+    return req.logIn(result.user, (err) => {
+      if (err) {
+        logger.error(`Guest login error: ${err}`);
+        res.status(500).json({ message: "Guest login failed." });
+        return;
+      }
+
+      logger.info(`Guest user ${result.user!.username} logged in successfully.`);
+      return res.status(200).json({
+        login: true,
+        guest: true,
+        username: result.user!.username,
+        role: result.user!.role,
+        message: "Logged in as guest.",
+      });
+    });
+  } catch (error: unknown) {
+    logger.error(`Guest Login - Unexpected error during guest login: ${error}`);
+    res.status(500).json({ message: "Unexpected error during guest login." });
+    return;
+  }
+});
+
 // Middleware-protected route
 // This route is only accessible to users who are logged in (i.e., authenticated users). It acts as a basic protected endpoint.
 router.get("/protected", isAuth, (req: Request, res: Response) => {
