@@ -31,8 +31,6 @@ const PORT = process.env.PORT || 3000;
   try {
     // Connect to Redis
     await connectRedis();
-    logger.info(`${serviceLocation}: Successfully connected to Redis.`);
-
     // Optionally check Redis health
     const isRedisHealthy = await checkRedisHealth();
     if (!isRedisHealthy) {

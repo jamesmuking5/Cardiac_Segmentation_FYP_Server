@@ -11,9 +11,6 @@ try {
   throw new Error('Failed to load environment variables for Redis.');
 }
 
-// Log the loaded environment variables for debugging
-logger.info(`Redis Client: REDIS_HOST=${process.env.REDIS_HOST}, REDIS_PORT=${process.env.REDIS_PORT}`);
-
 // Create Redis client with retry strategy
 const redisClient = createClient({
   url: `redis://${process.env.REDIS_HOST || 'localhost'}:${process.env.REDIS_PORT || '6379'}`,
