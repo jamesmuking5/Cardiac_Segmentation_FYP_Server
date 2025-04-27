@@ -649,24 +649,16 @@ const projectSegmentationMaskSliceComponentBoundingBoxesSchema = new Schema({
   y_max: { type: Number, required: true }, // Maximum Y coordinate of the bounding box
 }, { _id: false }); // Disable automatic creation of an _id field for this subdocument
 
-// Create Segmentation Mask Location Schema (Nest Depth: 3)
-const projectSegmentationMasksSliceSegmentationMasksLocationSchema = new Schema({
-  path: { type: String, required: true }, // Path to the segmentation mask image (e.g., S3 bucket URL)
-  isRLE: { type: Boolean, required: true }, // Indicates if the segmentation mask is in RLE format
-}, { _id: false }); // Disable automatic creation of an _id field for this subdocument
-
 // Create slice schema (Nest Depth: 2)
 const projectSegmentationMaskSliceSchema = new Schema({
   sliceindex: { type: Number, required: true }, // Index of the slice (0-based)
-  slicepath: { type: String, required: true }, // Path to the slice image (e.g., S3 bucket URL)
-  componentboundingboxes: [{ type: projectSegmentationMaskSliceComponentBoundingBoxesSchema, required: false }], // Array of component bounding boxes for the slice
-  segmentationmaskslocation: [{ type: projectSegmentationMasksSliceSegmentationMasksLocationSchema, required: false }], // Path to the segmentation mask image (e.g., S3 bucket URL) - assume CSV? or RLE?
+  componentboundingboxes: [{ type: projectSegmentationMaskSliceComponentBoundingBoxesSchema, required: false }], // Array of component bounding boxes for the slicesegmentation mask image (e.g., S3 bucket URL) - assume CSV? or RLE?
 }, { _id: false }); // Disable automatic creation of an _id field for this subdocument
 
 // Create frames schema (Nest Depth: 1)
 const projectSegmentationMaskFramesSchema = new Schema({
-  frameIndex: { type: Number, required: true }, // Index of the frame (0-based)
-  frameInferred: { type: Boolean, required: true, default: false }, // Indicates if the frame is inferred (update if user runs MedSAM on the frame)
+  frameindex: { type: Number, required: true }, // Index of the frame (0-based)
+  frameinferred: { type: Boolean, required: true, default: false }, // Indicates if the frame is inferred (update if user runs MedSAM on the frame)
   slices: { type: [projectSegmentationMaskSliceSchema], required: true }, // Array of slices for the frame
 }, { _id: false }); // Disable automatic creation of an _id field for this subdocument
 
@@ -678,11 +670,14 @@ const projectSegmentationMaskSchema = new Schema<IProjectSegmentationMask>({
   name: { type: String, required: true }, // Name of the segmentation mask
   description: { type: String, required: false }, // Description of the segmentation mask
   isSaved: { type: Boolean, required: true, default: false }, // Indicates if the segmentation mask is saved
+  segmentationmaskpath: { type: String, required: false }, // Path to the segmentation mask file (e.g., S3 bucket URL)
+  segmentationmaskRLE: { type: Boolean, required: false }, // RLE of the segmentation mask (e.g., S3 bucket URL)
   isMedSAMOutput: { type: Boolean, required: true, default: false }, // Indicates if the segmentation mask is a MedSAM output
   // Properties of extracted folder + location tracking
   // Index should be 0 based
   frames: [{ type: projectSegmentationMaskFramesSchema, required: true }], // Array of frames for the segmentation mask
 }, { timestamps: true }); // Automatically add createdAt and updatedAt timestamps
+
 // Create the model with proper typing
 // Hooks for pre-save and pre-delete operations (must be before the model creation)
 // Add validation to ensure projectid exists before saving
@@ -1116,9 +1111,8 @@ const createProjectSegmentationMask = async (
     // Validate empty strings 
     const stringInputs = [
       psm.name,
-      ...psm.frames.flatMap(frame => frame.slices.map(slices => slices.slicepath)),
-      ...psm.frames.flatMap(frame => frame.slices.flatMap(slices => slices.segmentationmaskslocation?.map(location => location.path) || []))
     ]
+    if (psm.segmentationmaskpath) stringInputs.push(psm.segmentationmaskpath); // Optional field
     const emptyStringInputs = stringInputs.filter(input => !input || typeof input !== 'string' || input.trim() === '');
     if (emptyStringInputs.length > 0) {
       logger.warn(`Database: Invalid input parameters for project segmentation mask creation: ${emptyStringInputs.join(", ")}`);
@@ -1127,7 +1121,7 @@ const createProjectSegmentationMask = async (
     // Validate numeric inputs
     const numericInputs = [
       ...psm.frames.flatMap(frame => frame.slices.map(slices => slices.sliceindex)),
-      ...psm.frames.flatMap(frame => frame.frameIndex),
+      ...psm.frames.flatMap(frame => frame.frameindex),
       ...psm.frames.flatMap(frame => frame.slices.map(slices => slices.componentboundingboxes?.map(box => box.x_min) || [])),
       ...psm.frames.flatMap(frame => frame.slices.map(slices => slices.componentboundingboxes?.map(box => box.y_min) || [])),
       ...psm.frames.flatMap(frame => frame.slices.map(slices => slices.componentboundingboxes?.map(box => box.x_max) || [])),
@@ -1157,8 +1151,8 @@ const createProjectSegmentationMask = async (
     );
 
     if (framesWithEmptySlices.length > 0) {
-      const frameIndexesWithEmptySlices = framesWithEmptySlices.map(frame => frame.frameIndex).join(", ");
-      logger.warn(`Database: Invalid input parameters for project segmentation mask creation: frames with indexes [${frameIndexesWithEmptySlices}] have empty slices arrays.`);
+      const frameindexesWithEmptySlices = framesWithEmptySlices.map(frame => frame.frameindex).join(", ");
+      logger.warn(`Database: Invalid input parameters for project segmentation mask creation: frames with indexes [${frameindexesWithEmptySlices}] have empty slices arrays.`);
       return { success: false, operation, message: `Invalid input parameters for project segmentation mask creation: each frame must have at least one slice.` };
     }
 
@@ -1291,10 +1285,10 @@ const updateProjectSegmentationMask = async (
 
       // Validate each frame has a valid index
       const invalidFrameIndices = maskupdates.frames.filter(frame =>
-        frame.frameIndex === undefined || typeof frame.frameIndex !== 'number' || frame.frameIndex < 0
+        frame.frameindex === undefined || typeof frame.frameindex !== 'number' || frame.frameindex < 0
       );
       if (invalidFrameIndices.length > 0) {
-        const indices = invalidFrameIndices.map(f => f.frameIndex).join(", ");
+        const indices = invalidFrameIndices.map(f => f.frameindex).join(", ");
         return { success: false, operation, message: `Invalid frame indices: [${indices}]. Frame index must be a non-negative number.` };
       }
 
@@ -1304,7 +1298,7 @@ const updateProjectSegmentationMask = async (
       );
 
       if (framesWithEmptySlices.length > 0) {
-        const indices = framesWithEmptySlices.map(f => f.frameIndex).join(", ");
+        const indices = framesWithEmptySlices.map(f => f.frameindex).join(", ");
         return { success: false, operation, message: `Frames with indices [${indices}] must have at least one slice.` };
       }
 
