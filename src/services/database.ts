@@ -11,8 +11,8 @@ import LogError from "../utils/error_logger"; // Import the error logging utilit
 const serviceLocation = "Database"; // Service location for error logging
 
 // Import Types
-import { IUser, IUserDocument, IUserSafe, UserRole, CRUDOperation, UserCrudResult, IProjectDocument } from "../types/database_types"; // Import the user types
-import { FileType, FileDataType, ComponentBoundingBoxesClass, IProject, IProjectSegmentationMask, ProjectCrudResult } from "../types/database_types"; // Import the project types
+import { IUser, IUserDocument, IUserSafe, UserRole, CRUDOperation, UserCrudResult, IProjectDocument, IProjectSegmentationMaskDocument } from "../types/database_types"; // Import the user types
+import { FileType, FileDataType, ComponentBoundingBoxesClass, IProject, IProjectSegmentationMask, ProjectCrudResult, ProjectSegmentationMaskCrudResult } from "../types/database_types"; // Import the project types
 
 // Load environment variables from .env file
 try {
@@ -568,11 +568,6 @@ const authenticateUser = async (
 
 /* Project Section */
 /* Project Collection Creation */
-// Create status schema for use in project schema (Nest Depth: 1)
-const projectStatusSchema = new Schema({
-  upload: { type: Boolean, default: false, required: true }, // Indicates if the file has been uploaded
-  extract: { type: Boolean, default: false, required: true }, // Indicates if the file has been extracted
-}, { _id: false }); // Disable automatic creation of an _id field for this subdocument
 
 // Create dimension schema for use in project schema (Nest Depth: 1)
 const projectDimensionSchema = new Schema({
@@ -609,8 +604,7 @@ const projectSchema = new Schema<IProject>({
   basepath: { type: String, required: true }, // Base path for the file storage (e.g., S3 bucket URL)
   originalfilepath: { type: String, required: true }, // Original (nifti/dicom) file location (e.g., S3 bucket URL)
   extractedfolderpath: { type: String, required: true }, // Folder path for the extracted files (e.g., S3 bucket URL)
-  // Processing status
-  status: { type: projectStatusSchema, required: true, default: {} }, // Status of the project processing, default: {} tells mongoose to use the default values defined in the statusSchema
+
   // File specifics
   datatype: { type: String, required: true }, // Data type of the image (e.g., uint8, float32)
   dimensions: { type: projectDimensionSchema, required: true }, // Dimensions of the image (e.g., width, height, slices, frames)
@@ -655,24 +649,16 @@ const projectSegmentationMaskSliceComponentBoundingBoxesSchema = new Schema({
   y_max: { type: Number, required: true }, // Maximum Y coordinate of the bounding box
 }, { _id: false }); // Disable automatic creation of an _id field for this subdocument
 
-// Create Segmentation Mask Location Schema (Nest Depth: 3)
-const projectSegmentationMasksSliceSegmentationMasksLocationSchema = new Schema({
-  path: { type: String, required: true }, // Path to the segmentation mask image (e.g., S3 bucket URL)
-  isRLE: { type: Boolean, required: true }, // Indicates if the segmentation mask is in RLE format
-}, { _id: false }); // Disable automatic creation of an _id field for this subdocument
-
 // Create slice schema (Nest Depth: 2)
 const projectSegmentationMaskSliceSchema = new Schema({
   sliceindex: { type: Number, required: true }, // Index of the slice (0-based)
-  slicepath: { type: String, required: true }, // Path to the slice image (e.g., S3 bucket URL)
-  componentboundingboxes: [{ type: projectSegmentationMaskSliceComponentBoundingBoxesSchema, required: false }], // Array of component bounding boxes for the slice
-  segmentationmaskslocation: [{ type: projectSegmentationMasksSliceSegmentationMasksLocationSchema, required: false }], // Path to the segmentation mask image (e.g., S3 bucket URL) - assume CSV? or RLE?
+  componentboundingboxes: [{ type: projectSegmentationMaskSliceComponentBoundingBoxesSchema, required: false }], // Array of component bounding boxes for the slicesegmentation mask image (e.g., S3 bucket URL) - assume CSV? or RLE?
 }, { _id: false }); // Disable automatic creation of an _id field for this subdocument
 
 // Create frames schema (Nest Depth: 1)
 const projectSegmentationMaskFramesSchema = new Schema({
-  frameIndex: { type: Number, required: true }, // Index of the frame (0-based)
-  frameInferred: { type: Boolean, required: true, default: false }, // Indicates if the frame is inferred (update if user runs MedSAM on the frame)
+  frameindex: { type: Number, required: true }, // Index of the frame (0-based)
+  frameinferred: { type: Boolean, required: true, default: false }, // Indicates if the frame is inferred (update if user runs MedSAM on the frame)
   slices: { type: [projectSegmentationMaskSliceSchema], required: true }, // Array of slices for the frame
 }, { _id: false }); // Disable automatic creation of an _id field for this subdocument
 
@@ -684,11 +670,14 @@ const projectSegmentationMaskSchema = new Schema<IProjectSegmentationMask>({
   name: { type: String, required: true }, // Name of the segmentation mask
   description: { type: String, required: false }, // Description of the segmentation mask
   isSaved: { type: Boolean, required: true, default: false }, // Indicates if the segmentation mask is saved
+  segmentationmaskpath: { type: String, required: false }, // Path to the segmentation mask file (e.g., S3 bucket URL)
+  segmentationmaskRLE: { type: Boolean, required: false }, // RLE of the segmentation mask (e.g., S3 bucket URL)
   isMedSAMOutput: { type: Boolean, required: true, default: false }, // Indicates if the segmentation mask is a MedSAM output
   // Properties of extracted folder + location tracking
   // Index should be 0 based
   frames: [{ type: projectSegmentationMaskFramesSchema, required: true }], // Array of frames for the segmentation mask
 }, { timestamps: true }); // Automatically add createdAt and updatedAt timestamps
+
 // Create the model with proper typing
 // Hooks for pre-save and pre-delete operations (must be before the model creation)
 // Add validation to ensure projectid exists before saving
@@ -757,7 +746,6 @@ const createProject = async (
   basepath: string, // Base path for the file storage (e.g., S3 bucket URL)
   originalfilepath: string, // Original file location (e.g., S3 bucket URL)
   extractedfolderpath: string, // Folder path for the extracted files (e.g., S3 bucket URL)
-  status: { upload: boolean; extract: boolean }, // Status of the project processing (upload and extract) - default to false
   datatype: FileDataType, // Data type of the image (e.g., uint8, float32) - should be detected by server
   dimensions: { width: number; height: number; slices: number; frames?: number },
   voxelsize?: { x: number; y: number; z?: number; t?: number }, // Optional physical voxel dimensions (e.g., x, y, z, t dimensions) - should be detected by server
@@ -765,6 +753,13 @@ const createProject = async (
 ): Promise<ProjectCrudResult> => {
   const operation = CRUDOperation.CREATE;
   try {
+    // If user does not exist, return error
+    const user = await userModel.findById(userid);
+    if (!user) {
+      logger.warn(`Database: User ${userid} does not exist.`);
+      return { success: false, operation, message: `User ${userid} does not exist.` };
+    }
+
     // Validate input parameters
     // Check if all the string inputs are non-empty strings
     const stringInputs = [userid, name, originalfilename, filename, filehash, basepath, originalfilepath, extractedfolderpath, datatype];
@@ -794,12 +789,6 @@ const createProject = async (
       }
     }
 
-    // If user does not exist, return error
-    const user = await userModel.findById(userid);
-    if (!user) {
-      logger.warn(`Database: User ${userid} does not exist.`);
-      return { success: false, operation, message: `User ${userid} does not exist.` };
-    }
     // Check conflicting fields (name, filehash, originalfilepath, extractedfolderpath, filename) 
     const existingProject = await projectModel.findOne({
       $or: [
@@ -835,7 +824,6 @@ const createProject = async (
       basepath: basepath,
       originalfilepath: originalfilepath,
       extractedfolderpath: extractedfolderpath,
-      status: status,
       datatype: datatype,
       dimensions: dimensions,
       voxelsize: voxelsize, // Optional
@@ -857,7 +845,7 @@ const createProject = async (
  * Dynamically constructs a MongoDB query based on the provided parameters.
  * Supports filtering by ID, user, name (case-insensitive), description (case-insensitive),
  * saved status, filename (case-insensitive), file types (array), file size range,
- * processing status, data types (array), dimension ranges (AND logic), voxel size ranges (OR logic),
+ * data types (array), dimension ranges (AND logic), voxel size ranges (OR logic),
  * and creation date range.
  *
  * @async
@@ -872,9 +860,6 @@ const createProject = async (
  * @param {object} [filesize] - Optional object defining a file size range.
  * @param {number} [filesize.minsize] - Minimum file size (inclusive).
  * @param {number} [filesize.maxsize] - Maximum file size (inclusive).
- * @param {object} [status] - Optional object to filter by processing status.
- * @param {boolean} [status.upload] - Filter by upload status.
- * @param {boolean} [status.extract] - Filter by extraction status.
  * @param {FileDataType[]} [datatype] - Optional array of data types to filter by.
  * @param {object} [dimensions] - Optional object defining dimension ranges. All provided dimension ranges must be met (AND logic).
  * @param {object} [dimensions.width] - Width range { minsize?, maxsize? }.
@@ -903,7 +888,6 @@ const readProject = async (
   filename?: string,
   filetype?: FileType[], // array of file types to filter by (e.g., [FileType.NIFTI, FileType.DICOM])
   filesize?: { minsize?: number; maxsize?: number },
-  status?: { upload?: boolean; extract?: boolean },
   datatype?: FileDataType[],
   dimensions?: { width?: { minsize?: number; maxsize?: number }, height?: { minsize?: number; maxsize?: number }, slices?: { minsize?: number; maxsize?: number }, frames?: { minsize?: number; maxsize?: number }, },
   voxelsize?: { x?: { minsize?: number; maxsize?: number }, y?: { minsize?: number; maxsize?: number }, z?: { minsize?: number; maxsize?: number }, t?: { minsize?: number; maxsize?: number }, },
@@ -922,10 +906,6 @@ const readProject = async (
   if (filesize) {
     if (filesize.minsize) searchConditions.push({ filesize: { $gte: filesize.minsize } }); // Search by minimum file size
     if (filesize.maxsize) searchConditions.push({ filesize: { $lte: filesize.maxsize } }); // Search by maximum file size
-  }
-  if (status) {
-    if (status.upload !== undefined) searchConditions.push({ 'status.upload': status.upload }); // Search by upload status
-    if (status.extract !== undefined) searchConditions.push({ 'status.extract': status.extract }); // Search by extraction status
   }
   if (datatype) searchConditions.push({ datatype: { $in: datatype } }); // Search by data type
   if (dimensions) searchConditions.push({
@@ -1005,7 +985,6 @@ const updateProject = async (
     basepath?: string, // Base path for the file storage (e.g., S3 bucket URL)
     originalfilepath?: string, // Original file location (e.g., S3 bucket URL)
     extractedfolderpath?: string, // Folder path for the extracted files (e.g., S3 bucket URL)
-    status?: { upload?: boolean; extract?: boolean }, // Status of the project processing (upload and extract) - default to false
     datatype?: FileDataType, // Data type of the image (e.g., uint8, float32) - should be detected by server
     dimensions?: { width?: number; height?: number; slices?: number; frames?: number },
     voxelsize?: { x?: number; y?: number; z?: number; t?: number }, // Optional physical voxel dimensions (e.g., x, y, z, t dimensions) - should be detected by server
@@ -1031,11 +1010,6 @@ const updateProject = async (
     if (updates.basepath) project.basepath = updates.basepath; // Update base path if provided
     if (updates.originalfilepath) project.originalfilepath = updates.originalfilepath; // Update original file path if provided
     if (updates.extractedfolderpath) project.extractedfolderpath = updates.extractedfolderpath; // Update extracted folder path if provided
-    // Status updates
-    if (updates.status) {
-      if (updates.status.extract) project.status.extract = updates.status.extract; // Update extraction status if provided
-      if (updates.status.upload) project.status.upload = updates.status.upload; // Update upload status if provided
-    }
     if (updates.datatype) project.datatype = updates.datatype; // Update data type if provided
     // Dimensions updates
     if (updates.dimensions) {
@@ -1098,7 +1072,289 @@ const deleteProject = async (projectid: string): Promise<ProjectCrudResult> => {
   }
 }
 
+/* Project Segmentation Mask section */
+
+/**
+ * Creates a new project segmentation mask record in the database.
+ * Validates the provided data, including checking for the existence of the referenced project ID,
+ * ensuring string inputs are not empty, and numeric inputs (indices, coordinates) are non-negative.
+ *
+ * @async
+ * @function createProjectSegmentationMask
+ * @param {IProjectSegmentationMask} projectsegmentationmask - An object containing the details of the segmentation mask to create. Import this interface from the database's types file.
+ * @returns {Promise<ProjectSegmentationMaskCrudResult>} A promise resolving to a ProjectSegmentationMaskCrudResult object.
+ * - On success: `{ success: true, operation: CREATE, projectsegmentationmask: IProjectSegmentationMaskDocument }` containing the created mask document.
+ * - On failure (project not found): `{ success: false, operation: CREATE, message: "Project ID ... does not exist." }`.
+ * - On failure (invalid input): `{ success: false, operation: CREATE, message: "Invalid input parameters..." }`.
+ * - On database error: `{ success: false, operation: CREATE, message: "Error creating project segmentation mask." }`.
+ */
+const createProjectSegmentationMask = async (
+  projectsegmentationmask: IProjectSegmentationMask
+): Promise<ProjectSegmentationMaskCrudResult> => {
+  const operation = CRUDOperation.CREATE;
+  const psm = projectsegmentationmask;
+  try {
+    // Validate the project ID 
+    const projectid = projectsegmentationmask.projectid;
+    const projectidexists = await projectModel.exists({ _id: projectid });
+    if (!projectidexists) {
+      logger.warn(`Database: Project ID ${projectid} does not exist.`);
+      return { success: false, operation, message: `Project ID ${projectid} does not exist.` };
+    }
+    // Validate the contents
+    // Check if same name exists
+    const projectsegmasknameexists = await projectSegmentationMaskModel.exists({ name: psm.name, projectid: psm.projectid })
+    if (projectsegmasknameexists) {
+      logger.warn(`Database: Invalid input parameters for project segmentation mask creation: Segmentation mask name ${psm.name} already exists for this project.`);
+      return { success: false, operation, message: `Invalid input parameters for project segmentation mask creation: Segmentation mask name ${psm.name} already exists for this project.` };
+    }
+    // Validate empty strings 
+    const stringInputs = [
+      psm.name,
+    ]
+    if (psm.segmentationmaskpath) stringInputs.push(psm.segmentationmaskpath); // Optional field
+    const emptyStringInputs = stringInputs.filter(input => !input || typeof input !== 'string' || input.trim() === '');
+    if (emptyStringInputs.length > 0) {
+      logger.warn(`Database: Invalid input parameters for project segmentation mask creation: ${emptyStringInputs.join(", ")}`);
+      return { success: false, operation, message: `Invalid input parameters for project segmentation mask creation: ${emptyStringInputs.join(", ")}` };
+    }
+    // Validate numeric inputs
+    const numericInputs = [
+      ...psm.frames.flatMap(frame => frame.slices.map(slices => slices.sliceindex)),
+      ...psm.frames.flatMap(frame => frame.frameindex),
+      ...psm.frames.flatMap(frame => frame.slices.map(slices => slices.componentboundingboxes?.map(box => box.x_min) || [])),
+      ...psm.frames.flatMap(frame => frame.slices.map(slices => slices.componentboundingboxes?.map(box => box.y_min) || [])),
+      ...psm.frames.flatMap(frame => frame.slices.map(slices => slices.componentboundingboxes?.map(box => box.x_max) || [])),
+      ...psm.frames.flatMap(frame => frame.slices.map(slices => slices.componentboundingboxes?.map(box => box.y_max) || [])),
+    ];
+    const negativeNumericInputs = numericInputs.filter(input => typeof input === 'number' && input < 0);
+    if (negativeNumericInputs.length > 0) {
+      logger.warn(`Database: Invalid numeric input parameters for project segmentation mask creation: ${negativeNumericInputs.join(", ")}`);
+      return { success: false, operation, message: `Invalid numeric input parameters for project segmentation mask creation.` };
+    }
+    // Validate that bounding boxes's x_max >= x_min and y_max >= y_min
+    const invalidBoundingBoxes = psm.frames.flatMap(frame => frame.slices.flatMap(slices => slices.componentboundingboxes?.filter(box => box.x_max < box.x_min || box.y_max < box.y_min) || []));
+    if (invalidBoundingBoxes.length > 0) {
+      const invalidBoundingBoxesResult = invalidBoundingBoxes.map(box => `(${box.x_min}, ${box.y_min}) to (${box.x_max}, ${box.y_max})`).join(", ");
+      logger.warn(`Database: Invalid bounding box coordinates for project segmentation mask creation: ${invalidBoundingBoxesResult}`);
+      return { success: false, operation, message: `Invalid bounding box coordinates for project segmentation mask creation: ${invalidBoundingBoxesResult}.` };
+    }
+    // Validate that frames array is populated
+    if (!psm.frames || !Array.isArray(psm.frames) || psm.frames.length === 0) {
+      logger.warn(`Database: Invalid input parameters for project segmentation mask creation: frames array must be populated with at least one frame.`);
+      return { success: false, operation, message: `Invalid input parameters for project segmentation mask creation: frames array must be populated with at least one frame.` };
+    }
+
+    // Validate that each frame has a slices array that is populated
+    const framesWithEmptySlices = psm.frames.filter(frame =>
+      !frame.slices || !Array.isArray(frame.slices) || frame.slices.length === 0
+    );
+
+    if (framesWithEmptySlices.length > 0) {
+      const frameindexesWithEmptySlices = framesWithEmptySlices.map(frame => frame.frameindex).join(", ");
+      logger.warn(`Database: Invalid input parameters for project segmentation mask creation: frames with indexes [${frameindexesWithEmptySlices}] have empty slices arrays.`);
+      return { success: false, operation, message: `Invalid input parameters for project segmentation mask creation: each frame must have at least one slice.` };
+    }
+
+
+    // Create new project segmentation mask instance
+    const newProjectSegmentationMask = new projectSegmentationMaskModel(psm);
+
+    // Save the new project segmentation mask to the database
+    const result = await newProjectSegmentationMask.save();
+    if (!result) {
+      logger.warn(`Database: Error creating project segmentation mask.`);
+      return { success: false, operation, message: "Error creating project segmentation mask." };
+    }
+    logger.info(`Database: Project segmentation mask ${result._id} created successfully.`);
+    return { success: true, operation, projectsegmentationmask: result }; // Return the created project segmentation mask
+  } catch (error: unknown) {
+    LogError(error as Error, serviceLocation, `Error creating project segmentation mask, ${error}`);
+    return { success: false, operation, message: "Error creating project segmentation mask." };
+  }
+}
+
+/**
+ * Reads all segmentation masks associated with a specific project ID.
+ * Validates the existence of the project ID before querying the database.
+ *
+ * @async
+ * @function readProjectSegmentationMask
+ * @param {string} projectid - The ID of the project whose segmentation masks are to be retrieved.
+ * @returns {Promise<ProjectSegmentationMaskCrudResult>} A promise resolving to a ProjectSegmentationMaskCrudResult object.
+ * - On success with results: `{ success: true, operation: CRUDOperation.READ, projectsegmentationmasks: IProjectSegmentationMaskDocument[] }`.
+ * - On success with no results: `{ success: true, operation: CRUDOperation.READ, message: "No segmentation masks found for this project." }`.
+ * - On failure (project not found): `{ success: false, operation: CRUDOperation.READ, message: "Project ID ... does not exist." }`.
+ * - On database error: `{ success: false, operation: CRUDOperation.READ, message: "Error reading project segmentation mask." }`.
+ */
+const readProjectSegmentationMask = async (
+  projectid: string,
+): Promise<ProjectSegmentationMaskCrudResult> => {
+  const operation = CRUDOperation.READ;
+  try {
+    // validate the project id
+    const projectidexists = await projectModel.exists({ _id: projectid });
+    if (!projectidexists) {
+      logger.warn(`Database: Project ID ${projectid} does not exist.`);
+      return { success: false, operation, message: `Project ID ${projectid} does not exist.` }; // Project ID does not exist
+    }
+    // Find all segmentation masks for the project
+    const projectSegmentationMasks = await projectSegmentationMaskModel.find({ projectid: projectid });
+    if (!projectSegmentationMasks || projectSegmentationMasks.length === 0) {
+      logger.info(`Database: No segmentation masks found for project ID ${projectid}.`);
+      return { success: true, operation, message: "No segmentation masks found for this project." }; // true success, but no results found
+    }
+    logger.info(`Database: Found ${projectSegmentationMasks.length} segmentation masks for project ID ${projectid}.`);
+    return { success: true, operation, projectsegmentationmasks: projectSegmentationMasks }; // Return the found segmentation masks
+
+  } catch (error: unknown) {
+    LogError(error as Error, serviceLocation, `Error reading project segmentation mask, ${error}`);
+    return { success: false, operation, message: "Error reading project segmentation mask." };
+  }
+}
+
+/**
+ * Updates an existing project segmentation mask in the database.
+ * Validates the existence of the mask ID and the project ID before applying updates.
+ * Checks for uniqueness of the name and validates the contents of the mask.
+ * Should be used for large updates, as it almost replaces the entire mask object (especially the frame).
+ * 
+ * @async
+ * @function updateProjectSegmentationMask
+ * @param {string} maskid - The ID of the segmentation mask to update.
+ * @param {Partial<IProjectSegmentationMaskDocument>} maskupdates - An object containing the updates to apply to the segmentation mask.
+ * * @returns {Promise<ProjectSegmentationMaskCrudResult>} A promise resolving to a ProjectSegmentationMaskCrudResult object.
+ * - On success: `{ success: true, operation: CRUDOperation.UPDATE, projectsegmentationmask: IProjectSegmentationMaskDocument }` containing the updated mask document.
+ * - On failure (mask not found): `{ success: false, operation: CRUDOperation.UPDATE, message: "Segmentation mask ID ... does not exist." }`.
+ * - On failure (project not found): `{ success: false, operation: CRUDOperation.UPDATE, message: "Project ID ... does not exist." }`.
+ * - On failure (invalid input): `{ success: false, operation: CRUDOperation.UPDATE, message: "Invalid input parameters..." }`.
+ * - On database error: `{ success: false, operation: CRUDOperation.UPDATE, message: "Error updating project segmentation mask." }`.
+ */
+const updateProjectSegmentationMask = async (
+  maskid: string,
+  maskupdates: Partial<IProjectSegmentationMaskDocument>
+): Promise<ProjectSegmentationMaskCrudResult> => {
+  const operation = CRUDOperation.UPDATE;
+  try {
+    // Find the segmentation mask by ID
+    const mask = await projectSegmentationMaskModel.findById(maskid);
+    if (!mask) {
+      logger.warn(`Database: Project segmentation mask ${maskid} not found.`);
+      return { success: false, operation, message: `Project segmentation mask ${maskid} not found.` };
+    }
+
+    // Validate updates based on what's being changed
+
+    // 1. If updating name, check for uniqueness
+    if (maskupdates.name && maskupdates.name !== mask.name) {
+      const nameExists = await projectSegmentationMaskModel.exists({
+        projectid: mask.projectid,
+        name: maskupdates.name,
+        _id: { $ne: maskid }
+      });
+
+      if (nameExists) {
+        return { success: false, operation, message: `Segmentation mask name '${maskupdates.name}' already exists for this project.` };
+      }
+
+      // Set the name property directly
+      mask.name = maskupdates.name;
+    }
+
+    // 2. Update description if provided
+    if (maskupdates.description !== undefined) {
+      mask.description = maskupdates.description;
+    }
+
+    // 3. Update saved status if provided
+    if (maskupdates.isSaved !== undefined) {
+      mask.isSaved = maskupdates.isSaved;
+    }
+
+    // 4. Update MedSAM output status if provided
+    if (maskupdates.isMedSAMOutput !== undefined) {
+      mask.isMedSAMOutput = maskupdates.isMedSAMOutput;
+    }
+
+    // 5. Handle frames update - requires special validation
+    if (maskupdates.frames) {
+      // Validate frames exist and are not empty
+      if (!Array.isArray(maskupdates.frames) || maskupdates.frames.length === 0) {
+        return { success: false, operation, message: "Frames array must contain at least one frame." };
+      }
+
+      // Validate each frame has a valid index
+      const invalidFrameIndices = maskupdates.frames.filter(frame =>
+        frame.frameindex === undefined || typeof frame.frameindex !== 'number' || frame.frameindex < 0
+      );
+      if (invalidFrameIndices.length > 0) {
+        const indices = invalidFrameIndices.map(f => f.frameindex).join(", ");
+        return { success: false, operation, message: `Invalid frame indices: [${indices}]. Frame index must be a non-negative number.` };
+      }
+
+      // Validate each frame has slices
+      const framesWithEmptySlices = maskupdates.frames.filter(frame =>
+        !frame.slices || !Array.isArray(frame.slices) || frame.slices.length === 0
+      );
+
+      if (framesWithEmptySlices.length > 0) {
+        const indices = framesWithEmptySlices.map(f => f.frameindex).join(", ");
+        return { success: false, operation, message: `Frames with indices [${indices}] must have at least one slice.` };
+      }
+
+      // Validate bounding boxes
+      const invalidBoundingBoxes = maskupdates.frames.flatMap(frame =>
+        frame.slices.flatMap(slice =>
+          slice.componentboundingboxes?.filter(box =>
+            box.x_max < box.x_min || box.y_max < box.y_min
+          ) || []
+        )
+      );
+
+      if (invalidBoundingBoxes.length > 0) {
+        return { success: false, operation, message: "Invalid bounding box coordinates: max values must be greater than or equal to min values." };
+      }
+
+      // Update the entire frames array if all validations pass
+      mask.frames = maskupdates.frames;
+    }
+
+    // Save the updated document
+    await mask.save();
+
+    logger.info(`Database: Project segmentation mask ${maskid} updated successfully.`);
+    return { success: true, operation, projectsegmentationmask: mask };
+
+  } catch (error: unknown) {
+    LogError(error as Error, serviceLocation, `Error updating project segmentation mask, ${error}`);
+    return { success: false, operation, message: "Error updating project segmentation mask." };
+  }
+};
+
+// deleteProjectSegmentationMask function
+const deleteProjectSegmentationMask = async (maskid: string): Promise<ProjectSegmentationMaskCrudResult> => {
+  const operation = CRUDOperation.DELETE;
+  try {
+    // Find the segmentation mask by ID
+    const mask = await projectSegmentationMaskModel.findById(maskid);
+    if (!mask) {
+      logger.warn(`Database: Project segmentation mask ${maskid} not found.`);
+      return { success: false, operation, message: `Project segmentation mask ${maskid} not found.` };
+    }
+    // Delete the segmentation mask
+    await mask.deleteOne();
+    logger.info(`Database: Project segmentation mask ${mask._id} deleted successfully.`);
+    return { success: true, operation, message: `Project segmentation mask ${mask._id} deleted successfully.` };
+  } catch (error: unknown) {
+    LogError(error as Error, serviceLocation, `Error deleting project segmentation mask ${maskid}.`);
+    return { success: false, operation, message: "Error deleting project segmentation mask." };
+  }
+}
+
+// Auxiliary Project Segmentation Mask functions
+// For granular updates, such as adding/removing slices or frames
+// const 
+
 // Using ES modules instead of CommonJS which is module.exports = {connectToDatabase, User};
 // ONLY unit tests should use userModel, fileModel directly, otherwise use the created functions to create users/files.
-export { connectToDatabase, userModel, createUser, readUser, updateUser, deleteUser, authenticateUser, UserRole, IUserSafe, UserCrudResult, CRUDOperation, IUserDocument, IProject, IProjectSegmentationMask, projectModel, projectSegmentationMaskModel, createProject, readProject, updateProject, deleteProject };
-// createFile, readFile, updateFile,
+export { connectToDatabase, userModel, createUser, readUser, updateUser, deleteUser, authenticateUser, UserRole, IUserSafe, UserCrudResult, CRUDOperation, IUserDocument, IProject, IProjectSegmentationMask, projectModel, projectSegmentationMaskModel, createProject, readProject, updateProject, deleteProject, createProjectSegmentationMask, readProjectSegmentationMask, updateProjectSegmentationMask, deleteProjectSegmentationMask };

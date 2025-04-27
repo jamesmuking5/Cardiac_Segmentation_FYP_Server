@@ -12,49 +12,6 @@ import { v4 as uuidv4 } from 'uuid'; // Import UUID for generating unique guest 
 
 const router = express.Router();
 
-router.post("/login",
-  // Use only username and password validation for login
-  [validateFields[0], validateFields[1]], // Username and password validation
-  (req: Request, res: Response, next: NextFunction): void => {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      // If validation fails, return a 400 response with error details
-      res.status(400).json({ login: false, errors: errors.array() });
-    } else {
-      next(); // Proceed to authentication if validation passes
-    }
-  },
-  (req: Request, res: Response, next: NextFunction): void => {
-    passport.authenticate("local",
-      (err: Error | null, user: IUserSafe, info?: { message: string }) => {
-        if (err) {
-          logger.error(err);
-          return res.status(500).json({ message: "Internal error" });
-        }
-        if (!user) {
-          return res.status(401).json({ login: false, message: info?.message });
-        }
-
-        // If user is found, log them in
-        return req.logIn(user, (loginErr) => {
-          if (loginErr) {
-            logger.error(loginErr);
-            return res.status(500).json({ message: "Internal error during login." });
-          }
-          // Successful login, send user info back to client
-          logger.info(`User ${user.username} logged in successfully.`);
-          return res.status(200).json({
-            login: true,
-            username: user.username,
-            role: user.role,
-            message: "Login successful.",
-          });
-        });
-      }
-    )(req, res, next);
-  }
-);
-
 router.post("/register",
   // Use all validation fields for registration
   validateFields,
@@ -86,8 +43,87 @@ router.post("/register",
   }
 );
 
+router.post("/login",
+  // Use only username and password validation for login
+  [validateFields[0], validateFields[1]], // Username and password validation
+  (req: Request, res: Response, next: NextFunction): void => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      // If validation fails, return a 400 response with error details
+      res.status(400).json({ login: false, errors: errors.array() });
+    } else {
+      next(); // Proceed to authentication if validation passes
+    }
+  },
+  (req: Request, res: Response, next: NextFunction): void => {
+    passport.authenticate("local",
+      (err: Error | null, user: IUserSafe, info?: { message: string }) => {
+        if (err) {
+          logger.error(err);
+          return res.status(500).json({ message: "Internal error" });
+        }
+        if (!user) {
+          return res.status(401).json({ login: false, message: info?.message });
+        }
+
+        // This is where the session becomes initialized and is saved to the store. 
+        // If user is found, log them in
+
+        // Passport's req.logIn method serializes the user (using your passport.serializeUser function 
+        // which saves the user ID to req.session), and express-session, detecting that req.session has been modified, 
+        // will then save the session data (including the user ID) to your Redis store. 
+        // So, a session is created and saved to Redis upon successful login.
+        return req.logIn(user, (loginErr) => {
+          if (loginErr) {
+            logger.error(loginErr);
+            return res.status(500).json({ message: "Internal error during login." });
+          }
+        
+          logger.info(`User ${user.username} logged in successfully.`);
+          return res.status(200).json({
+            login: true,
+            username: user.username,
+            role: user.role,
+            message: "Login successful.",
+          });
+        });
+      }
+    )(req, res, next);
+  }
+);
+
+router.post("/logout", isAuth, (req: Request, res: Response): void => {
+  // Log the user attempting to log out (if available)
+  if (req.user) {
+    logger.info(`User ${req.user.username || req.user._id} attempting to log out.`); // <--- Added debug log
+  } else {
+      logger.info("Authenticated user attempting to log out (username/ID not available on req.user)."); // <--- Added debug log
+  }
+
+  // Your /logout route calls req.logout(...). Passport's req.logout method is designed to clear 
+  // the login state from req.session and terminate the session. When req.logout is used, 
+  // it typically destroys the session in the session store. 
+  // So, the session data is destroyed in Redis when a user logs out via this route.
+  // Logout the user and destroy the session
+  req.logout((err: Error | null) => {
+    logger.info("req.logout() callback executed.");
+
+    if (err) {
+      logger.error(err);
+      res.status(500).json({ message: "Internal error when logging out." });
+      return; // Stop further execution
+    }
+    
+    // Add a log to indicate successful session destruction
+    logger.info("Session successfully destroyed after logout.");
+
+    // Send a single response indicating successful logout
+    res.status(200).json({ message: "Logout successful." });
+  });
+});
+
 // Guest login route
-router.post("/guest", async (req: Request, res: Response) => {
+router.post("/guest", async (req: Request, res: Response): Promise<void> => {
   try {
     const guestID = uuidv4();
     const username = `guest_${guestID}`;
@@ -99,18 +135,21 @@ router.post("/guest", async (req: Request, res: Response) => {
 
     if (!result.success || !result.user) {
       logger.error(`Guest registration failed: ${result.message}`);
-      return res.status(500).json({ login: false, message: "Failed to create guest account." });
+      res.status(500).json({ login: false, message: "Failed to create guest account." });
+      return;
     }
 
     if (!result.user) {
       logger.error("Guest login failed: User is undefined.");
-      return res.status(500).json({ message: "Guest login failed." });
+      res.status(500).json({ message: "Guest login failed." });
+      return;
     }
 
     return req.logIn(result.user, (err) => {
       if (err) {
         logger.error(`Guest login error: ${err}`);
-        return res.status(500).json({ message: "Guest login failed." });
+        res.status(500).json({ message: "Guest login failed." });
+        return;
       }
 
       logger.info(`Guest user ${result.user!.username} logged in successfully.`);
@@ -122,29 +161,11 @@ router.post("/guest", async (req: Request, res: Response) => {
         message: "Logged in as guest.",
       });
     });
-  } catch (error: any) {
-    logger.error(`Unexpected guest login error: ${error.message}`);
-    return res.status(500).json({ message: "Unexpected error during guest login." });
+  } catch (error: unknown) {
+    logger.error(`Guest Login - Unexpected error during guest login: ${error}`);
+    res.status(500).json({ message: "Unexpected error during guest login." });
+    return;
   }
-});
-
-router.post("/logout", (req: Request, res: Response): void => {
-  // Check if the user is authenticated before logging out
-  if (!req.isAuthenticated()) {
-    res.status(401).json({ message: "User not logged in" });
-    return; // Stop further execution
-  }
-
-  // Logout the user and destroy the session
-  req.logout((err: Error | null) => {
-    if (err) {
-      logger.error(err);
-      res.status(500).json({ message: "Internal error when logging out." });
-    } else {
-      res.status(200).json({ message: "Logout successful." });
-    }
-    res.status(200).json({ message: "Logout successful." });
-  });
 });
 
 // Middleware-protected route
