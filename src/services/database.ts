@@ -568,11 +568,6 @@ const authenticateUser = async (
 
 /* Project Section */
 /* Project Collection Creation */
-// Create status schema for use in project schema (Nest Depth: 1)
-const projectStatusSchema = new Schema({
-  upload: { type: Boolean, default: false, required: true }, // Indicates if the file has been uploaded
-  extract: { type: Boolean, default: false, required: true }, // Indicates if the file has been extracted
-}, { _id: false }); // Disable automatic creation of an _id field for this subdocument
 
 // Create dimension schema for use in project schema (Nest Depth: 1)
 const projectDimensionSchema = new Schema({
@@ -609,8 +604,7 @@ const projectSchema = new Schema<IProject>({
   basepath: { type: String, required: true }, // Base path for the file storage (e.g., S3 bucket URL)
   originalfilepath: { type: String, required: true }, // Original (nifti/dicom) file location (e.g., S3 bucket URL)
   extractedfolderpath: { type: String, required: true }, // Folder path for the extracted files (e.g., S3 bucket URL)
-  // Processing status
-  status: { type: projectStatusSchema, required: true, default: {} }, // Status of the project processing, default: {} tells mongoose to use the default values defined in the statusSchema
+
   // File specifics
   datatype: { type: String, required: true }, // Data type of the image (e.g., uint8, float32)
   dimensions: { type: projectDimensionSchema, required: true }, // Dimensions of the image (e.g., width, height, slices, frames)
@@ -757,7 +751,6 @@ const createProject = async (
   basepath: string, // Base path for the file storage (e.g., S3 bucket URL)
   originalfilepath: string, // Original file location (e.g., S3 bucket URL)
   extractedfolderpath: string, // Folder path for the extracted files (e.g., S3 bucket URL)
-  status: { upload: boolean; extract: boolean }, // Status of the project processing (upload and extract) - default to false
   datatype: FileDataType, // Data type of the image (e.g., uint8, float32) - should be detected by server
   dimensions: { width: number; height: number; slices: number; frames?: number },
   voxelsize?: { x: number; y: number; z?: number; t?: number }, // Optional physical voxel dimensions (e.g., x, y, z, t dimensions) - should be detected by server
@@ -836,7 +829,6 @@ const createProject = async (
       basepath: basepath,
       originalfilepath: originalfilepath,
       extractedfolderpath: extractedfolderpath,
-      status: status,
       datatype: datatype,
       dimensions: dimensions,
       voxelsize: voxelsize, // Optional
@@ -858,7 +850,7 @@ const createProject = async (
  * Dynamically constructs a MongoDB query based on the provided parameters.
  * Supports filtering by ID, user, name (case-insensitive), description (case-insensitive),
  * saved status, filename (case-insensitive), file types (array), file size range,
- * processing status, data types (array), dimension ranges (AND logic), voxel size ranges (OR logic),
+ * data types (array), dimension ranges (AND logic), voxel size ranges (OR logic),
  * and creation date range.
  *
  * @async
@@ -873,9 +865,6 @@ const createProject = async (
  * @param {object} [filesize] - Optional object defining a file size range.
  * @param {number} [filesize.minsize] - Minimum file size (inclusive).
  * @param {number} [filesize.maxsize] - Maximum file size (inclusive).
- * @param {object} [status] - Optional object to filter by processing status.
- * @param {boolean} [status.upload] - Filter by upload status.
- * @param {boolean} [status.extract] - Filter by extraction status.
  * @param {FileDataType[]} [datatype] - Optional array of data types to filter by.
  * @param {object} [dimensions] - Optional object defining dimension ranges. All provided dimension ranges must be met (AND logic).
  * @param {object} [dimensions.width] - Width range { minsize?, maxsize? }.
@@ -904,7 +893,6 @@ const readProject = async (
   filename?: string,
   filetype?: FileType[], // array of file types to filter by (e.g., [FileType.NIFTI, FileType.DICOM])
   filesize?: { minsize?: number; maxsize?: number },
-  status?: { upload?: boolean; extract?: boolean },
   datatype?: FileDataType[],
   dimensions?: { width?: { minsize?: number; maxsize?: number }, height?: { minsize?: number; maxsize?: number }, slices?: { minsize?: number; maxsize?: number }, frames?: { minsize?: number; maxsize?: number }, },
   voxelsize?: { x?: { minsize?: number; maxsize?: number }, y?: { minsize?: number; maxsize?: number }, z?: { minsize?: number; maxsize?: number }, t?: { minsize?: number; maxsize?: number }, },
@@ -923,10 +911,6 @@ const readProject = async (
   if (filesize) {
     if (filesize.minsize) searchConditions.push({ filesize: { $gte: filesize.minsize } }); // Search by minimum file size
     if (filesize.maxsize) searchConditions.push({ filesize: { $lte: filesize.maxsize } }); // Search by maximum file size
-  }
-  if (status) {
-    if (status.upload !== undefined) searchConditions.push({ 'status.upload': status.upload }); // Search by upload status
-    if (status.extract !== undefined) searchConditions.push({ 'status.extract': status.extract }); // Search by extraction status
   }
   if (datatype) searchConditions.push({ datatype: { $in: datatype } }); // Search by data type
   if (dimensions) searchConditions.push({
@@ -1006,7 +990,6 @@ const updateProject = async (
     basepath?: string, // Base path for the file storage (e.g., S3 bucket URL)
     originalfilepath?: string, // Original file location (e.g., S3 bucket URL)
     extractedfolderpath?: string, // Folder path for the extracted files (e.g., S3 bucket URL)
-    status?: { upload?: boolean; extract?: boolean }, // Status of the project processing (upload and extract) - default to false
     datatype?: FileDataType, // Data type of the image (e.g., uint8, float32) - should be detected by server
     dimensions?: { width?: number; height?: number; slices?: number; frames?: number },
     voxelsize?: { x?: number; y?: number; z?: number; t?: number }, // Optional physical voxel dimensions (e.g., x, y, z, t dimensions) - should be detected by server
@@ -1032,11 +1015,6 @@ const updateProject = async (
     if (updates.basepath) project.basepath = updates.basepath; // Update base path if provided
     if (updates.originalfilepath) project.originalfilepath = updates.originalfilepath; // Update original file path if provided
     if (updates.extractedfolderpath) project.extractedfolderpath = updates.extractedfolderpath; // Update extracted folder path if provided
-    // Status updates
-    if (updates.status) {
-      if (updates.status.extract) project.status.extract = updates.status.extract; // Update extraction status if provided
-      if (updates.status.upload) project.status.upload = updates.status.upload; // Update upload status if provided
-    }
     if (updates.datatype) project.datatype = updates.datatype; // Update data type if provided
     // Dimensions updates
     if (updates.dimensions) {
