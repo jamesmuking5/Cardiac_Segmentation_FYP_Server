@@ -1,14 +1,17 @@
 import { createClient } from 'redis';
 import path from 'path';
 import dotenv from 'dotenv';
-import logger from './logger'; // Assuming you have a logger like in database.ts
+import logger from './logger';
+import LogError from '../utils/error_logger';
+
+const serviceLocation = 'Redis';
 
 // Load environment variables
 try {
   dotenv.config({ path: path.join(__dirname, '../../.env'), override: true });
 } catch (error: unknown) {
-  logger.error(`Redis Client: Failed to load environment variables. Error: ${error instanceof Error ? error.message : 'Unknown error'}`);
-  throw new Error('Failed to load environment variables for Redis.');
+  logger.error(`${serviceLocation}: Failed to load environment variables. Error: ${error instanceof Error ? error.message : 'Unknown error'}`);
+  LogError(error as Error, serviceLocation, 'Error loading environment variables.');
 }
 
 // Create Redis client with retry strategy
@@ -18,8 +21,8 @@ const redisClient = createClient({
   socket: {
     reconnectStrategy: (retries) => {
       if (retries > 5) {
-        logger.error('Redis Client: Exceeded maximum retry attempts.');
-        return new Error('Exceeded maximum retry attempts to connect to Redis.');
+        logger.error(`${serviceLocation}: Exceeded maximum retry attempts.`);
+        LogError(new Error('Exceeded maximum retry attempts'), serviceLocation, 'Redis connection error.');
       }
       logger.warn(`Redis Client: Retry attempt ${retries}.`);
       return Math.min(retries * 100, 3000); // Retry with exponential backoff (max 3 seconds)
@@ -29,7 +32,8 @@ const redisClient = createClient({
 
 // Handle Redis client errors
 redisClient.on('error', (err) => {
-  logger.error('Redis Client Error', err);
+  logger.error(`${serviceLocation}: Client error. Error: ${err instanceof Error ? err.message : 'Unknown error'}`);
+  LogError(err as Error, serviceLocation, 'Redis client error.');
 });
 
 // Connect to Redis
@@ -37,11 +41,11 @@ const connectRedis = async (): Promise<void> => {
   try {
     if (!redisClient.isOpen) {
       await redisClient.connect();
-      logger.info('Redis Client: Successfully connected to Redis.');
+      logger.info(`${serviceLocation}: Redis client connected successfully.`);
     }
   } catch (error: unknown) {
-    logger.error(`Redis Client: Failed to connect to Redis. Error: ${error instanceof Error ? error.message : 'Unknown error'}`);
-    throw new Error('Failed to connect to Redis. Please check your Redis configuration.');
+    logger.error(`${serviceLocation}: Failed to connect to Redis. Error: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    LogError(error as Error, serviceLocation, 'Redis connection error.');
   }
 };
 
@@ -50,8 +54,9 @@ const checkRedisHealth = async (): Promise<boolean> => {
   try {
     const reply = await redisClient.ping(); // Simple Redis ping check
     return reply === 'PONG';
-  } catch (error) {
-    logger.error('Redis Client: Health check failed.', error);
+  } catch (error: unknown) {
+    logger.error(`${serviceLocation}: Health check failed. Error: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    LogError(error as Error, serviceLocation, 'Redis health check error.');
     return false;
   }
 };
