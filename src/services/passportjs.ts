@@ -1,7 +1,7 @@
 import passport from "passport";
 import { Strategy as LocalStrategy } from "passport-local"; // for username and pw authentication
-import { readUser, authenticateUser, IUserSafe, UserRole } from "./database"; // Import the User model // the mongodb model for users, used to query the database
-import logger from "./logger"; // Import the logger // for logging - debugging and error tracking
+import { readUser, authenticateUser, IUserSafe, UserRole } from "./database"; // Import the User model 
+import logger from "./logger"; // Import the logger 
 import LogError from "../utils/error_logger";
 import { Request, Response, NextFunction } from 'express';
 
@@ -44,7 +44,7 @@ passport.serializeUser((user: IUserSafe, done) => {
 passport.deserializeUser(async (id: string, done) => {
   try {
     const result = await readUser(id); // fetch by user ID
-    if (!result.success) {  
+    if (!result.success) {
       logger.warn(`${serviceLocation}: Deserialization failed for user ID: ${id}`);
       return done(null, false);
     }
@@ -56,7 +56,7 @@ passport.deserializeUser(async (id: string, done) => {
     LogError(error as Error, serviceLocation, "Error during deserialization.");
     return done(error);
   }
-}); 
+});
 
 // Middleware to check if the user is authenticated/logged in
 const isAuth = (req: Request, res: Response, next: NextFunction): void => {

@@ -205,6 +205,4 @@ router.get("/admin", isAuthAndAdmin, (req: Request, res: Response) => {
   res.status(200).json({ message: "You are an admin!" });
 });
 
-
-
 export default router;
