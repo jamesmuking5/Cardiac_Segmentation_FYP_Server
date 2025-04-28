@@ -1,5 +1,5 @@
 import cron from 'node-cron';
-import { readUser, deleteUser, UserRole, IUser } from '../services/database';
+import { readUser, deleteUser, UserRole, } from '../services/database';
 import logger from '../services/logger';
 // import { cleanupUserS3Storage } from '../services/s3Cleanup'; // Assuming you create this
 
@@ -7,12 +7,11 @@ let INACTIVE_THRESHOLD_MS = parseInt(process.env.GUEST_INACTIVITY_THRESHOLD_HOUR
 // If development, set to 0 to trigger immediate cleanup
 if (process.env.NODE_ENV === 'development') INACTIVE_THRESHOLD_MS = 0; // For testing purposes, set to 0 to trigger immediate cleanup
 
-
 async function cleanupInactiveGuests(): Promise<void> {
     logger.info('GuestCleanupJob: Starting inactive guest cleanup...');
     try {
-        const guestUser: Partial<IUser> = { role: UserRole.Guest };
-        const readResult = await readUser(undefined, guestUser);
+        // const guestUser: Partial<IUser> = { role: UserRole.Guest };
+        const readResult = await readUser({ role: UserRole.Guest }); // Adjust query to match your schema
 
         if (!readResult.success || !readResult.users) {
             logger.warn('GuestCleanupJob: Could not retrieve guest users or no guests found.');
