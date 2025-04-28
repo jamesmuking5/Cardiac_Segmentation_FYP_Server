@@ -68,11 +68,15 @@ export interface IUserDocument extends IUser, Document {
  * @property {string} NIFTI - Represents a NIfTI file (.nii).
  * @property {string} NIFTI_GZ - Represents a compressed NIfTI file (.nii.gz).
  * @property {string} DICOM - Represents a DICOM file (.dcm).
+ * @property {string} NIFTI_CUSTOM - Represents a non-standard, custom MIME type for NIfTI files (.nii). 
+ * @property {string} NIFTI_GZ_CUSTOM - Represents a non-standard, custom MIME type for compressed NIfTI files (.nii.gz). 
  */
 export enum FileType {
-    NIFTI = "image/nifti", // .nii
-    NIFTI_GZ = "image/nifti-gz", // .nii.gz
-    DICOM = "application/dicom", // .dcm
+    NIFTI = "application/octet-stream", // .nii (standard MIME for NIfTI files)
+    NIFTI_GZ = "application/gzip", // .nii.gz (standard MIME for gzip-compressed NIfTI files)
+    DICOM = "application/dicom", // .dcm (standard MIME for DICOM files)
+    NIFTI_CUSTOM = "image/nifti", // .nii (non-standard, custom MIME for NIfTI)
+    NIFTI_GZ_CUSTOM = "image/nifti-gz", // .nii.gz (non-standard, custom MIME for NIfTI compressed files)
 }
 
 // Enumeration for DataType
@@ -84,14 +88,20 @@ export enum FileType {
  * @property {string} FLOAT32 - Represents a 32-bit floating-point number.
  * @property {string} UINT16 - Represents a 16-bit unsigned integer.
  * @property {string} UINT8 - Represents an 8-bit unsigned integer.
+ * @property {string} INT16 - Represents a 16-bit signed integer.
+ * @property {string} INT32 - Represents a 32-bit signed integer.
+ * @property {string} UINT32 - Represents a 32-bit unsigned integer.
+ * @property {string} FLOAT64 - Represents a 64-bit floating-point number.
  */
 export enum FileDataType {
-    UNKNOWN = "unknown",
-    FLOAT32 = "float32", // common
-    UINT16 = "uint16", // common
-    UINT8 = "uint8", // common (often for segmentation masks)
-    INT16 = "int16"
-    // To add if needed
+    UNKNOWN = "unknown",       // Used when the data type is not determined.
+    FLOAT32 = "float32",       // Common for continuous-valued data (e.g., images, scans).
+    UINT16 = "uint16",         // Common for medical images (e.g., grayscale).
+    UINT8 = "uint8",           // Common for segmentation masks (often used for binary masks).
+    INT16 = "int16",           // Common for signed integer data types.
+    INT32 = "int32",           // Used in some medical imaging formats.
+    UINT32 = "uint32",         // Used in certain specialized data formats.
+    FLOAT64 = "float64"        // Less common, but used for high-precision floating point.
 }
 
 /**
@@ -109,7 +119,7 @@ export enum FileDataType {
  * @property {string} filehash - The SHA256 hash of the renamed file.
  * @property {string} basepath - The base path for the file storage (e.g., s3://devel-visheart-s3-bucket/temp/"the-user-id"/"the-user-id"_2630fcede25328c13a15c4dfe6376c068201eb1f8d871736cd8197c2b1463ed3).
  * @property {string} originalfilepath - The original file location (e.g., s3://devel-visheart-s3-bucket/temp/"the-user-id"/"the-user-id"_2630fcede25328c13a15c4dfe6376c068201eb1f8d871736cd8197c2b1463ed3/"the-user-id"_2630fcede25328c13a15c4dfe6376c068201eb1f8d871736cd8197c2b1463ed3.nii.gz). 
- * @property {string} extractedfolderpath - The folder where all the extracted JPEGs from NIfTI are saved. (e.g. s3://devel-visheart-s3-bucket/temp/${testUser._id}/${String(testUser._id)}_2630fcede25328c13a15c4dfe6376c068201eb1f8d871736cd8197c2b1463ed3/extracted)
+ * @property {string} extractedfolderpat`h - The folder where all the extracted JPEGs from NIfTI are saved. (e.g. s3://devel-visheart-s3-bucket/temp/${testUser._id}/${String(testUser._id)}_2630fcede25328c13a15c4dfe6376c068201eb1f8d871736cd8197c2b1463ed3/extracted)
  * @property {boolean} status.upload - Indicates if the file upload was successful.
  * @property {boolean} status.extract - Indicates if the file extraction was successful.
 * @property {string} datatype - The data type of the image (e.g., uint8, float32).
