@@ -6,6 +6,7 @@ import {
     connectToDatabase,
     createUser,
     readUser,
+    updateUser,
     deleteUser,
     createProject,
     readProject,
@@ -34,8 +35,8 @@ async function createTestUser() {
     const userData: IUser = {
         username: 'dbtest',
         password: 'password123',
-        email: 'dbtest@example.com',
-        phone: '1112223333',
+        email: 'dbTest@example.com',
+        phone: '0001112222',
         role: UserRole.Admin
     };
 
@@ -49,6 +50,158 @@ async function createTestUser() {
     logger.error("Manual Test: User creation failed:", result.message);
     return false;
 }
+
+async function createTestUsers() {
+    logger.info("Manual Test: Creating multiple test users...");
+
+    // Create an admin user
+    const adminData: IUser = {
+        username: 'admintest',
+        password: 'Admin123!',
+        email: 'adminTest@example.com',
+        phone: '1112223333',
+        role: UserRole.Admin
+    };
+
+    // Create a regular user
+    const userData: IUser = {
+        username: 'usertest',
+        password: 'User123!',
+        email: 'userTest@example.com',
+        phone: '4445556666',
+        role: UserRole.User
+    };
+
+    // Create a guest user
+    const guestData: IUser = {
+        username: 'guest_test',
+        password: 'Guest123!',
+        email: 'guestTest@example.com',
+        phone: '7778889999',
+        role: UserRole.Guest
+    };
+
+    // Create all users and track results
+    const results = await Promise.all([
+        createUser(adminData),
+        createUser(userData),
+        createUser(guestData)
+    ]);
+
+    // Check success status for each user creation
+    const successCount = results.filter(result => result.success).length;
+    logger.info(`Manual Test: Successfully created ${successCount} out of 3 users`);
+
+    // Return true if all users were created successfully
+    return successCount === 3;
+}
+
+// Read users with different criteria
+async function readTestUsers() {
+    logger.info("Manual Test: Testing user read operations...");
+
+    try {
+        // 1. Read all users
+        const allUsers = await readUser();
+        if (allUsers.success && allUsers.users) {
+            logger.info(`Manual Test: Found ${allUsers.users.length} total users in the database`);
+        }
+
+        // 2. Read by username
+        const userByName = await readUser({ username: 'usertest' });
+        if (userByName.success && userByName.users && userByName.users.length > 0) {
+            logger.info(`Manual Test: Found user by username: ${userByName.users[0].username}, role: ${userByName.users[0].role}`);
+        } else {
+            logger.warn("Manual Test: Could not find user by username 'usertest'");
+        }
+
+        // 3. Read by role
+        const adminUsers = await readUser({ role: UserRole.Admin });
+        if (adminUsers.success && adminUsers.users) {
+            logger.info(`Manual Test: Found ${adminUsers.users.length} admin users in the database`);
+            adminUsers.users.forEach(user => logger.info(`  - Admin user: ${user.username}, email: ${user.email}`));
+        }
+
+        // 4. Read by email domain
+        const testUsers = await readUser();
+        if (testUsers.success && testUsers.users) {
+            const exampleDomainUsers = testUsers.users.filter(u => u.email.endsWith('@example.com'));
+            logger.info(`Manual Test: Found ${exampleDomainUsers.length} users with @example.com email domain`);
+        }
+
+        // 5. Test searching for non-existent user
+        const nonExistentUser = await readUser({ username: 'doesnotexist' });
+        if (nonExistentUser.success && nonExistentUser.users && nonExistentUser.users.length === 0) {
+            logger.info("Manual Test: Correctly returned empty array for non-existent username");
+        }
+
+        return true;
+    } catch (error) {
+        logger.error("Manual Test: Error during user read tests:", error);
+        return false;
+    }
+}
+
+// Update a test user
+async function updateTestUser(username: string) {
+    logger.info(`Manual Test: Updating user ${username}...`);
+
+    try {
+        // First, get the current user details for comparison
+        const userBefore = await readUser({ username });
+        if (!userBefore.success || !userBefore.users || userBefore.users.length === 0) {
+            logger.error(`Manual Test: User ${username} not found for update`);
+            return false;
+        }
+
+        const originalUser = userBefore.users[0];
+
+        // Create updates for different fields
+        const updates = {
+            email: `updated.${originalUser.email}`,
+            phone: `999${originalUser.phone.substring(3)}`,
+            // Don't change password in this test to avoid login issues
+        };
+
+        // CHANGE THIS LINE - Pass the username as an object instead of a string
+        const updateResult = await updateUser({ username: username }, updates);  // <-- MODIFIED LINE
+
+        if (!updateResult.success) {
+            logger.error(`Manual Test: User update failed: ${updateResult.message}`);
+            return false;
+        }
+
+
+        // Verify the updates were applied correctly
+        const userAfter = await readUser({ username });
+        if (userAfter.success && userAfter.users && userAfter.users.length > 0) {
+            const updatedUser = userAfter.users[0];
+
+            logger.info("Manual Test: User update successful. Changes:");
+            logger.info(`- Email: ${originalUser.email} → ${updatedUser.email}`);
+            logger.info(`- Phone: ${originalUser.phone} → ${updatedUser.phone}`);
+
+            // Verify the changes were correctly applied
+            const correctEmail = updatedUser.email === updates.email;
+            const correctPhone = updatedUser.phone === updates.phone;
+
+            if (correctEmail && correctPhone) {
+                logger.info("Manual Test: All updates verified successfully!");
+                return true;
+            } else {
+                logger.error("Manual Test: Updates were not applied correctly");
+                return false;
+            }
+        } else {
+            logger.error("Manual Test: Failed to retrieve updated user");
+            return false;
+        }
+    } catch (error) {
+        logger.error("Manual Test: Error during user update:", error);
+        return false;
+    }
+}
+
 
 async function getTestUserId(username: string) {
     const result = await readUser({ username: username });
@@ -420,6 +573,27 @@ async function runManualTests(): Promise<void> {
     try {
         await connectToDatabase();
 
+        // User CRUD Testing Section
+        logger.info("=== STARTING USER CRUD TESTS ===");
+
+        // Step 1: Create multiple test users
+        if (await createTestUsers()) {
+            logger.info("Manual Test: Successfully created test users");
+
+            // Step 2: Read users with various criteria
+            if (await readTestUsers()) {
+                logger.info("Manual Test: User read tests completed successfully");
+
+                // Step 3: Update a specific user
+                if (await updateTestUser('usertest')) {
+                    logger.info("Manual Test: User update test completed successfully");
+                }
+            }
+        }
+
+        logger.info("=== COMPLETED USER CRUD TESTS ===");
+
+
         // Step 1: Create and verify user
         if (await createTestUser()) {
             const user = await verifyUserCreation('dbtest');
@@ -506,11 +680,14 @@ async function runManualTests(): Promise<void> {
         }
 
         // Delete the test user
-        const userId = await getTestUserId('dbtest');
-        if (userId) {
-            await deleteUser(userId);
-        } else {
-            logger.error("Manual Test: Could not find user to delete");
+        const userToDelete = ['dbtest', 'admintest', 'usertest', 'guest_test'];
+        for (const username of userToDelete) {
+            const userId = await getTestUserId(username);
+            if (userId) {
+                await deleteUser(userId);
+            } else {
+                logger.error("Manual Test: Could not find user to delete");
+            }
         }
     } catch (error) {
         logger.error("Manual Test: An unexpected error occurred:", error);

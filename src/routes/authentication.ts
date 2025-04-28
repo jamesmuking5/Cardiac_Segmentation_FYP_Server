@@ -3,8 +3,8 @@
 
 import express, { Request, Response, NextFunction } from "express";
 import passport from "passport";
-import { IUser, IUserSafe, UserRole, createUser, deleteUser } from "../services/database"; // CRUD + Auth functions for User
-import { isAuth, isAuthAndAdmin } from "../services/passportjs"; // Import Passport.js middleware
+import { IUser, IUserSafe, UserRole, createUser, readUser, updateUser, deleteUser } from "../services/database"; // CRUD + Auth functions for User
+import { isAuth, isAuthAndAdmin, isAuthAndUser } from "../services/passportjs"; // Import Passport.js middleware
 import logger from "../services/logger"; // Import logger
 import validateFields from "../utils/field_validation"; // Import reusable validation middleware
 import { validationResult } from 'express-validator'; // Import express-validator for input validation
@@ -198,6 +198,36 @@ router.post("/guest", async (req: Request, res: Response): Promise<void> => {
     return;
   }
 });
+
+// Update route for user information
+router.post("/update",
+  // Validate the input fields for update
+  validateFields,
+  isAuthAndUser, async (req: Request, res: Response): Promise<void> => {
+    try {
+      const userid = String(req.user?._id);
+      const { username, email, phone } = req.body;
+
+      // Update the user information in the database
+      const result = await updateUser(userid, { username, email, phone });
+
+      if (!result.success) {
+        res.status(400).json({ update: false, message: result.message });
+        return;
+      }
+
+      logger.info(`${serviceLocation}: User ${username} updated successfully.`);
+      res.status(200).json({
+        update: true,
+        message: "User information updated successfully.",
+        user: result.user,
+      });
+    }
+    catch (error: unknown) {
+      logger.error(`${serviceLocation}: Error during user update: ${error}`);
+      res.status(500).json({ message: "Internal error during user update." });
+    }
+  });
 
 // Middleware-protected route
 // This route is only accessible to users who are logged in (i.e., authenticated users). It acts as a basic protected endpoint.
