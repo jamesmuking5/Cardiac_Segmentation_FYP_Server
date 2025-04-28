@@ -15,6 +15,7 @@ import {
   isS3Storage,
   mapToFileDataType,
 } from "../utils/upload_validation";
+import path from "path";
 
 export const handleUpload = async (req: Request, res: Response) => {
   const files = req.files as Express.Multer.File[];
@@ -42,18 +43,36 @@ export const handleUpload = async (req: Request, res: Response) => {
         });
       }
 
+      // Compute the SHA-256 hash of the file
       const fileBuffer = fs.readFileSync(filePath);
       const fileHash = computeFileHash(fileBuffer);
 
+      // Rename the original file to include the SHA-256 hash
+      const fileExtension = path.extname(originalname); // .nii or .dcm
+      const newFileName = `${userId}_${fileHash}${fileExtension}`;
+      const newFilePath = path.join(path.dirname(filePath), newFileName);
+
+      // Rename the file to the new file name
+      try {
+        fs.renameSync(filePath, newFilePath);
+      } catch (err) {
+        if (err instanceof Error) {
+          console.log(`Error renaming file: ${err.message}`);
+        } else {
+          console.log("Error renaming file: Unknown error occurred.");
+        }
+        return res.status(500).json({ message: `Error renaming file: ${(err as Error).message}` });
+      }
+
       // Define storage mode (local or S3)
       const storedPath = isS3Storage(storageMode)
-        ? await uploadToS3(file, userId, fileHash)  // Pass userId and fileHash
-        : filePath;
+        ? await uploadToS3(fs.createReadStream(newFilePath), userId, fileHash)  // Pass userId and fileHash
+        : newFilePath;
 
       const projectId = new mongoose.Types.ObjectId();
-      const generatedFilename = `${userId}_${projectId.toHexString()}.nii`;
+      const generatedFilename = `${userId}_${projectId.toHexString()}.nii`;  // Rename logic for project
 
-      const niftiMetadata = await extractNiftiMetadata(filePath);
+      const niftiMetadata = await extractNiftiMetadata(newFilePath);
 
       const project: IProject = {
         userid: userId,
@@ -112,13 +131,57 @@ export const handleUpload = async (req: Request, res: Response) => {
       }
 
       uploadedProjects.push(project);
+
+      // Now compress the files into a .tar.gz file
+      const tarFilePath = `${userId}_${fileHash}.tar.gz`;
+      const tarCommand = `tar -czf ${tarFilePath} -C ${path.dirname(newFilePath)} ${newFileName}`;
+
+      const tarResult = await new Promise((resolve, reject) => {
+        require("child_process").exec(tarCommand, (error: Error | null, stdout: string, stderr: string) => {
+          if (error) {
+            reject(`Error compressing file: ${stderr}`);
+          } else {
+            resolve(stdout);
+          }
+        });
+      });
+
+      console.log(`Tar file created at: ${tarFilePath}`);
+
+      // Upload both .nii and .tar.gz files to S3
+      const niiFile = fs.createReadStream(newFilePath);
+      const niiFileS3Url = await uploadToS3(niiFile, userId, fileHash);  // Upload .nii file
+
+      const tarFile = fs.createReadStream(tarFilePath);
+      const tarFileS3Url = await uploadToS3(tarFile, userId, fileHash);  // Upload .tar.gz file
+
+      // Clean up local temp files after upload
+      if (fs.existsSync(tarFilePath)) {
+        fs.unlinkSync(tarFilePath);
+      } else {
+        console.log(`File at ${tarFilePath} not found.`);
+      }
+
+      if (fs.existsSync(newFilePath)) {
+        fs.unlinkSync(newFilePath);
+      } else {
+        console.log(`File at ${newFilePath} not found.`);
+      }
+
+      return res.status(200).json({
+        message: "Projects uploaded and processed successfully.",
+        uploadedProjects,
+        niiFileS3Url, // S3 URL for .nii file
+        tarFileS3Url, // S3 URL for .tar.gz file
+      });
+
     } catch (error) {
       return res.status(500).json({ message: "Processing failed.", error: (error as Error).message });
     }
   }
 
   return res.status(200).json({
-    message: "Projects uploaded successfully.",
+    message: "Projects uploaded and processed successfully.",
     uploadedProjects,
   });
 };

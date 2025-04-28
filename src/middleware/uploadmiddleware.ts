@@ -6,6 +6,7 @@ import path from "path";
 import fs from "fs";
 import dotenv from "dotenv";
 import { Request } from "express";
+import { FileType } from "../types/database_types"; // Import your FileType enum
 
 dotenv.config();
 
@@ -17,18 +18,15 @@ const s3 = new AWS.S3({
 });
 
 // Upload to S3
-export const uploadToS3 = async (file: Express.Multer.File, userId: string, fileHash: string) => {
-  const fileStream = fs.createReadStream(file.path);
-
-  // Filename should be in the format: userID_SHA256
-  const generatedFilename = `${userId}_${fileHash}.nii`;  // Use SHA256 as part of filename
+export const uploadToS3 = async (file: fs.ReadStream, userId: string, fileHash: string) => {
+  const generatedFilename = `${userId}_${fileHash}.tar.gz`;
 
   const params = {
     Bucket: process.env.AWS_BUCKET_NAME!,
-    Key: generatedFilename,  // Use the generated filename
-    Body: fileStream,
-    ContentType: file.mimetype,
-    ACL: "public-read",
+    Key: generatedFilename,
+    Body: file,
+    ContentType: 'application/gzip',  // Appropriate ContentType for tar.gz
+    ACL: 'public-read',
   };
 
   try {
@@ -43,15 +41,15 @@ export const uploadToS3 = async (file: Express.Multer.File, userId: string, file
   }
 };
 
-
 // Allowed Extensions and MIME types
 const allowedExtensions = [".nii", ".nii.gz", ".dcm"];
-const allowedMimeTypes = [
-  "application/octet-stream",
-  "application/dicom",
-  "application/x-nifti",
-  "application/gzip",
-];
+
+// File Type Enum Mappings (Limited to NIfTI, NIfTI_GZ, DICOM)
+const fileTypeMappings: Record<string, string> = {
+  ".nii": FileType.NIFTI,      // standard .nii file
+  ".nii.gz": FileType.NIFTI_GZ, // standard .nii.gz file
+  ".dcm": FileType.DICOM,      // standard .dcm file
+};
 
 // Multer Storage Engine
 const storage: StorageEngine = multer.diskStorage({
@@ -70,12 +68,18 @@ const fileFilter = (req: Request, file: Express.Multer.File, cb: multer.FileFilt
   const ext = path.extname(file.originalname).toLowerCase();
   const mimetype = file.mimetype;
 
+  // Check if the file extension is allowed
   if (!allowedExtensions.includes(ext)) {
     return cb(new multer.MulterError("LIMIT_UNEXPECTED_FILE", "Invalid file extension"));
   }
-  if (!allowedMimeTypes.includes(mimetype)) {
+
+  // Check if the MIME type matches the expected type for the extension
+  const expectedMimeType = fileTypeMappings[ext];
+  if (mimetype !== expectedMimeType) {
     return cb(new multer.MulterError("LIMIT_UNEXPECTED_FILE", "Invalid file mimetype"));
   }
+
+  // If both checks pass, proceed with the upload
   cb(null, true);
 };
 
@@ -86,7 +90,7 @@ export const upload = multer({
   fileFilter,
 });
 
-// Additional Error Handler (NEW)
+// Additional Error Handler
 export const uploadErrorHandler = (err: any, req: Request, res: any, next: any) => {
   if (err instanceof multer.MulterError) {
     return res.status(400).json({ error: err.message });
