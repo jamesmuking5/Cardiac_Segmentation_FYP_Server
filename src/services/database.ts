@@ -69,12 +69,7 @@ const connectToDatabase = async (): Promise<void> => {
 function toIUserSafe(user: IUserDocument): IUserSafe {
   return {
     _id: String(user._id),
-    username: user.username,
-    email: user.email,
-    phone: user.phone,
-    role: user.role,
-    createdAt: user.createdAt,
-    updatedAt: user.updatedAt,
+    ...user.toObject(), // Convert the Mongoose document to a plain object
   };
 }
 
@@ -237,9 +232,8 @@ const createUser = async (
  *
  * @async
  * @function readUser
- * @param {string} [id] - Optional MongoDB ObjectId string of the specific user to retrieve.
- * @param {Partial<IUser>} [user] - Optional object containing user fields to filter by.
- *                                  Supports `username`, `email`, `phone`, and `role`.
+ * @param {Partial<IUserSafe>} [user] - Optional object containing user fields to filter by.
+ *                                  Supports `_id`, `username`, `email`, `phone`, and `role`.
  *                                  If multiple fields are provided, users matching *any* of them are returned.
  * @returns {Promise<UserCrudResult>} A promise that resolves to a `UserCrudResult` object.
  * - On success (found by ID): `{ success: true, operation: CRUDOperation.READ, user: IUserSafe }` containing the sanitized user.
@@ -248,12 +242,10 @@ const createUser = async (
  * - On error: `{ success: false, operation: CRUDOperation.READ, message: "Error reading user." }`.
  */
 const readUser = async (
-  id?: string,
-  user?: Partial<IUser>
+  user?: Partial<IUserSafe>
 ): Promise<UserCrudResult> => {
-
   const searchConditions: object[] = [];
-  if (id) searchConditions.push({ _id: id }); // Add support for searching by ID
+  if (user?._id) searchConditions.push({ _id: user?._id }); // Add support for searching by ID
   if (user?.username) searchConditions.push({ username: user?.username });
   if (user?.email) searchConditions.push({ email: user?.email });
   if (user?.phone) searchConditions.push({ phone: user?.phone });
@@ -289,7 +281,7 @@ const readUser = async (
       }
 
       // If searching by ID, return a single user in the `user` field
-      if (id) {
+      if (user?._id) {
         const user = foundUsers[0]; // Assume ID is unique
         return {
           success: true,
@@ -306,7 +298,7 @@ const readUser = async (
       };
     }
   } catch (error: unknown) {
-    LogError(error as Error, serviceLocation, `Error reading user with ID: ${id} and error message: ${error}`);
+    LogError(error as Error, serviceLocation, `Error reading user with ID: ${user?._id} and error message: ${error}`);
     return { success: false, operation: CRUDOperation.READ, message: "Error reading user." };
   }
 };
@@ -483,7 +475,7 @@ const deleteUser = async (user_id: string): Promise<UserCrudResult> => {
     // Delete the user
     await existingUser.deleteOne();
     // Check if the user was deleted successfully using readUser function
-    const deletedUserResult = await readUser(user_id);
+    const deletedUserResult = await readUser({ _id: user_id });
     if (deletedUserResult.success && deletedUserResult.users && deletedUserResult.users.length > 0) {
       // This condition should ideally not be met if deleteOne succeeded without error,
       // but it's kept as a safeguard based on the original code's logic.

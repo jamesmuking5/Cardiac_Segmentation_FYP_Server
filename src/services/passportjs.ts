@@ -66,7 +66,7 @@ const configureSessionHandling = () => {
   // Retrieve user from database using stored ID
   passport.deserializeUser(async (id: string, done) => {
     try {
-      const result = await readUser(id);
+      const result = await readUser({_id: id});
 
       if (!result.success) {
         logger.warn(`${serviceLocation}: Deserialization failed for user ID: ${id}`);

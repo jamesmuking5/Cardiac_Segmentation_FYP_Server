@@ -18,17 +18,20 @@ import {
     deleteProjectSegmentationMask,
 } from '../services/database';
 import {
+    IUser,
+    IUserSafe,
     FileType,
     FileDataType,
     IProject,
     IProjectSegmentationMask,
     ComponentBoundingBoxesClass,
+    IUserDocument,
 } from '../types/database_types';
 import logger from '../services/logger';
 
 
 async function createTestUser() {
-    const userData = {
+    const userData: IUser = {
         username: 'dbtest',
         password: 'password123',
         email: 'dbtest@example.com',
@@ -36,13 +39,7 @@ async function createTestUser() {
         role: UserRole.Admin
     };
 
-    const result = await createUser(
-        userData.username,
-        userData.password,
-        userData.email,
-        userData.phone,
-        userData.role
-    );
+    const result = await createUser(userData);
 
     if (result.success) {
         logger.info("Manual Test: User created:", result);
@@ -54,18 +51,17 @@ async function createTestUser() {
 }
 
 async function getTestUserId(username: string) {
-    const result = await readUser(undefined, username);
+    const result = await readUser({ username: username });
 
     if (!result.success || !result.users || result.users.length === 0) {
         logger.error("Manual Test: User read failed or user not found:", result.message || "User not found");
         return null;
     }
-
     return result.users[0]._id;
 }
 
 async function verifyUserCreation(username: string) {
-    const result = await readUser(undefined, username);
+    const result = await readUser({ username: username });
 
     if (!result.success || !result.users || result.users.length === 0) {
         logger.error("Manual Test: User read failed or user not found:",
