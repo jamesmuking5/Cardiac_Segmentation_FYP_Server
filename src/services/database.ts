@@ -69,7 +69,10 @@ const connectToDatabase = async (): Promise<void> => {
 function toIUserSafe(user: IUserDocument): IUserSafe {
   return {
     _id: String(user._id),
-    ...user.toObject(), // Convert the Mongoose document to a plain object
+    username: user.username,
+    email: user.email,
+    phone: user.phone,
+    role: user.role,
   };
 }
 

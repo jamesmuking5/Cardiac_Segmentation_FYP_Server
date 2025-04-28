@@ -152,6 +152,60 @@ Terminates the current user session.
 
 ---
 
+### `POST /update`
+
+Updates an authenticated user's profile information.
+
+**Auth Required**: Yes (Role: User or Admin, not Guest)
+
+**Request Body**:
+
+```json
+{
+  "username": "string",
+  "password": "string",
+  "email": "string",
+  "phone": "string"
+}
+```
+
+**Validation**:
+
+- `username`: 3-20 chars, alphanumeric + underscore. Must be unique.
+- `email`: Valid email format. Must be unique.
+- `phone`: 10-15 digits.
+
+**Success Response (200 OK)**:
+
+```json
+{
+  "update": true,
+  "message": "User information updated successfully.",
+  "user": {
+    "_id": "string",
+    "username": "string",
+    "email": "string",
+    "phone": "string",
+    "role": "user"
+  }
+}
+```
+
+**Error Responses**:
+
+- `400 Bad Request`: Validation failed (e.g., `{"update": false, "errors": [...]}`).
+- `400 Bad Request`: Username or email already exists (e.g., `{"update": false, "message": "Username already exists."}`).
+- `401 Unauthorized`: No active session.
+- `403 Forbidden`: User is authenticated but has Guest role.
+- `500 Internal Server Error`: Server-side issue during update.
+
+**Notes**:
+
+- Password updates are handled through a separate endpoint.
+- Only the user's own profile can be updated with this endpoint.
+
+---
+
 ### `GET /protected`
 
 Test endpoint to verify user authentication.
@@ -245,7 +299,6 @@ All endpoints follow consistent error formats:
     npm start
     ```
     Ensure your `.env` file is configured correctly for your production environment (especially `MONGODB_URI` and secrets).
-
 
 ## License
 
