@@ -4,6 +4,7 @@ import passport from 'passport';
 // import { RedisStore } from 'connect-redis';
 // import { redisClient } from './redis';
 import authenticationRoute from '../routes/authentication';
+import uploadRoute from '../routes/uploadroutes'; 
 import logger from './logger';
 
 // Create express app instance
@@ -43,7 +44,7 @@ app.use(
 //   console.log('User:', req.user || 'Not logged in');
 //   console.log('Full Session:', req.session);
 //   next();
-// });
+// });  
 
 // Initialize Passport.js
 app.use(passport.initialize());
@@ -52,6 +53,7 @@ app.use(passport.session()); // Enable persistent login sessions
 /* Routes */
 // Mount authentication routes
 app.use('/auth', authenticationRoute);
+app.use('/', uploadRoute); // File Upload route
 
 // Root Route
 app.get('/', (req: Request, res: Response) => { // Use _req if req is unused

@@ -16,10 +16,11 @@ import {
   mapToFileDataType,
 } from "../utils/upload_validation";
 import path from "path";
+import { exec } from "child_process";
 
 export const handleUpload = async (req: Request, res: Response) => {
   const files = req.files as Express.Multer.File[];
-  const userId = req.body.userId;
+  const userId = (req.user as any)?._id;
 
   if (!files || files.length === 0) {
     return res.status(400).json({ message: "No files uploaded." });
@@ -35,6 +36,10 @@ export const handleUpload = async (req: Request, res: Response) => {
   for (const file of files) {
     const { originalname, mimetype, size, path: filePath } = file;
 
+    let newFilePath: string | undefined;
+    let jpegOutputDir: string | undefined;
+    let tarFilePath: string | undefined;
+
     try {
       if (!isValidFileFormat(originalname)) {
         return res.status(400).json({
@@ -43,64 +48,96 @@ export const handleUpload = async (req: Request, res: Response) => {
         });
       }
 
-      // Compute the SHA-256 hash of the file
       const fileBuffer = fs.readFileSync(filePath);
       const fileHash = computeFileHash(fileBuffer);
-
-      // Rename the original file to include the SHA-256 hash
-      const fileExtension = path.extname(originalname); // .nii or .dcm
-      const newFileName = `${userId}_${fileHash}${fileExtension}`;
-      const newFilePath = path.join(path.dirname(filePath), newFileName);
-
-      // Rename the file to the new file name
-      try {
-        fs.renameSync(filePath, newFilePath);
-      } catch (err) {
-        if (err instanceof Error) {
-          console.log(`Error renaming file: ${err.message}`);
-        } else {
-          console.log("Error renaming file: Unknown error occurred.");
-        }
-        return res.status(500).json({ message: `Error renaming file: ${(err as Error).message}` });
+      let fileExtension = path.extname(originalname).toLowerCase();
+      if (originalname.toLowerCase().endsWith(".nii.gz")) {
+        fileExtension = ".nii.gz";
       }
+      const newFileName = `${userId}_${fileHash}${fileExtension}`;
+      newFilePath = path.join(path.dirname(filePath), newFileName);
+      fs.renameSync(filePath, newFilePath);
 
-      // Define storage mode (local or S3)
       const storedPath = isS3Storage(storageMode)
-        ? await uploadToS3(fs.createReadStream(newFilePath), userId, fileHash)  // Pass userId and fileHash
+        ? await uploadToS3(fs.createReadStream(newFilePath), userId, fileHash, fileExtension)
         : newFilePath;
 
       const projectId = new mongoose.Types.ObjectId();
-      const generatedFilename = `${userId}_${projectId.toHexString()}.nii`;  // Rename logic for project
+      const generatedFilename = `${userId}_${projectId.toHexString()}.nii`;
 
-      const niftiMetadata = await extractNiftiMetadata(newFilePath);
+      let niftiMetadata: any = {};
+      try {
+        niftiMetadata = await extractNiftiMetadata(newFilePath);
+      } catch (error: any) {
+        console.error("Failed to extract NIfTI metadata:", error.message);
+        niftiMetadata = {};
+      }
 
-      // Declare and assign the variables for S3 URLs before using them
       let niiFileS3Url = "";
       let tarFileS3Url = "";
 
-      // Upload both .nii and .tar.gz files to S3
       const niiFile = fs.createReadStream(newFilePath);
-      niiFileS3Url = await uploadToS3(niiFile, userId, fileHash);  // Upload .nii file
+      niiFileS3Url = await uploadToS3(niiFile, userId, fileHash, fileExtension);
 
-      const tarFilePath = `${userId}_${fileHash}.tar.gz`;
-      const tarCommand = `tar -czf ${tarFilePath} -C ${path.dirname(newFilePath)} ${newFileName}`;
+      // Create a temporary directory for JPEG files
+      jpegOutputDir = path.join(__dirname, '..', 'temp_jpeg', `${userId}_${fileHash}`);
+      fs.mkdirSync(jpegOutputDir, { recursive: true });
 
-      const tarResult = await new Promise((resolve, reject) => {
-        require("child_process").exec(tarCommand, (error: Error | null, stdout: string, stderr: string) => {
-          if (error) {
-            reject(`Error compressing file: ${stderr}`);
-          } else {
-            resolve(stdout);
-          }
+      // Construct the command to execute the Python script to convert to JPEGs
+      const pythonScriptPath = path.join(__dirname, '..', 'python', 'convert_to_jpeg.py');
+      const pythonCommand = `python "${pythonScriptPath}" "${newFilePath}" "${jpegOutputDir}" "${(tarFilePath || "").replace('.tar', '')}" "${userId}" "${projectId.toHexString()}"`;
+      try {
+        console.log("Executing command:", pythonCommand);
+        const { stdout, stderr } = await new Promise<{ stdout: string; stderr: string }>((resolve, reject) => {
+          exec(pythonCommand, (error, stdout, stderr) => {
+            if (error) {
+              console.error("Error executing JPEG conversion script:", error);
+              console.error("JPEG conversion script stderr:", stderr);
+              reject(new Error(`JPEG conversion failed: ${stderr}`));
+            }
+            console.log("JPEG conversion script stdout:", stdout);
+            resolve({ stdout, stderr });
+          });
         });
-      });
 
-      console.log(`Tar file created at: ${tarFilePath}`);
+        // Create the .tar archive of the JPEG directory
+        const tarFileName = `${userId}_${fileHash}_jpegs.tar`;
+        tarFilePath = path.join(__dirname, '..', 'temp_jpeg', tarFileName);
+        const tarCommand = `tar -cf "${tarFilePath}" -C "${jpegOutputDir}" .`;
 
-      const tarFile = fs.createReadStream(tarFilePath);
-      tarFileS3Url = await uploadToS3(tarFile, userId, fileHash);  // Upload .tar.gz file
+        await new Promise((resolve, reject) => {
+          exec(tarCommand, (error, stdout, stderr) => {
+            if (error) {
+              console.error("Error creating tar:", error);
+              console.error("Tar stderr:", stderr);
+              reject(new Error(`Error creating tar: ${stderr}`));
+            }
+            console.log("Tar stdout:", stdout);
+            resolve({ stdout, stderr });
+          });
+        });
 
-      // Now, save project details
+        const tarFile = fs.createReadStream(tarFilePath);
+        tarFileS3Url = await uploadToS3(tarFile, userId, fileHash, '.tar');
+
+        // No need to clean up here as it will be done in the finally block
+
+      } catch (error: any) {
+        console.error("Error during JPEG conversion or archiving:", error.message);
+        tarFileS3Url = "";
+      } finally {
+        // Clean up temporary files
+        if (jpegOutputDir && fs.existsSync(jpegOutputDir)) {
+          fs.rmSync(jpegOutputDir, { recursive: true, force: true });
+        }
+        if (tarFilePath && fs.existsSync(tarFilePath)) {
+          fs.rmSync(tarFilePath, { force: true });
+        }
+        if (newFilePath && fs.existsSync(newFilePath)) {
+          fs.unlinkSync(newFilePath);
+        }
+      }
+
       const project: IProject = {
         userid: userId,
         name: originalname,
@@ -159,28 +196,26 @@ export const handleUpload = async (req: Request, res: Response) => {
 
       uploadedProjects.push(project);
 
-      // Clean up local temp files after upload
-      if (fs.existsSync(tarFilePath)) {
-        fs.unlinkSync(tarFilePath);
-      } else {
-        console.log(`File at ${tarFilePath} not found.`);
-      }
-
-      if (fs.existsSync(newFilePath)) {
-        fs.unlinkSync(newFilePath);
-      } else {
-        console.log(`File at ${newFilePath} not found.`);
-      }
-
       return res.status(200).json({
         message: "Projects uploaded and processed successfully.",
         uploadedProjects,
         niiFileS3Url, // S3 URL for .nii file
-        tarFileS3Url, // S3 URL for .tar.gz file
+        tarFileS3Url, // S3 URL for .tar file
       });
 
     } catch (error) {
       return res.status(500).json({ message: "Processing failed.", error: (error as Error).message });
+    } finally {
+      // Ensure cleanup happens even if there's an error
+      if (jpegOutputDir && fs.existsSync(jpegOutputDir)) {
+        fs.rmSync(jpegOutputDir, { recursive: true, force: true });
+      }
+      if (tarFilePath && fs.existsSync(tarFilePath)) {
+        fs.rmSync(tarFilePath, { force: true });
+      }
+      if (newFilePath && fs.existsSync(newFilePath)) {
+        fs.unlinkSync(newFilePath);
+      }
     }
   }
 
