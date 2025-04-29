@@ -38,7 +38,7 @@ export const handleUpload = async (req: Request, res: Response) => {
 
     let newFilePath: string | undefined;
     let jpegOutputDir: string | undefined;
-    let tarFilePath: string | undefined;
+    let actualTarFilePath: string | undefined;
 
     try {
       if (!isValidFileFormat(originalname)) {
@@ -62,8 +62,8 @@ export const handleUpload = async (req: Request, res: Response) => {
         ? await uploadToS3(fs.createReadStream(newFilePath), userId, fileHash, fileExtension)
         : newFilePath;
 
-      const projectId = new mongoose.Types.ObjectId();
-      const generatedFilename = `${userId}_${projectId.toHexString()}.nii`;
+        const projectId = new mongoose.Types.ObjectId();
+        const generatedFilename = `${userId}_${projectId.toHexString()}${fileExtension}`;
 
       let niftiMetadata: any = {};
       try {
@@ -85,53 +85,45 @@ export const handleUpload = async (req: Request, res: Response) => {
 
       // Construct the command to execute the Python script to convert to JPEGs
       const pythonScriptPath = path.join(__dirname, '..', 'python', 'convert_to_jpeg.py');
-      const pythonCommand = `python "${pythonScriptPath}" "${newFilePath}" "${jpegOutputDir}" "${(tarFilePath || "").replace('.tar', '')}" "${userId}" "${projectId.toHexString()}"`;
+      const pythonCommand = `python "${pythonScriptPath}" "${newFilePath}" "${jpegOutputDir}" "${(actualTarFilePath || "").replace('.tar', '')}" "${userId}" "${projectId.toHexString()}"`;
       try {
-        console.log("Executing command:", pythonCommand);
         const { stdout, stderr } = await new Promise<{ stdout: string; stderr: string }>((resolve, reject) => {
-          exec(pythonCommand, (error, stdout, stderr) => {
+          exec(pythonCommand, { maxBuffer: 1024 * 1024 * 10 }, (error, stdout, stderr) => {
             if (error) {
               console.error("Error executing JPEG conversion script:", error);
               console.error("JPEG conversion script stderr:", stderr);
               reject(new Error(`JPEG conversion failed: ${stderr}`));
             }
             console.log("JPEG conversion script stdout:", stdout);
-            resolve({ stdout, stderr });
-          });
-        });
-
-        // Create the .tar archive of the JPEG directory
-        const tarFileName = `${userId}_${fileHash}_jpegs.tar`;
-        tarFilePath = path.join(__dirname, '..', 'temp_jpeg', tarFileName);
-        const tarCommand = `tar -cf "${tarFilePath}" -C "${jpegOutputDir}" .`;
-
-        await new Promise((resolve, reject) => {
-          exec(tarCommand, (error, stdout, stderr) => {
-            if (error) {
-              console.error("Error creating tar:", error);
-              console.error("Tar stderr:", stderr);
-              reject(new Error(`Error creating tar: ${stderr}`));
+            const tarPathMatch = stdout.match(/TAR_FILE_PATH:(.*)/);
+            if (tarPathMatch && tarPathMatch[1]) {
+              actualTarFilePath = tarPathMatch[1].trim();
             }
-            console.log("Tar stdout:", stdout);
             resolve({ stdout, stderr });
           });
         });
 
-        const tarFile = fs.createReadStream(tarFilePath);
-        tarFileS3Url = await uploadToS3(tarFile, userId, fileHash, '.tar');
+        if (!actualTarFilePath) {
+          console.error("Python script did not output the TAR file path.");
+          tarFileS3Url = "";
+          // Handle the error appropriately
+        } else {
+          const tarFile = fs.createReadStream(actualTarFilePath);
+          tarFileS3Url = await uploadToS3(tarFile, userId, fileHash, '.tar');
+        }
 
-        // No need to clean up here as it will be done in the finally block
+        // No need to construct tarFilePath here anymore
 
       } catch (error: any) {
         console.error("Error during JPEG conversion or archiving:", error.message);
         tarFileS3Url = "";
       } finally {
-        // Clean up temporary files
+        // Clean up based on actual paths if needed
         if (jpegOutputDir && fs.existsSync(jpegOutputDir)) {
           fs.rmSync(jpegOutputDir, { recursive: true, force: true });
         }
-        if (tarFilePath && fs.existsSync(tarFilePath)) {
-          fs.rmSync(tarFilePath, { force: true });
+        if (actualTarFilePath && fs.existsSync(actualTarFilePath)) {
+          fs.rmSync(actualTarFilePath, { force: true });
         }
         if (newFilePath && fs.existsSync(newFilePath)) {
           fs.unlinkSync(newFilePath);
@@ -210,8 +202,8 @@ export const handleUpload = async (req: Request, res: Response) => {
       if (jpegOutputDir && fs.existsSync(jpegOutputDir)) {
         fs.rmSync(jpegOutputDir, { recursive: true, force: true });
       }
-      if (tarFilePath && fs.existsSync(tarFilePath)) {
-        fs.rmSync(tarFilePath, { force: true });
+      if (actualTarFilePath && fs.existsSync(actualTarFilePath)) {
+        fs.rmSync(actualTarFilePath, { force: true });
       }
       if (newFilePath && fs.existsSync(newFilePath)) {
         fs.unlinkSync(newFilePath);
