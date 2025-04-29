@@ -5,11 +5,12 @@
 import express, { Request, Response, NextFunction } from "express";
 import { upload } from "../middleware/uploadmiddleware";
 import { handleUpload } from "../services/upload";
+import { isAuth } from "../services/passportjs";
 
 const router = express.Router();
 
 // Upload route with PUT method
-router.put("/upload", upload.any(), async (req: Request, res: Response, next: NextFunction) => {
+router.put("/upload", isAuth, upload.any(), async (req: Request, res: Response, next: NextFunction) => {
   try {
     await handleUpload(req, res);
   } catch (error) {
