@@ -85,6 +85,13 @@ if __name__ == "__main__":
 
     # Bundle the converted files into a .tar file
     tar_file_base = f"{user_id}_{project_id}_jpegs.tar"
-    tar_file_path = os.path.join(output_dir.replace('temp_jpeg', 'temp_jpeg'), tar_file_base) # Ensure consistent path
+    
+    # Ensure 'temp_jpeg' directory exists
+    output_dir = output_dir.replace('temp_jpeg', 'temp_jpeg')  # This line does nothing — maybe you meant something else?
+    os.makedirs(output_dir, exist_ok=True)
+
+    # Construct the path for the tar file inside the output directory
+    tar_file_path = os.path.join(output_dir, tar_file_base)
+    
     bundle_to_tar(output_dir, tar_file_path)
     print(f"Files converted and bundled into {tar_file_path}")
