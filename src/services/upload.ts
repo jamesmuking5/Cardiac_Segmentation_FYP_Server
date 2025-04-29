@@ -74,6 +74,33 @@ export const handleUpload = async (req: Request, res: Response) => {
 
       const niftiMetadata = await extractNiftiMetadata(newFilePath);
 
+      // Declare and assign the variables for S3 URLs before using them
+      let niiFileS3Url = "";
+      let tarFileS3Url = "";
+
+      // Upload both .nii and .tar.gz files to S3
+      const niiFile = fs.createReadStream(newFilePath);
+      niiFileS3Url = await uploadToS3(niiFile, userId, fileHash);  // Upload .nii file
+
+      const tarFilePath = `${userId}_${fileHash}.tar.gz`;
+      const tarCommand = `tar -czf ${tarFilePath} -C ${path.dirname(newFilePath)} ${newFileName}`;
+
+      const tarResult = await new Promise((resolve, reject) => {
+        require("child_process").exec(tarCommand, (error: Error | null, stdout: string, stderr: string) => {
+          if (error) {
+            reject(`Error compressing file: ${stderr}`);
+          } else {
+            resolve(stdout);
+          }
+        });
+      });
+
+      console.log(`Tar file created at: ${tarFilePath}`);
+
+      const tarFile = fs.createReadStream(tarFilePath);
+      tarFileS3Url = await uploadToS3(tarFile, userId, fileHash);  // Upload .tar.gz file
+
+      // Now, save project details
       const project: IProject = {
         userid: userId,
         name: originalname,
@@ -85,8 +112,8 @@ export const handleUpload = async (req: Request, res: Response) => {
         filesize: size,
         filehash: fileHash,
         basepath: storedPath,
-        originalfilepath: storedPath,
-        extractedfolderpath: "",
+        originalfilepath: niiFileS3Url,
+        extractedfolderpath: tarFileS3Url,
         status: {
           upload: true,
           extract: true,
@@ -131,29 +158,6 @@ export const handleUpload = async (req: Request, res: Response) => {
       }
 
       uploadedProjects.push(project);
-
-      // Now compress the files into a .tar.gz file
-      const tarFilePath = `${userId}_${fileHash}.tar.gz`;
-      const tarCommand = `tar -czf ${tarFilePath} -C ${path.dirname(newFilePath)} ${newFileName}`;
-
-      const tarResult = await new Promise((resolve, reject) => {
-        require("child_process").exec(tarCommand, (error: Error | null, stdout: string, stderr: string) => {
-          if (error) {
-            reject(`Error compressing file: ${stderr}`);
-          } else {
-            resolve(stdout);
-          }
-        });
-      });
-
-      console.log(`Tar file created at: ${tarFilePath}`);
-
-      // Upload both .nii and .tar.gz files to S3
-      const niiFile = fs.createReadStream(newFilePath);
-      const niiFileS3Url = await uploadToS3(niiFile, userId, fileHash);  // Upload .nii file
-
-      const tarFile = fs.createReadStream(tarFilePath);
-      const tarFileS3Url = await uploadToS3(tarFile, userId, fileHash);  // Upload .tar.gz file
 
       // Clean up local temp files after upload
       if (fs.existsSync(tarFilePath)) {
