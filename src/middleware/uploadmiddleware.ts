@@ -8,6 +8,18 @@ import { FileType } from "../types/database_types"; // Import your FileType enum
 
 dotenv.config();
 
+// Function to create the temporary upload directory if it doesn't exist
+const ensureTempUploadDirExists = () => {
+  const tempUploadDir = "src/temp_upload/";
+  if (!fs.existsSync(tempUploadDir)) {
+    fs.mkdirSync(tempUploadDir, { recursive: true });
+    console.log(`Temporary upload directory created at: ${tempUploadDir}`);
+  }
+};
+
+// Call the function when this module is loaded
+ensureTempUploadDirExists();
+
 // Setup AWS S3 if STORAGE_MODE is s3
 let s3: AWS.S3 | null = null;
 if (process.env.STORAGE_MODE === "s3") {
