@@ -1,5 +1,3 @@
-// File: src/middleware/uploadmiddleware.ts
-
 import AWS from "aws-sdk";
 import multer, { StorageEngine } from "multer";
 import path from "path";
@@ -10,23 +8,43 @@ import { FileType } from "../types/database_types"; // Import your FileType enum
 
 dotenv.config();
 
-// Setup AWS S3
-const s3 = new AWS.S3({
-  accessKeyId: process.env.AWS_ACCESS_KEY_ID,
-  secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
-  region: process.env.AWS_REGION,
-});
+// Setup AWS S3 if STORAGE_MODE is s3
+let s3: AWS.S3 | null = null;
+if (process.env.STORAGE_MODE === "s3") {
+  s3 = new AWS.S3({
+    accessKeyId: process.env.AWS_ACCESS_KEY_ID!,
+    secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY!,
+    region: process.env.AWS_REGION!,
+  });
+}
 
-// Upload to S3
-export const uploadToS3 = async (file: fs.ReadStream, userId: string, fileHash: string) => {
-  const generatedFilename = `${userId}_${fileHash}.tar.gz`;
+// Upload to S3 function
+export const uploadToS3 = async (file: fs.ReadStream, userId: string, fileHash: string, fileExtension: string) => {
+  if (!s3) throw new Error("AWS S3 is not configured.");
+
+  const generatedFilename = `source_nifti/${userId}_${fileHash}${fileExtension}`; // Ensure it saves to the 'source_nifti/' prefix.
+
+  let contentType: string;
+  switch (fileExtension) {
+    case '.nii':
+      contentType = 'application/octet-stream';
+      break;
+    case '.nii.gz':
+      contentType = 'application/gzip';
+      break;
+    case '.dcm':
+      contentType = 'application/dicom';
+      break;
+    default:
+      contentType = 'application/octet-stream'; // Fallback to a generic type
+      break;
+  }
 
   const params = {
     Bucket: process.env.AWS_BUCKET_NAME!,
     Key: generatedFilename,
     Body: file,
-    ContentType: 'application/gzip',  // Appropriate ContentType for tar.gz
-    ACL: 'public-read',
+    ContentType: contentType,
   };
 
   try {
@@ -44,17 +62,21 @@ export const uploadToS3 = async (file: fs.ReadStream, userId: string, fileHash: 
 // Allowed Extensions and MIME types
 const allowedExtensions = [".nii", ".nii.gz", ".dcm"];
 
-// File Type Enum Mappings (Limited to NIfTI, NIfTI_GZ, DICOM)
+// File Type Enum Mappings
 const fileTypeMappings: Record<string, string> = {
-  ".nii": FileType.NIFTI,      // standard .nii file
-  ".nii.gz": FileType.NIFTI_GZ, // standard .nii.gz file
-  ".dcm": FileType.DICOM,      // standard .dcm file
+  ".nii": FileType.NIFTI,
+  ".nii.gz": FileType.NIFTI_GZ,
+  ".dcm": FileType.DICOM,
 };
 
-// Multer Storage Engine
+// Multer Storage Engine (Use local storage unless S3 is enabled)
 const storage: StorageEngine = multer.diskStorage({
   destination: (req, file, cb) => {
-    cb(null, "src/temp_upload/");
+    if (process.env.STORAGE_MODE === "local") {
+      cb(null, "src/temp_upload/");
+    } else {
+      cb(null, "src/temp_upload/"); // Temporary folder before S3 upload
+    }
   },
   filename: (req, file, cb) => {
     const userFilename = req.body.filename || path.parse(file.originalname).name;
@@ -63,23 +85,24 @@ const storage: StorageEngine = multer.diskStorage({
   },
 });
 
-// File Filter (Validation)
+// File Filter
 const fileFilter = (req: Request, file: Express.Multer.File, cb: multer.FileFilterCallback) => {
-  const ext = path.extname(file.originalname).toLowerCase();
+  let ext = path.extname(file.originalname).toLowerCase();
+  if (file.originalname.toLowerCase().endsWith(".nii.gz")) {
+    ext = ".nii.gz";
+  }
+
   const mimetype = file.mimetype;
 
-  // Check if the file extension is allowed
   if (!allowedExtensions.includes(ext)) {
     return cb(new multer.MulterError("LIMIT_UNEXPECTED_FILE", "Invalid file extension"));
   }
 
-  // Check if the MIME type matches the expected type for the extension
   const expectedMimeType = fileTypeMappings[ext];
   if (mimetype !== expectedMimeType) {
     return cb(new multer.MulterError("LIMIT_UNEXPECTED_FILE", "Invalid file mimetype"));
   }
 
-  // If both checks pass, proceed with the upload
   cb(null, true);
 };
 
@@ -90,7 +113,7 @@ export const upload = multer({
   fileFilter,
 });
 
-// Additional Error Handler
+// Error Handler for Multer
 export const uploadErrorHandler = (err: any, req: Request, res: any, next: any) => {
   if (err instanceof multer.MulterError) {
     return res.status(400).json({ error: err.message });

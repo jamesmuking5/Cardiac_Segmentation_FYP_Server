@@ -10,7 +10,7 @@ def convert_nifti_to_jpeg(input_file, output_dir, user_id, project_id):
         img = nib.load(input_file)
         data = img.get_fdata()
         os.makedirs(output_dir, exist_ok=True)
-        
+
         # Check if the NIfTI file has 4 dimensions (includes time frames)
         if len(data.shape) == 4:
             # 4D NIfTI: x, y, z (slices), t (frames)
@@ -34,7 +34,7 @@ def convert_dicom_to_jpeg(input_file, output_dir, user_id, project_id):
         ds = pydicom.dcmread(input_file)
         pixel_array = ds.pixel_array
         os.makedirs(output_dir, exist_ok=True)
-        
+
         if len(pixel_array.shape) == 3:
             # Typical multi-frame DICOM has shape (frames, rows, columns)
             for frame_idx in range(pixel_array.shape[0]):
