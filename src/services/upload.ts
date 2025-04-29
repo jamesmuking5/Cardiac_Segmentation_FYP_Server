@@ -62,8 +62,8 @@ export const handleUpload = async (req: Request, res: Response) => {
         ? await uploadToS3(fs.createReadStream(newFilePath), userId, fileHash, fileExtension)
         : newFilePath;
 
-        const projectId = new mongoose.Types.ObjectId();
-        const generatedFilename = `${userId}_${projectId.toHexString()}${fileExtension}`;
+      const projectId = new mongoose.Types.ObjectId();
+      const generatedFilename = `${userId}_${projectId.toHexString()}${fileExtension}`;
 
       let niftiMetadata: any = {};
       try {
@@ -112,8 +112,6 @@ export const handleUpload = async (req: Request, res: Response) => {
           tarFileS3Url = await uploadToS3(tarFile, userId, fileHash, '.tar');
         }
 
-        // No need to construct tarFilePath here anymore
-
       } catch (error: any) {
         console.error("Error during JPEG conversion or archiving:", error.message);
         tarFileS3Url = "";
@@ -152,6 +150,7 @@ export const handleUpload = async (req: Request, res: Response) => {
           width: niftiMetadata.dimensions.width ?? 0,
           height: niftiMetadata.dimensions.height ?? 0,
           slices: niftiMetadata.dimensions.slices ?? 0,
+          frames: niftiMetadata.dimensions.frames ?? 0,
         },
         voxelsize: {
           x: niftiMetadata.voxelsize.x ?? 0,
@@ -187,14 +186,6 @@ export const handleUpload = async (req: Request, res: Response) => {
       }
 
       uploadedProjects.push(project);
-
-      return res.status(200).json({
-        message: "Projects uploaded and processed successfully.",
-        uploadedProjects,
-        niiFileS3Url, // S3 URL for .nii file
-        tarFileS3Url, // S3 URL for .tar file
-      });
-
     } catch (error) {
       return res.status(500).json({ message: "Processing failed.", error: (error as Error).message });
     } finally {
@@ -211,8 +202,5 @@ export const handleUpload = async (req: Request, res: Response) => {
     }
   }
 
-  return res.status(200).json({
-    message: "Projects uploaded and processed successfully.",
-    uploadedProjects,
-  });
+  return res.status(200).json({ message: "Projects uploaded and processed successfully." });
 };
