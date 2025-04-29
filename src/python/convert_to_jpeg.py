@@ -10,23 +10,26 @@ def convert_nifti_to_jpeg(input_file, output_dir, user_id, project_id):
         img = nib.load(input_file)
         data = img.get_fdata()
         os.makedirs(output_dir, exist_ok=True)
+        total_slices = data.shape[2]
+        total_frames = data.shape[3] if len(data.shape) == 4 else 0
 
-        # Check if the NIfTI file has 4 dimensions (includes time frames)
+        print(f"Processing NIfTI file: {input_file} with {total_slices} slices and {total_frames} frames.")
+
         if len(data.shape) == 4:
-            # 4D NIfTI: x, y, z (slices), t (frames)
-            for frame_idx in range(data.shape[3]):  # Frame dimension (t)
-                for slice_idx in range(data.shape[2]):  # Slice dimension (z)
+            for frame_idx in range(data.shape[3]):
+                for slice_idx in range(data.shape[2]):
                     output_path = os.path.join(output_dir, f"{user_id}_{project_id}_{frame_idx}_{slice_idx}.jpg")
                     plt.imsave(output_path, data[:, :, slice_idx, frame_idx], cmap='gray')
-                    print(f"Converted frame {frame_idx}, slice {slice_idx} to JPEG.")
+                # Removed per-slice print for frames
+            print(f"Converted all {total_slices} slices for frame {frame_idx}.")
         else:
-            # 3D NIfTI: x, y, z (slices only, no frames)
-            for slice_idx in range(data.shape[2]):  # Slice dimension (z)
+            for slice_idx in range(data.shape[2]):
                 output_path = os.path.join(output_dir, f"{user_id}_{project_id}_0_{slice_idx}.jpg")
                 plt.imsave(output_path, data[:, :, slice_idx], cmap='gray')
-                print(f"Converted slice {slice_idx} to JPEG (no frames).")
+            print(f"Converted all {total_slices} slices (no frames).")
+        print(f"Successfully converted NIfTI file: {input_file} to JPEGs in {output_dir}")
     except Exception as e:
-        print(f"Error converting NIfTI file {input_file}: {e}")
+        print(f"Error converting NIfTI file {input_file}: {e}", file=sys.stderr)
         sys.exit(1)
 
 def convert_dicom_to_jpeg(input_file, output_dir, user_id, project_id):
@@ -34,33 +37,33 @@ def convert_dicom_to_jpeg(input_file, output_dir, user_id, project_id):
         ds = pydicom.dcmread(input_file)
         pixel_array = ds.pixel_array
         os.makedirs(output_dir, exist_ok=True)
+        num_frames = pixel_array.shape[0] if len(pixel_array.shape) == 3 else 1
+
+        print(f"Processing DICOM file: {input_file} with {num_frames} frames.")
 
         if len(pixel_array.shape) == 3:
-            # Typical multi-frame DICOM has shape (frames, rows, columns)
             for frame_idx in range(pixel_array.shape[0]):
-                # For each frame in a multi-frame DICOM, we use the frame index
-                # as both frame and slice index since there's no separate slice concept
                 slice_idx = frame_idx
                 output_path = os.path.join(output_dir, f"{user_id}_{project_id}_{frame_idx}_{slice_idx}.jpg")
                 plt.imsave(output_path, pixel_array[frame_idx], cmap='gray')
-                print(f"Converted frame {frame_idx}, slice {slice_idx} to JPEG.")
+            print(f"Converted all {num_frames} frames to JPEGs.")
         else:
-            # Single-frame DICOM typically has shape (rows, columns)
-            # Use 0 for both frame and slice index
             output_path = os.path.join(output_dir, f"{user_id}_{project_id}_0_0.jpg")
             plt.imsave(output_path, pixel_array, cmap='gray')
-            print(f"Converted single-frame DICOM to JPEG.")
+            print("Converted single-frame DICOM to JPEG.")
+        print(f"Successfully converted DICOM file: {input_file} to JPEGs in {output_dir}")
     except Exception as e:
-        print(f"Error converting DICOM file {input_file}: {e}")
+        print(f"Error converting DICOM file {input_file}: {e}", file=sys.stderr)
         sys.exit(1)
 
 def bundle_to_tar(output_dir, tar_file):
     try:
-        # Use the tar command to bundle the directory into a .tar file
         subprocess.run(["tar", "-cf", tar_file, "-C", output_dir, "."], check=True)
         print(f"Bundled files into {tar_file}")
+        # Importantly, print the full path to stdout
+        print(f"TAR_FILE_PATH:{os.path.abspath(tar_file)}")
     except subprocess.CalledProcessError as e:
-        print(f"Error creating tarball {tar_file}: {e}")
+        print(f"Error creating tarball {tar_file}: {e}", file=sys.stderr)
         sys.exit(1)
 
 if __name__ == "__main__":
@@ -68,16 +71,20 @@ if __name__ == "__main__":
     output_dir = sys.argv[2]
     tar_file = sys.argv[3]  # Path to the output .tar file
     user_id = sys.argv[4]   # User ID
-    project_id = sys.argv[5]  # Project ID
+    project_id = sys.argv[5] # Project ID
+
+    print(f"Starting conversion of {input_file} for user {user_id}, project {project_id}.")
 
     if input_file.endswith((".nii", ".nii.gz")):
         convert_nifti_to_jpeg(input_file, output_dir, user_id, project_id)
     elif input_file.endswith(".dcm"):
         convert_dicom_to_jpeg(input_file, output_dir, user_id, project_id)
     else:
-        print("Unsupported file type.")
+        print("Unsupported file type.", file=sys.stderr)
         sys.exit(1)
 
     # Bundle the converted files into a .tar file
-    bundle_to_tar(output_dir, tar_file)
-    print(f"Files converted and bundled into {tar_file}")
+    tar_file_base = f"{user_id}_{project_id}_jpegs.tar"
+    tar_file_path = os.path.join(output_dir.replace('temp_jpeg', 'temp_jpeg'), tar_file_base) # Ensure consistent path
+    bundle_to_tar(output_dir, tar_file_path)
+    print(f"Files converted and bundled into {tar_file_path}")
