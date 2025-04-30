@@ -1,4 +1,4 @@
-import AWS from "aws-sdk";
+import  S3  from "aws-sdk/clients/s3";
 import multer, { StorageEngine } from "multer";
 import path from "path";
 import fs from "fs";
@@ -21,9 +21,9 @@ const ensureTempUploadDirExists = () => {
 ensureTempUploadDirExists();
 
 // Setup AWS S3 if STORAGE_MODE is s3
-let s3: AWS.S3 | null = null;
+let s3: S3 | null = null;
 if (process.env.STORAGE_MODE === "s3") {
-  s3 = new AWS.S3({
+  s3 = new S3({
     accessKeyId: process.env.AWS_ACCESS_KEY_ID!,
     secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY!,
     region: process.env.AWS_REGION!,
