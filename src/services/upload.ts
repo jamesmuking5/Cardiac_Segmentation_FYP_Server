@@ -17,6 +17,10 @@ import {
 } from "../utils/upload_validation";
 import path from "path";
 import { exec } from "child_process";
+import logger from "./logger";
+import LogError from "../utils/error_logger";
+
+const serviceLocation = "Upload"
 
 export const handleUpload = async (req: Request, res: Response) => {
   const files = req.files as Express.Multer.File[];
@@ -68,8 +72,8 @@ export const handleUpload = async (req: Request, res: Response) => {
       let niftiMetadata: any = {};
       try {
         niftiMetadata = await extractNiftiMetadata(newFilePath);
-      } catch (error: any) {
-        console.error("Failed to extract NIfTI metadata:", error.message);
+      } catch (error: unknown) {
+        LogError(error as Error, serviceLocation, "Error extracting NIfTI metadata.");
         niftiMetadata = {};
       }
 
@@ -99,11 +103,10 @@ export const handleUpload = async (req: Request, res: Response) => {
         const { stdout, stderr } = await new Promise<{ stdout: string; stderr: string }>((resolve, reject) => {
           exec(pythonCommand, { maxBuffer: 1024 * 1024 * 10 }, (error, stdout, stderr) => {
             if (error) {
-              console.error("Error executing JPEG conversion script:", error);
-              console.error("JPEG conversion script stderr:", stderr);
+              LogError(error as Error, serviceLocation, `Error extracting JPEG conversion script - ${stderr}.`);
               reject(new Error(`JPEG conversion failed: ${stderr}`));
             }
-            console.log("JPEG conversion script stdout:", stdout);
+            logger.info("JPEG conversion script stdout:", stdout);
             const tarPathMatch = stdout.match(/TAR_FILE_PATH:(.*)/);
             if (tarPathMatch && tarPathMatch[1]) {
               actualTarFilePath = tarPathMatch[1].trim();
@@ -113,16 +116,17 @@ export const handleUpload = async (req: Request, res: Response) => {
         });
 
         if (!actualTarFilePath) {
-          console.error("Python script did not output the TAR file path.");
+          LogError(new Error("TAR file path not found in stdout"), serviceLocation, "TAR file path extraction failed.");
           tarFileS3Url = "";
           // Handle the error appropriately
+
         } else {
           const tarFile = fs.createReadStream(actualTarFilePath);
           tarFileS3Url = await uploadToS3(tarFile, userId, fileHash, '.tar', s3KeyPrefix); // Upload TAR to the user's folder
         }
 
-      } catch (error: any) {
-        console.error("Error during JPEG conversion or archiving:", error.message);
+      } catch (error: unknown) {
+        LogError(error as Error, serviceLocation, "Error during JPEG conversion or archiving.");
         tarFileS3Url = "";
       } finally {
         // Clean up based on actual paths if needed
@@ -138,10 +142,10 @@ export const handleUpload = async (req: Request, res: Response) => {
       }
 
       const project: IProject = {
-        userid: userId,
+        userid: String(userId),
         name: projectName || originalname,
         originalfilename: originalname,
-        description: description ||"",
+        description: description || "",
         isSaved: true,
         filename: generatedFilename,
         filetype: mimetype as any,
@@ -150,10 +154,6 @@ export const handleUpload = async (req: Request, res: Response) => {
         basepath: storedPath!,
         originalfilepath: niiFileS3Url,
         extractedfolderpath: tarFileS3Url,
-        status: {
-          upload: true,
-          extract: true,
-        },
         datatype: mapToFileDataType(niftiMetadata.datatype),
         dimensions: {
           width: niftiMetadata.dimensions.width ?? 0,
@@ -168,7 +168,7 @@ export const handleUpload = async (req: Request, res: Response) => {
           t: niftiMetadata.voxelsize.t ?? 0,
         },
       };
-      
+
       const result = await createProject(
         project.userid,
         project.name,
@@ -181,7 +181,6 @@ export const handleUpload = async (req: Request, res: Response) => {
         project.basepath,
         project.originalfilepath,
         project.extractedfolderpath,
-        project.status,
         project.datatype,
         project.dimensions,
         project.voxelsize,
