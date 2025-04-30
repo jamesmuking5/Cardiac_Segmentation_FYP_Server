@@ -3,29 +3,24 @@
 // This module defines the routes for uploading files, including a POST route for handling file uploads and a GET route to inform about the expected HTTP method.
 
 import express, { Request, Response, NextFunction } from "express";
-import { upload } from "../middleware/uploadmiddleware"; // Importing the multer middleware
-import { handleUpload } from "../controllers/uploadcontroller"; // Importing the controller
+import { upload } from "../middleware/uploadmiddleware";
+import { handleUpload } from "../services/upload";
+import { isAuth } from "../services/passportjs";
 
 const router = express.Router();
 
-/**
- * RESTful API route to handle file uploads.
- * This route accepts multiple files and handles them using multer's `upload.any()`.
- */
-router.post("/upload", upload.any(), async (req: Request, res: Response, next: NextFunction) => {
-    try {
-        await handleUpload(req, res);  // Calling the controller method to handle file upload logic
-    } catch (error) {
-        next(error); // Passing errors to the global error handler
-    }
+// Upload route with PUT method
+router.put("/upload", isAuth, upload.any(), async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    await handleUpload(req, res);
+  } catch (error) {
+    next(error);
+  }
 });
 
-/**
- * GET route to inform about the expected HTTP method for file uploads.
- * This route only supports POST requests for file uploads.
- */
+// Informative GET route
 router.get("/upload", (req: Request, res: Response) => {
-    res.send("This route only supports POST for file uploads.");
+  res.send("Use PUT method to upload files.");
 });
 
 export default router;

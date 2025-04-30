@@ -4,6 +4,7 @@ import passport from 'passport';
 import { RedisStore } from 'connect-redis';
 import { redisClient } from './redis';
 import authenticationRoute from '../routes/authentication';
+import uploadRoute from '../routes/uploadroutes'; 
 import logger from './logger';
 import cors from 'cors';
 
@@ -60,12 +61,12 @@ app.use(cors({
 // For logging middleware here
 // This helps verify session state in Redis, especially after login.
 // change from console to logger later~
-app.use((req, res, next) => {
-  console.log('Session ID:', req.sessionID);
-  console.log('User:', req.user || 'Not logged in');
-  console.log('Full Session:', req.session);
-  next();
-});
+// app.use((req, res, next) => {
+//   console.log('Session ID:', req.sessionID);
+//   console.log('User:', req.user || 'Not logged in');
+//   console.log('Full Session:', req.session);
+//   next();
+// });  
 
 // Initialize Passport.js
 app.use(passport.initialize());
@@ -74,6 +75,7 @@ app.use(passport.session()); // Enable persistent login sessions
 /* Routes */
 // Mount authentication routes under '/auth'
 app.use('/auth', authenticationRoute);
+app.use('/', uploadRoute); // File Upload route
 
 // Root Route
 app.get('/', (req: Request, res: Response) => { // Use _req if req is unused

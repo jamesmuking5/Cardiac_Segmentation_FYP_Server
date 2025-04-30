@@ -4,16 +4,21 @@
 import { FileDataType } from "../types/database_types";
 import fs from "fs";
 import crypto from "crypto";
+// import * as nifti from 'nifti-reader-js'; 
 
 /**
- * Validates the file format by checking if it ends with `.nii` or `.nii.gz`.
- * Supports uncompressed and gzipped NIfTI formats.
+ * Validates the file format by checking if it ends with `.nii`, `.nii.gz`, or `.dcm`.
+ * Supports uncompressed and gzipped NIfTI formats as well as DICOM format.
  *
  * @param filename - The name of the file to validate.
  * @returns True if the file format is valid, false otherwise.
  */
 export function isValidFileFormat(filename: string): boolean {
-  return filename.endsWith(".nii") || filename.endsWith(".nii.gz");
+  return (
+    filename.endsWith(".nii") || 
+    filename.endsWith(".nii.gz") || 
+    filename.endsWith(".dcm")
+  );
 }
 
 /**
@@ -55,15 +60,22 @@ export function isS3Storage(storageMode: string): boolean {
  * @returns The corresponding FileDataType enum value.
  */
 export function mapToFileDataType(datatype: string): FileDataType {
-    switch (datatype.toLowerCase()) {
-      case "float32":
-        return FileDataType.FLOAT32;
-      case "uint16":
-        return FileDataType.UINT16;
-      case "uint8":
-        return FileDataType.UINT8;
-      default:
-        return FileDataType.UNKNOWN;
-    }
+  switch (datatype.toLowerCase()) {
+    case "float32":
+      return FileDataType.FLOAT32;
+    case "uint16":
+      return FileDataType.UINT16;
+    case "uint8":
+      return FileDataType.UINT8;
+    case "int16":
+      return FileDataType.INT16;
+    case "int32":
+      return FileDataType.INT32;
+    case "uint32":
+      return FileDataType.UINT32;  
+    case "float64":
+      return FileDataType.FLOAT64;  
+    default:
+      return FileDataType.UNKNOWN;
   }
-  
+}

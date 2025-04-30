@@ -40,7 +40,6 @@ export async function extractNiftiMetadata(niftiPath: string): Promise<INiftiMet
     try {
         // Execute the Python script with the given NIfTI path
         const { stdout } = await execFileAsync('python', [PYTHON_SCRIPT, niftiPath]);
-  
         // Parse and return the metadata JSON output from the Python script
         const parsed: INiftiMetadata = JSON.parse(stdout);
         return parsed;
