@@ -21,6 +21,9 @@ RUN npm run build
 FROM node:18-alpine
 WORKDIR /app
 
+# Set environment variable for production
+env = "REDIS_HOST=redis-oss-cache-f5u69g.serverless.use1.cache.amazonaws.com:6379"
+
 # Copy package files again for production install
 COPY package*.json ./
 
