@@ -22,7 +22,7 @@ FROM node:18-alpine
 WORKDIR /app
 
 # Set environment variable for production
-ENV REDIS_HOST=redis-oss-cache-f5u69g.serverless.use1.cache.amazonaws.com
+ENV REDIS_HOST=redis-node-f5u69g.serverless.use1.cache.amazonaws.com
 
 # Copy package files again for production install
 COPY package*.json ./
