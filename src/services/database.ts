@@ -834,6 +834,7 @@ const createProject = async (
       logger.warn(`Database: Invalid numeric input parameters for project creation: ${negativeNumericInputs.join(", ")}`);
       return { success: false, operation, message: `Invalid numeric input parameters for project creation.` };
     }
+
     // Check that voxelSize inputs are more than 0 if provided
     if (voxelsize) {
       const voxelNumericInputs = [voxelsize.x, voxelsize.y, voxelsize.z, voxelsize.t].filter(input => (input ?? 0) <= 0);
@@ -842,7 +843,12 @@ const createProject = async (
         return { success: false, operation, message: `Invalid voxel size input parameters for project creation.` };
       }
     }
-
+    // If user does not exist, return error
+    const user = await userModel.findById(userid);
+    if (!user) {
+      logger.warn(`Database: User ${userid} does not exist.`);
+      return { success: false, operation, message: `User ${userid} does not exist.` };
+    }
     // Check conflicting fields (name, filehash, originalfilepath, extractedfolderpath, filename) 
     const existingProject = await projectModel.findOne({
       $or: [
