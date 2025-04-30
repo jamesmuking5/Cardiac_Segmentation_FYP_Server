@@ -30,6 +30,9 @@ export const handleUpload = async (req: Request, res: Response) => {
     return res.status(400).json({ message: "Missing userId." });
   }
 
+  const projectName = req.body.projectName;
+  const description = req.body.description;
+
   const uploadedProjects: IProject[] = [];
   const storageMode = process.env.STORAGE_MODE || "local";
 
@@ -39,7 +42,7 @@ export const handleUpload = async (req: Request, res: Response) => {
     let newFilePath: string | undefined;
     let jpegOutputDir: string | undefined;
     let actualTarFilePath: string | undefined;
-    let storedPath: string | undefined; // Declare storedPath here
+    let storedPath: string | undefined;
 
     try {
       if (!isValidFileFormat(originalname)) {
@@ -136,9 +139,9 @@ export const handleUpload = async (req: Request, res: Response) => {
 
       const project: IProject = {
         userid: userId,
-        name: originalname,
+        name: projectName || originalname,
         originalfilename: originalname,
-        description: "",
+        description: description ||"",
         isSaved: true,
         filename: generatedFilename,
         filetype: mimetype as any,
