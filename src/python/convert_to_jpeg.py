@@ -79,8 +79,29 @@ def _normalize_slice(slice_data):
             slice_data = (slice_data - min_val) / (max_val - min_val)
     return slice_data
 
+def convert_dicom_to_jpeg(input_file, output_dir, user_id, project_id):
+    try:
+        ds = pydicom.dcmread(input_file)
+        pixel_array = ds.pixel_array
+        os.makedirs(output_dir, exist_ok=True)
+        num_frames = pixel_array.shape[0] if len(pixel_array.shape) == 3 else 1
 
-# Rest of functions...
+        print(f"Processing DICOM file: {input_file} with {num_frames} frames.")
+
+        if len(pixel_array.shape) == 3:
+            for frame_idx in range(pixel_array.shape[0]):
+                slice_idx = frame_idx
+                output_path = os.path.join(output_dir, f"{user_id}_{project_id}_{frame_idx}_{slice_idx}.jpg")
+                plt.imsave(output_path, pixel_array[frame_idx], cmap='gray')
+            print(f"Converted all {num_frames} frames to JPEGs.")
+        else:
+            output_path = os.path.join(output_dir, f"{user_id}_{project_id}_0_0.jpg")
+            plt.imsave(output_path, pixel_array, cmap='gray')
+            print("Converted single-frame DICOM to JPEG.")
+        print(f"Successfully converted DICOM file: {input_file} to JPEGs in {output_dir}")
+    except Exception as e:
+        print(f"Error converting DICOM file {input_file}: {e}", file=sys.stderr)
+        sys.exit(1)
 
 
 def bundle_to_tar(output_dir, tar_file):
