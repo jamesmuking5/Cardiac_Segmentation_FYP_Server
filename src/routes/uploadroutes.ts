@@ -6,12 +6,16 @@ import express, { Request, Response, NextFunction } from "express";
 import { upload } from "../middleware/uploadmiddleware";
 import { handleUpload } from "../services/upload";
 import { isAuth } from "../services/passportjs";
+import logger from "../services/logger"; // Import Winston Logger
 
+
+const serviceLocation = "API(Upload)";
 const router = express.Router();
 
 // Upload route with PUT method
 router.put("/upload", isAuth, upload.any(), async (req: Request, res: Response, next: NextFunction) => {
   try {
+    logger.info(`${serviceLocation}: Received file upload request from user ${req.user?.username} with id ${req.user?._id}`);
     await handleUpload(req, res);
   } catch (error) {
     next(error);

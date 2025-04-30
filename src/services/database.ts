@@ -69,10 +69,7 @@ const connectToDatabase = async (): Promise<void> => {
 function toIUserSafe(user: IUserDocument): IUserSafe {
   return {
     _id: String(user._id),
-    username: user.username,
-    email: user.email,
-    phone: user.phone,
-    role: user.role,
+    ...user.toObject(), // Convert the Mongoose document to a plain object
   };
 }
 
@@ -244,7 +241,9 @@ const createUser = async (
  * - On success (no users found): `{ success: true, operation: CRUDOperation.READ, users: [], message: "No users found..." }`.
  * - On error: `{ success: false, operation: CRUDOperation.READ, message: "Error reading user." }`.
  */
-const readUser = async (user?: Partial<IUserSafe>): Promise<UserCrudResult> => {
+const readUser = async (
+  user?: Partial<IUserSafe>
+): Promise<UserCrudResult> => {
   const searchConditions: object[] = [];
   if (user?._id) searchConditions.push({ _id: user?._id }); // Add support for searching by ID
   if (user?.username) searchConditions.push({ username: user?.username });
@@ -306,15 +305,15 @@ const readUser = async (user?: Partial<IUserSafe>): Promise<UserCrudResult> => {
 
 /**
  * Updates an existing user's record in the database.
- * The user to update is identified by their ID or username.
+ * The user to update is identified by their current `username`.
  * The `updates` object specifies which fields to change. At least one valid field must be provided for an update to occur.
  * If `password` is provided, it will be hashed before saving.
  * Checks for uniqueness conflicts if `username`, `email`, or `phone` are being changed, ensuring the new value isn't already used by *another* user.
  *
  * @async
  * @function updateUser
- * @param {string | {_id?: string, username?: string}} identifier - Either a string (treated as user ID) or an object with _id and/or username to identify the user.
- * @param {Partial<IUser>} updates - An object containing the fields to update. All properties are optional.
+ * @param {string} username - The current username of the user to update. This is used for the initial lookup.
+ * @param {object} updates - An object containing the fields to update. All properties are optional.
  * @param {string} [updates.username] - The new username.
  * @param {string} [updates.password] - The new plain-text password.
  * @param {string} [updates.email] - The new email address.
@@ -328,50 +327,25 @@ const readUser = async (user?: Partial<IUserSafe>): Promise<UserCrudResult> => {
  * - On other errors: `{ success: false, operation: CRUDOperation.UPDATE, message: "Error updating user." }`.
  */
 const updateUser = async (
-  identifier: string | { _id?: string, username?: string },
-  updates: Partial<IUser>
+  // Identifying parameter
+  username: string,
+  // Updates object
+  updates: {
+    username?: string;
+    password?: string;
+    email?: string;
+    phone?: string;
+    role?: UserRole;
+  }
 ): Promise<UserCrudResult> => {
-  const operation = CRUDOperation.UPDATE;
-
   try {
-    // Construct the query based on the identifier type
-    let query: any;
-    let idType: string;
-
-    if (typeof identifier === 'string') {
-      // If identifier is a string, assume it's an ID
-      query = { _id: identifier };
-      idType = identifier;
-    } else {
-      // If identifier is an object, use _id if provided, otherwise username
-      if (identifier._id) {
-        query = { _id: identifier._id };
-        idType = identifier._id;
-      } else if (identifier.username) {
-        query = { username: identifier.username };
-        idType = identifier.username;
-      } else {
-        // If neither _id nor username is provided, return an error
-        logger.warn(`Database: No valid identifier provided for user update.`);
-        return {
-          success: false,
-          operation,
-          message: "No valid identifier provided for user update."
-        };
-      }
-    }
-
     // Check if the user exists
-    const existingUser = await userModel.findOne(query);
+    const existingUser = await userModel.findOne({ username: username });
     if (!existingUser) {
-      logger.warn(`Database: User with identifier ${idType} does not exist.`);
-      return {
-        success: false,
-        operation,
-        message: `User with identifier ${idType} does not exist.`
-      };
+      logger.warn(`Database: User ${username} does not exist.`);
+      return { success: false, operation: CRUDOperation.UPDATE, message: `User ${username} does not exist.` };
     }
-
+    // NOTE - use user._id from now on instead of username because username be one of the fields being updated.
     // Create update object and track what fields are being updated
     const updateData: Partial<IUser> = {};
     const unchangedFields: string[] = [];
@@ -399,13 +373,7 @@ const updateUser = async (
           username: updates.username,
           _id: { $ne: existingUser._id }, // Exclude current user
         });
-        if (usernameExists) {
-          return {
-            success: false,
-            operation,
-            message: `Username "${updates.username}" is already in use by another user.`
-          };
-        }
+        if (usernameExists) return { success: false, operation: CRUDOperation.UPDATE, message: `Username "${updates.username}" is already in use by another user.`, };
         updateData.username = updates.username;
       }
     }
@@ -422,11 +390,7 @@ const updateUser = async (
         });
 
         if (emailExists) {
-          return {
-            success: false,
-            operation,
-            message: `Email "${updates.email}" is already in use by another user.`
-          };
+          return { success: false, operation: CRUDOperation.UPDATE, message: `Email "${updates.email}" is already in use by another user.`, };
         }
         updateData.email = updates.email;
       }
@@ -444,11 +408,7 @@ const updateUser = async (
         });
 
         if (phoneExists) {
-          return {
-            success: false,
-            operation,
-            message: `Phone "${updates.phone}" is already in use by another user.`
-          };
+          return { success: false, operation: CRUDOperation.UPDATE, message: `Phone "${updates.phone}" is already in use by another user.`, };
         }
         updateData.phone = updates.phone;
       }
@@ -465,33 +425,18 @@ const updateUser = async (
 
     // Return if no fields were updated at all
     if (Object.keys(updateData).length === 0) {
-      const identifierText = typeof identifier === 'string' ? identifier :
-        (identifier._id || identifier.username || 'unknown');
-
-      logger.warn(`Database: No fields to update for user ${identifierText}. Unchanged fields: ${unchangedFields.join(", ")}`);
-      return {
-        success: false,
-        operation,
-        message: `No fields to update for user ${identifierText}.`
-      };
+      logger.warn(`Database: No fields to update for user ${username}. Unchanged fields: ${unchangedFields.join(", ")}`);
+      return { success: false, operation: CRUDOperation.UPDATE, message: `No fields to update for user ${username}.`, };
     }
 
     // Perform the update
     const updatedUser = existingUser.set(updateData);
     await updatedUser.save();
-
-    logger.info(`Database: User ${existingUser._id} updated successfully. Updated fields: ${Object.keys(updateData).join(", ")}`);
-    return {
-      success: true,
-      operation,
-      user: toIUserSafe(updatedUser)
-    };
+    logger.info(`Database: User ${username} updated successfully. Updated fields: ${Object.keys(updateData).join(", ")}`);
+    return { success: true, operation: CRUDOperation.UPDATE, user: toIUserSafe(updatedUser) };
   } catch (error: unknown) {
-    const identifierText = typeof identifier === 'string' ? identifier :
-      (identifier._id || identifier.username || 'unknown');
-
-    LogError(error as Error, serviceLocation, `Error updating user ${identifierText}.`);
-    return { success: false, operation, message: "Error updating user." };
+    LogError(error as Error, serviceLocation, `Error updating user ${username}.`);
+    return { success: false, operation: CRUDOperation.UPDATE, message: "Error updating user." };
   }
 };
 
@@ -834,7 +779,6 @@ const createProject = async (
       logger.warn(`Database: Invalid numeric input parameters for project creation: ${negativeNumericInputs.join(", ")}`);
       return { success: false, operation, message: `Invalid numeric input parameters for project creation.` };
     }
-
     // Check that voxelSize inputs are more than 0 if provided
     if (voxelsize) {
       const voxelNumericInputs = [voxelsize.x, voxelsize.y, voxelsize.z, voxelsize.t].filter(input => (input ?? 0) <= 0);
@@ -843,12 +787,7 @@ const createProject = async (
         return { success: false, operation, message: `Invalid voxel size input parameters for project creation.` };
       }
     }
-    // If user does not exist, return error
-    const user = await userModel.findById(userid);
-    if (!user) {
-      logger.warn(`Database: User ${userid} does not exist.`);
-      return { success: false, operation, message: `User ${userid} does not exist.` };
-    }
+
     // Check conflicting fields (name, filehash, originalfilepath, extractedfolderpath, filename) 
     const existingProject = await projectModel.findOne({
       $or: [
