@@ -30,11 +30,11 @@ if (process.env.STORAGE_MODE === "s3") {
   });
 }
 
-// Upload to S3 function
-export const uploadToS3 = async (file: fs.ReadStream, userId: string, fileHash: string, fileExtension: string) => {
+// Modified Upload to S3 function to include a key prefix
+export const uploadToS3 = async (file: fs.ReadStream, userId: string, fileHash: string, fileExtension: string, keyPrefix: string = "") => {
   if (!s3) throw new Error("AWS S3 is not configured.");
 
-  const generatedFilename = `source_nifti/${userId}_${fileHash}${fileExtension}`; // Ensure it saves to the 'source_nifti/' prefix.
+  const generatedFilename = `${keyPrefix}${userId}_${fileHash}${fileExtension}`; // Include the keyPrefix
 
   let contentType: string;
   switch (fileExtension) {

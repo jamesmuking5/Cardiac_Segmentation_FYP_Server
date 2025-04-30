@@ -39,6 +39,7 @@ export const handleUpload = async (req: Request, res: Response) => {
     let newFilePath: string | undefined;
     let jpegOutputDir: string | undefined;
     let actualTarFilePath: string | undefined;
+    let storedPath: string | undefined; // Declare storedPath here
 
     try {
       if (!isValidFileFormat(originalname)) {
@@ -58,10 +59,6 @@ export const handleUpload = async (req: Request, res: Response) => {
       newFilePath = path.join(path.dirname(filePath), newFileName);
       fs.renameSync(filePath, newFilePath);
 
-      const storedPath = isS3Storage(storageMode)
-        ? await uploadToS3(fs.createReadStream(newFilePath), userId, fileHash, fileExtension)
-        : newFilePath;
-
       const projectId = new mongoose.Types.ObjectId();
       const generatedFilename = `${userId}_${projectId.toHexString()}${fileExtension}`;
 
@@ -75,9 +72,18 @@ export const handleUpload = async (req: Request, res: Response) => {
 
       let niiFileS3Url = "";
       let tarFileS3Url = "";
+      let s3KeyPrefix = "";
+
+      if (isS3Storage(storageMode)) {
+        s3KeyPrefix = `source_nifti/${userId}/`; // Create the folder prefix
+        niiFileS3Url = await uploadToS3(fs.createReadStream(newFilePath), userId, fileHash, fileExtension, s3KeyPrefix); // Upload original
+        storedPath = `s3://${process.env.AWS_BUCKET_NAME}/${s3KeyPrefix}`; // Set basepath to the S3 folder
+      } else {
+        storedPath = newFilePath; // For local storage
+      }
 
       const niiFile = fs.createReadStream(newFilePath);
-      niiFileS3Url = await uploadToS3(niiFile, userId, fileHash, fileExtension);
+      niiFileS3Url = await uploadToS3(niiFile, userId, fileHash, fileExtension, s3KeyPrefix); // Re-upload for originalfilepath
 
       // Create a temporary directory for JPEG files
       jpegOutputDir = path.join(__dirname, '..', 'temp_jpeg', `${userId}_${fileHash}`);
@@ -109,7 +115,7 @@ export const handleUpload = async (req: Request, res: Response) => {
           // Handle the error appropriately
         } else {
           const tarFile = fs.createReadStream(actualTarFilePath);
-          tarFileS3Url = await uploadToS3(tarFile, userId, fileHash, '.tar');
+          tarFileS3Url = await uploadToS3(tarFile, userId, fileHash, '.tar', s3KeyPrefix); // Upload TAR to the user's folder
         }
 
       } catch (error: any) {
@@ -138,7 +144,7 @@ export const handleUpload = async (req: Request, res: Response) => {
         filetype: mimetype as any,
         filesize: size,
         filehash: fileHash,
-        basepath: storedPath,
+        basepath: storedPath!,
         originalfilepath: niiFileS3Url,
         extractedfolderpath: tarFileS3Url,
         status: {
@@ -159,7 +165,7 @@ export const handleUpload = async (req: Request, res: Response) => {
           t: niftiMetadata.voxelsize.t ?? 0,
         },
       };
-
+      
       const result = await createProject(
         project.userid,
         project.name,
