@@ -173,6 +173,7 @@ export const handleUpload = async (req: Request, res: Response) => {
         project.userid,
         project.name,
         project.originalfilename,
+        project.description,
         project.isSaved,
         project.filename,
         project.filetype,
