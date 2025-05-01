@@ -13,12 +13,19 @@ try {
   logger.error(`${serviceLocation}: Failed to load environment variables. Error: ${error instanceof Error ? error.message : 'Unknown error'}`);
   LogError(error as Error, serviceLocation, 'Error loading environment variables.');
 }
+// Check if using AWS ElastiCache Redis
+const redisAWS = process.env.REDIS_AWS === 'true' ? true : false;
+let redisUrl = `redis://${process.env.REDIS_HOST}:${process.env.REDIS_PORT}`; // Use REDIS_URL if provided
+if (redisAWS) {
+  redisUrl = `rediss://${process.env.REDIS_HOST}:${process.env.REDIS_PORT}`;
+}
 
 // Create Redis client with retry strategy
 const redisClient = createClient({
-  url: `redis://${process.env.REDIS_HOST || 'localhost'}:${process.env.REDIS_PORT || '6379'}`,
+  url: redisUrl,
   password: process.env.REDIS_PASSWORD || undefined,
   socket: {
+    tls: process.env.REDIS_TLS === 'true',
     reconnectStrategy: (retries) => {
       if (retries > 5) {
         logger.error(`${serviceLocation}: Exceeded maximum retry attempts.`);

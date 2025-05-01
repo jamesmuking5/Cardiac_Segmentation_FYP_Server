@@ -139,7 +139,7 @@ export interface IProject {
     // User inputs
     name: string; // Name of the project
     originalfilename: string;
-    description?: string;
+    description: string;
     isSaved: boolean; // Indicates if the project is saved in the database
     // File properties
     filename: string; // Server rename - e.g., userid_projid.nii - use new mongoose.Types.ObjectId() to pregenerate before creating document in DB

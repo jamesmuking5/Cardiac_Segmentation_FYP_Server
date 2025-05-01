@@ -708,6 +708,7 @@ projectSegmentationMaskSchema.index({ projectid: 1 });
  * @param {string} userid - The ID of the user creating the project.
  * @param {string} name - The name for the new project (must be unique for this user).
  * @param {string} originalfilename - The original name of the uploaded file.
+ * @param {string} description - A user-provided description for the project (optional).
  * @param {boolean} isSaved - Indicates if the file should be saved (true) or not (false).
  * @param {string} filename - The server-generated unique filename, preferably using the format `userid_filehash.nii` as ObjectId has not been generated yet.
  * @param {FileType} filetype - The MIME type of the uploaded file.
@@ -737,6 +738,7 @@ const createProject = async (
   userid: string,
   name: string, // User-given name of the project (must be unique for the user)
   originalfilename: string, // The original name of the file when uploaded
+  description: string, // User-given description of the project (optional)
   isSaved: boolean, // Indicates if the file should be saved (true) or not (false)
   filename: string, // server generated filename in the format of userid_filehash.nii (e.g., 1234567890_2630fcede25328c13a15c4dfe6376c068201eb1f8d871736cd8197c2b1463ed3.nii)
   filetype: FileType, // MIME type of the file (e.g., image/nifti, image/dicom) - should be detected by server
@@ -748,7 +750,6 @@ const createProject = async (
   datatype: FileDataType, // Data type of the image (e.g., uint8, float32) - should be detected by server
   dimensions: { width: number; height: number; slices: number; frames?: number },
   voxelsize?: { x: number; y: number; z?: number; t?: number }, // Optional physical voxel dimensions (e.g., x, y, z, t dimensions) - should be detected by server
-  description?: string, // User-given description of the project (optional)
 ): Promise<ProjectCrudResult> => {
   const operation = CRUDOperation.CREATE;
   try {
@@ -815,6 +816,7 @@ const createProject = async (
       userid: userid,
       name: name,
       originalfilename: originalfilename,
+      description: description, // Optional
       isSaved: isSaved,
       filename: filename,
       filetype: filetype,
@@ -826,7 +828,6 @@ const createProject = async (
       datatype: datatype,
       dimensions: dimensions,
       voxelsize: voxelsize, // Optional
-      description: description, // Optional
     });
     // Save the new project to the database
     await newProject.save();
