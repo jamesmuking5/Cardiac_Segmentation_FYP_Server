@@ -188,6 +188,7 @@ export const handleUpload = async (req: Request, res: Response) => {
       );
 
       if (!result.success) {
+        LogError(new Error(result.message), serviceLocation, "Error creating project in database.");
         return res.status(500).json({
           success: false,
           error: result?.message || "An unknown error occurred.",
