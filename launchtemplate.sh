@@ -7,7 +7,6 @@ export ECR_REPOSITORY_NAME="cardiac_segmentation_fyp_server"
 export IMAGE_TAG="latest"
 export CONTAINER_NAME="my-node-app-container"
 export APP_PORT="3000"
-export HOST_PORT="80"
 
 export REDIS_AWS="true"
 export REDIS_HOST="valkey-node-1-dadwqb.serverless.apse1.cache.amazonaws.com"
@@ -32,7 +31,7 @@ docker stop $CONTAINER_NAME || true
 docker rm $CONTAINER_NAME || true
 
 docker run -d \
-    -p $HOST_PORT:$APP_PORT \
+    -p $APP_PORT:$APP_PORT \
     -e REDIS_AWS=$REDIS_AWS \
     -e REDIS_HOST=$REDIS_HOST \
     -e REDIS_PORT=$REDIS_PORT \
