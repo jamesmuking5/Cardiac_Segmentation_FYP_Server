@@ -27,4 +27,9 @@ router.get("/upload", (req: Request, res: Response) => {
   res.send("Use PUT method to upload files.");
 });
 
+
+// Get project routes?
+// Get project information routes?
+// Get mask routes?
+
 export default router;

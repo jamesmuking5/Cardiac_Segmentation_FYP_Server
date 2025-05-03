@@ -8,6 +8,8 @@ VisHeart is a backend server built with Node.js and Express.js, utilizing TypeSc
 
 This project is a Node.js backend application built with TypeScript. It serves as an API for managing user accounts (registration, login with password hashing, guest access), handling file uploads (specifically NIfTI medical image files, `.nii` or `.nii.gz`), extracting metadata from these files using an integrated Python script, and interacting with a MongoDB database via Mongoose to store user and project information. It uses Express.js for routing and middleware. File storage can be configured for local disk or AWS S3.
 
+The GPU-accelerated server can be deployed on a cloud platform or locally, and the source code can be accessed at the [VisHeart GitHub Repository](https://github.com/jamesmuking5/visheart-inference-gpu).
+
 ## Authentication API
 
 Provides endpoints for user registration, session management, and role-based access control.
