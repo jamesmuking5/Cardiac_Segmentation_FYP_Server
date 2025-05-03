@@ -20,9 +20,6 @@ try {
   process.exit(1); // Fatal - exit if critical error occurs
 }
 
-// Get environment type
-const envType = process.env.NODE_ENV || 'development'; // Default to 'development' if not set
-
 // Import necessary modules AFTER dotenv
 import { app } from './services/express_app'; // Import the configured Express app
 import LogError from './utils/error_logger'; // Import error logging utility
