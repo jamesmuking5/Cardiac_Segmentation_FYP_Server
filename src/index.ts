@@ -24,7 +24,7 @@ try {
 import { app } from './services/express_app'; // Import the configured Express app
 import LogError from './utils/error_logger'; // Import error logging utility
 import { connectToDatabase } from './services/database'; // Import DB connection function
-import { initAndRefreshAuth, stopTokenRefresh } from './services/gpu_auth_client'; // Import GPU auth client functions
+import { initAndRefreshAuth, stopTokenRefresh, checkGpuStatusOnInitialization } from './services/gpu_auth_client'; // Import GPU auth client functions
 
 // Get PORT from environment variables (now guaranteed to be loaded)
 const PORT = process.env.PORT || 3000;
@@ -38,6 +38,9 @@ const PORT = process.env.PORT || 3000;
     //Initialize GPU Server Authentication
     initAndRefreshAuth();
     logger.info(`${serviceLocation}: GPU Authentication client initialized and refresh scheduled.`);
+    
+    // Check GPU status on initialization
+    await checkGpuStatusOnInitialization();
 
     // Connect to Redis
     await connectRedis();
@@ -59,7 +62,6 @@ const PORT = process.env.PORT || 3000;
     // Schedule the guest cleanup job (if applicable)
     await scheduleGuestCleanup();
     logger.info(`${serviceLocation}: Guest cleanup job scheduled.`);
-
 
     // Graceful Shutdown Logic 
     const signals: NodeJS.Signals[] = ['SIGTERM', 'SIGINT'];
