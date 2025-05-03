@@ -4,7 +4,9 @@ import passport from 'passport';
 import { RedisStore } from 'connect-redis';
 import { redisClient } from './redis';
 import authenticationRoute from '../routes/authentication';
-import uploadRoute from '../routes/uploadroutes'; 
+import uploadRoute from '../routes/uploadroutes';
+import debugRoute from '../routes/debug_routes';
+import gpuStatusRoute from '../routes/gpu_status';
 import logger from './logger';
 import cors from 'cors';
 
@@ -20,6 +22,11 @@ const redisStore = new RedisStore({
   client: redisClient,
   prefix: 'visheart:',
 });
+
+
+// Get environment type
+const envType = process.env.NODE_ENV || 'development'; // Default to 'development' if not set
+
 
 // Configure express-session with Redis store
 // Note: Ensure SESSION_SECRET is loaded before this runs (e.g., via dotenv in index.ts)
@@ -58,30 +65,31 @@ app.use(cors({
   credentials: true, // Allow credentials (cookies) to be sent
 }));
 
-// For logging middleware here
-// This helps verify session state in Redis, especially after login.
-// change from console to logger later~
-// app.use((req, res, next) => {
-//   console.log('Session ID:', req.sessionID);
-//   console.log('User:', req.user || 'Not logged in');
-//   console.log('Full Session:', req.session);
-//   next();
-// });  
 
 // Initialize Passport.js
 app.use(passport.initialize());
 app.use(passport.session()); // Enable persistent login sessions
 
 /* Routes */
+// Root Route
+app.get('/', (req: Request, res: Response) => { // Use _req if req is unused
+  logger.info('Root route accessed');
+  res.json({ message: 'Welcome to the VisHeart API!' });
+});
+
 // Mount authentication routes under '/auth'
 app.use('/auth', authenticationRoute);
 app.use('/', uploadRoute); // File Upload route
 
-// Root Route
-app.get('/', (req: Request, res: Response) => { // Use _req if req is unused
-  logger.info('Root route accessed');
-  res.send('Hello, TypeScript Server!');
-});
+
+// Debug Route
+if (envType === 'development') {
+  app.use(debugRoute); // Mount debug routes only in development mode
+  logger.info('Debug routes mounted for development environment');
+}
+
+// Status Routes (mount under '/status')
+app.use('/status', gpuStatusRoute); // Mount GPU status routes
 
 // Export the configured app instance
 export { app };
