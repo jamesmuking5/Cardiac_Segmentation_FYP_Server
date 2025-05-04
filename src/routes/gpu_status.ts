@@ -4,7 +4,7 @@ import express, { Request, Response } from "express";
 import axios from "axios"; // Import axios for HTTP requests
 
 // Import the middleware to require GPU auth token
-import { requireGpuAuthToken } from "../middleware/gpuauthmiddleware";
+import { injectGpuAuthToken } from "../middleware/gpuauthmiddleware";
 import LogError from "../utils/error_logger";
 import logger from "../services/logger";
 const router = express.Router();
@@ -37,7 +37,7 @@ function isAxiosErrorLike(error: any): error is AxiosErrorLike {
 
 // Returns if Cloud GPU is available
 router.get("/gpu-sample-image",
-    requireGpuAuthToken,
+    injectGpuAuthToken,
     async (req: Request, res: Response): Promise<void> => {
         // Make authenticated request to the GPU server
         try {
