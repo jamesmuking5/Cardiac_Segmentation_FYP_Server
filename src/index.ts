@@ -26,8 +26,9 @@ import LogError from './utils/error_logger'; // Import error logging utility
 import { connectToDatabase } from './services/database'; // Import DB connection function
 import { initAndRefreshAuth, stopTokenRefresh, checkGpuStatusOnInitialization } from './services/gpu_auth_client'; // Import GPU auth client functions
 
-// Get PORT from environment variables (now guaranteed to be loaded)
-const PORT = process.env.PORT || 3000;
+// Get serving host and port from environment variables
+const HOST = process.env.HOST || 'localhost'; // Default to localhost if not set
+const PORT = parseInt(process.env.PORT || '3000', 10);
 
 // Connect to MongoDB and start server
 (async (): Promise<void> => {
@@ -55,8 +56,8 @@ const PORT = process.env.PORT || 3000;
     logger.info(`${serviceLocation}: Database connected.`);
 
     // Start the Express server listener and assign to the server variable
-    server = app.listen(PORT, () => { // Assign to the outer scope 'server' variable
-      logger.info(`${serviceLocation}: Server running at http://localhost:${PORT}`);
+    server = app.listen(PORT, HOST, () => { // Now PORT is definitely a number
+      logger.info(`${serviceLocation}: Server running at http://${HOST}:${PORT}`);
     });
 
     // Schedule the guest cleanup job (if applicable)
@@ -104,7 +105,7 @@ const PORT = process.env.PORT || 3000;
   }
 })().catch((error: unknown) => {
   logger.error(`${serviceLocation}: UNHANDLED CRITICAL ERROR in top-level async execution:`, error);
-  process.exit(1); // Exit if the IIAFE itself fails critically
+  process.exit(1); // Exit if fails critically
 });
 
 // Note: The `export const app = express();` line is removed from here.
