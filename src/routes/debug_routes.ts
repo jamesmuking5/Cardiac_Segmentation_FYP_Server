@@ -45,13 +45,14 @@ router.get('/start-bbox-inferencing', /*isAuth,*/ injectGpuAuthToken, async (req
     logger.warn("DEBUG: Starting bbox inferencing..."); // Log the start of the process
     // Create sample job data
     const uuid = uuidv4(); // Generate a unique UUID for the job
-    const url = "https://devel-visheart-s3-bucket.s3.ap-southeast-1.amazonaws.com/source_nifti/test-folder-dont-delete/smalltarsample.tar?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Content-Sha256=UNSIGNED-PAYLOAD&X-Amz-Credential=ASIAQB4Y5V67VM7VJVOC%2F20250504%2Fap-southeast-1%2Fs3%2Faws4_request&X-Amz-Date=20250504T105403Z&X-Amz-Expires=10000&X-Amz-Security-Token=IQoJb3JpZ2luX2VjEGsaDmFwLXNvdXRoZWFzdC0xIkYwRAIgK8FVARAaP3WSoSF2%2BMJY2ztdJNVpee9vCaC9wdWKwUcCIBy2rGID8wEUkLLyUHdbuuN0Ej1ROhsOhsfrHYWAKPHhKskFCBQQABoMMDA0MDc4ODA5MDIzIgwd8Xqlb4dAunVE5SgqpgXFs%2B1ksXKMQqz5g%2Fb3f7PK8X0t%2Fjr5kmUhZZ1w2H30aRKoWw5ksEDke%2FVaIEqGa1MLxdO1pv61INnBucGjF7sLVE1o%2BRi0xrXDBiCSJ%2BKodNwUD2vbe9IZpm8FPu6zltuCgTOWcrVYfhSJugEfX0JgMEZULhAZ1hJBFFvIMqhWnNty1yDItIGMjD6b9tsl%2BX7GWHqtXMll%2BeWYWH4%2FiTxOTFZgUTP8fHaJhi72aJLlejZmxYA4Y0M%2BG579VqVZSKjNYdl7UFHf0RYfvOeuYGAgGdnE0%2BZUyupxiWoXtlcqNMnXXFbYCmWEZ2ddTl9R7R4uDKsvJjtgtMzSpjmuL6sYrYiWdzO%2F2aiD%2FhEFTqSOKyq1QLzFwCcMOKtcDDa8A%2Fes67slhw7BWLSzj8UDk9vQp07nKpKApn%2FHvghMKCL3HGrMyrfhOgQcHiOW2Zl0%2FsEskrKwbo7Gd9qR4qQHY6BIVb8Scbv%2BsBZiup0weqSqmaq2MNoEQu%2BloUN5Cy5CEsMa2m84fm9zgk%2B%2BnmzsrZeFDzpNkL%2B1E%2BTMwNeiJQCSl00AxVpvqMb2TsdsDH0Us8c48InaLq6bV1A8d%2BdVlKb4dSrKOTXyUaWFCdhNKHP01%2B9yUF4%2F9ZRl4j19LM6Vz8LzSnOrGepkoWBVNUf9gzGhg9ayS9PwMSOQ92o%2BOx%2FTuzGYyF99KAQMCsWYgwn1xabfuQu4KRlG%2BkZgd8CB7OvenVwEDjBn0zNUtLG4lJzyerfIVzzOTkLBqY4xgy3eSEfdFuw%2BS6cC9bpbPxsUyew4BbDBtpLU1MK7IgeuWJJjvrvm%2BoZwCMuC0uqsOrM6112jcScQCT2ohgNEHsOz3o0Kunm0auY66o1XN%2FYE7LM38120BdoKd%2Fdm3Bfk79NwyowsfFqBazowwo7dwAY6swHFe8Q9dUctlyEHs2uZ2tpWOi%2Bv72v%2F2LD4%2BpMQBQv3JO%2FKwfwd%2B%2B2tLUOBN59i9QdODtmd2K23clS3nEe%2B3H%2FFMP3rG7eHC4IOO4faNbhkj2emgtE7hjHQyzO8JuPkNA67aObLoBC3st2JMdpunHuNDZiEqpAjjWykjWGy4HgFfI%2BrRerg0Dtg9wZJQCiyvojMNW8YAR2RMQwHNJNqe3dqymjRE%2BXZ0TKJam%2FZqOODf4ulIQ%3D%3D&X-Amz-Signature=5d74b5d4c12343217ee67cb6d83dacf345b7046b2b5daf380b9efee254f19fe7&X-Amz-SignedHeaders=host&x-amz-checksum-mode=ENABLED&x-id=GetObject"; // Presigned URL for the source NIfTI file
+    const url = "https://devel-visheart-s3-bucket.s3.ap-southeast-1.amazonaws.com/source_nifti/test-folder-dont-delete/smaltarsample.tar?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Content-Sha256=UNSIGNED-PAYLOAD&X-Amz-Credential=ASIAQB4Y5V67QHZAMQHH%2F20250504%2Fap-southeast-1%2Fs3%2Faws4_request&X-Amz-Date=20250504T133649Z&X-Amz-Expires=10000&X-Amz-Security-Token=IQoJb3JpZ2luX2VjEG0aDmFwLXNvdXRoZWFzdC0xIkcwRQIhALKexDOY8PuMNY8KJRCz%2FvaRs4byuuUokcATKhGZXd6zAiAYYZkyu7qZEFN0SvB0D%2F3OUtkM3OqzMMDzYrtj7TvITCrJBQgWEAAaDDAwNDA3ODgwOTAyMyIMK%2FUUro7ONJ0mpyjvKqYFuCCbgBDjemN%2F82n8oNN2rXu7ybzmSinlnYMJjphid%2BYTg%2Bf3P9doUtKPO9FGoVaPu%2FoAps0YjQifw%2FJ4ZNjcc7nsWaYI4Kd%2FsPMFtlDfW3KmMdESTjzyb08Av%2FCLGmzQO0EIkd0%2B5SHKImnWcFOZMGqqLXRmoIskScnc6TZJmMxzFetr5dLcyTjXNGcrqwl%2B8W1AF7ZcrIL6Q5733G02bdHJfE5fJReE97z8B%2Ft5YpppSNmugaazJ1tNCLdVcs0hUE5BbdwGr1V5mASWnjyduG6KXFrOdepy%2BnRZOuUlSGPPUCJ7XkOBP8WmX0s5MHX3clPXp2jd8sIQK0jlWO8I0z8Pv5UmIxcKEf1fWbFfoIxba3QYld87t4%2FCozmPeQYvfPNOg2G1hRAAkgvshE2XW9etIflZOCWzA8LBawlRZU0%2BARXHpl1ubrpfMRYEcNtOg6%2BzIBRlpShOoKptgI032U0QvnISXJuK7tWpJzfXZZ1axcS6BiWB%2BqE3TJJRWJc%2F%2Brmz%2FE2n5OobSrWLoSvrK89DBI5IvPhEjbvVt9N9BN91C5cSoQwQYQ4mv0t7sb8%2FcBYGxHy%2F7NC8xpbgUFUCyJonr3FUHoP18ZVikxUGCTLdJGmigVrQY93XYMRg7s6MMDu5KiYcSKp4XHlIbb8V9yGm%2B%2FN%2FXax5kvhwOzHKCu8uzUHIKCQuYT%2FH6jnem3jO%2FQFQ8KrgvfA6oMMYyzE%2FaoXnNxYFfnRNFNu%2F2oC8ug36kUhZ6o6j8BG5EoXj69YccvCs9xyzJ01syUYkzngit7CgYQRA7dbfjF79sFpUc%2FVyTJu0zhrr%2FRE7XJ4amyMfPrvHCdrK2PoN9NA0eum3LIrWjxld9we9FRhli6189pxVNstqTIArMO6I1Sg4qvv8Ai5IFqJBMLvE3cAGOrIBDFBmdrLIPYAgQS45gThvbnpMGcgR5T97UJEwiU4w7t6ma0XVihKk4lWkNOilsjTJ1Fa1z%2FHYTyKrecSKpGA9eET%2BTSV74hrLRJ3jmUuKrtw0gH9HQKxAb%2B4%2BRDpUKcgc2xITsDpXJgy0iypVIfm5c5ifOJ4dQ4Om2hhrQ6ibEEJ5IDxs0PVzKc%2FqXTsMptx4PYmb%2FRO3z83Yax5WgV3srs%2Bsenmy1wvWvGxD9XpapIJOfg%3D%3D&X-Amz-Signature=dc23c954d99b822ef0aeb72dba0c12617b70128f39544a6b707b14605f5c74d5&X-Amz-SignedHeaders=host&x-amz-checksum-mode=ENABLED&x-id=GetObject"; // Presigned URL for the source NIfTI file
     const httpOrHttps = NODE_ENV === "development" ? "http" : "https"; // Use http for development and https for production
     const callback_url = `${httpOrHttps}://192.168.0.2:${PORT}/gpu-webhook`; // Callback URL for the webhook
+    // const callback_url = `https://webhook-test.com/618bf16792c7dd3f3c61fe1204de78cd`; // Debug webhook URL for testing   
 
     const gpuHttpOrHttps = GPU_SERVER_SSL === "true" ? "https" : "http";
     const GPU_SERVER_ADDRESS = `${gpuHttpOrHttps}://${GPU_SERVER_URL}:${GPU_SERVER_PORT}`; // Construct the full address
-    const fullAddress = `${GPU_SERVER_ADDRESS}/inference/medsam-inference`; // Full address for the GPU server
+    const fullAddress = `${GPU_SERVER_ADDRESS}/inference/v2/medsam-inference`; // Full address for the GPU server
 
     // use axios to send a POST request to the GPU server with the job data
     try {
@@ -72,7 +73,7 @@ router.get('/start-bbox-inferencing', /*isAuth,*/ injectGpuAuthToken, async (req
         logger.info(`${serviceLocation}: Job ${uuid} created in database successfully`)
 
         const response = await axios.post(
-            `${GPU_SERVER_ADDRESS}/inference/bbox-inference`,
+            fullAddress,
             {  // This is the request body
                 url: url,
                 callback_url: callback_url,
@@ -153,7 +154,7 @@ router.get('/start-bbox-inferencing', /*isAuth,*/ injectGpuAuthToken, async (req
 
 // webhook to receive the result of the bbox inferencing
 router.post('/gpu-webhook', async (req: Request, res: Response): Promise<void> => {
-    logger.info(`${serviceLocation}: Received webhook from GPU server`, req.body);
+    logger.info(`${serviceLocation}: Received webhook call from GPU server`, req.body);
 
     // Extract all fields from the callback payload
     const { uuid, status, result, error_detail } = req.body;
@@ -190,10 +191,10 @@ router.post('/gpu-webhook', async (req: Request, res: Response): Promise<void> =
             newStatus = JobStatus.FAILED;
             logger.warn(`${serviceLocation}: Unknown job status "${status}" received for ${uuid}`);
         }
-
+        
         // Update the job status in the database
         const updateResult = await updateJob(uuid, { status: newStatus, message: req.body.message });
-        logger.info(`${serviceLocation}: Updating job ${uuid} status to ${newStatus} with ${updateResult.success ? "success" : "failure"}`);
+        logger.info(`${serviceLocation}: Updating job ${uuid} status to ${newStatus} completed with database ${updateResult.success ? "success" : "failure"}`);
 
         // ALERT: this section should update the segmentation mask related to the job in the database
 
