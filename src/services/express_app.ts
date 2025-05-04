@@ -61,7 +61,8 @@ app.use(
 
 // Enable CORS for all routes (adjust as needed for production)
 app.use(cors({
-  origin: process.env.CORS_ORIGIN || 'http://localhost:5371', // Adjust as needed
+  // origin: process.env.CORS_ORIGIN || ['http://localhost:5371', 'http://localhost:8001'], // Adjust as needed
+  origin: true,
   credentials: true, // Allow credentials (cookies) to be sent
 }));
 
