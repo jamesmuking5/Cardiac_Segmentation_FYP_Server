@@ -83,7 +83,7 @@ router.get('/start-bbox-inferencing', /*isAuth,*/ injectGpuAuthToken, async (req
                 headers: {
                     Authorization: `Bearer ${res.locals.gpuAuthToken}`,
                 },
-                timeout: 10000,
+                timeout: 100000000,
             }
         );
         if (response.status === 202) {
@@ -157,7 +157,7 @@ router.post('/gpu-webhook', async (req: Request, res: Response): Promise<void> =
     logger.info(`${serviceLocation}: Received webhook call from GPU server`, req.body);
 
     // Extract all fields from the callback payload
-    const { uuid, status, result, error_detail } = req.body;
+    const { uuid, status, result, error } = req.body;
 
     // Validate required fields
     if (!uuid) {
