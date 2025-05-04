@@ -18,7 +18,7 @@ const serviceLocation = "Middleware(GPUAuth)";
  * @param res - Express Response object.
  * @param next - Express NextFunction callback.
  */
-export function requireGpuAuthToken(req: Request, res: Response, next: NextFunction): void {
+export function injectGpuAuthToken(req: Request, res: Response, next: NextFunction): void {
     const token = getCurrentToken();
 
     if (!token) {
