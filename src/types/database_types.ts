@@ -241,11 +241,29 @@ export interface IProjectSegmentationMask {
     }[];
 }
 // Segmentation Mask Model Interface (single segmentation mask document in the database)
-export interface IProjectSegmentationMaskDocument extends IProjectSegmentationMask, Document {
-}
+export interface IProjectSegmentationMaskDocument extends IProjectSegmentationMask, Document { }
 
 /*==================================== Project Section ends here =============================================*/
+/*==================================== Job Queue Section starts here =========================================*/
+// Enumeration for job statuses
+export enum JobStatus {
+    PENDING = "pending",
+    IN_PROGRESS = "in_progress",
+    COMPLETED = "completed",
+    FAILED = "failed",
+}
 
+export interface IJob {
+    userid: string; // ID of the user who created the job
+    projectid: string; // ID of the project associated with the job
+    uuid: string; // UUID of the job (for tracking purposes)
+    status: JobStatus; // Current status of the job (e.g., pending, in_progress, completed, failed)
+    result?: string; // Result of the job (e.g., path to the output file, success message, etc.)
+    message?: string; // Optional error message if the job fails
+}
+export interface IJobDocument extends IJob, Document { }
+
+/*==================================== Job Queue Section ends here ===========================================*/
 /* Database Functions */
 /**
  * Enumerates the types of CRUD (Create, Read, Update, Delete) operations,
@@ -331,5 +349,14 @@ export interface ProjectSegmentationMaskCrudResult {
     operation: CRUDOperation; // The type of operation performed (CREATE, READ, UPDATE, DELETE)
     projectsegmentationmask?: IProjectSegmentationMaskDocument; // The created or updated segmentation mask document (applicable for CREATE and UPDATE operations)
     projectsegmentationmasks?: IProjectSegmentationMaskDocument[]; // Array of segmentation mask documents (applicable for READ operation)
+    message?: string; // Message if error/warning occurred (applicable for all operations)
+}
+
+// Define result type for job CRUD operations
+export interface JobCrudResult { 
+    success: boolean; // Indicates whether the operation was successful
+    operation: CRUDOperation; // The type of operation performed (CREATE, READ, UPDATE, DELETE)
+    job?: IJobDocument; // The created or updated job document (applicable for CREATE and UPDATE operations)
+    jobs?: IJobDocument[]; // Array of job documents (applicable for READ operation)
     message?: string; // Message if error/warning occurred (applicable for all operations)
 }
