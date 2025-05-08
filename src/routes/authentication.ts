@@ -229,6 +229,32 @@ router.post("/update",
     }
   });
 
+// Fetch user information route
+router.get("/fetch", isAuth, async (req: Request, res: Response): Promise<void> => {
+  try {
+    // Extract user ID from the authenticated session
+    const userId = String(req.user?._id);
+
+    // Fetch user information from the database
+    const result = await readUser({ _id: userId });
+
+    if (!result.success || !result.user) {
+      res.status(404).json({ fetch: false, message: "User not found." });
+      return;
+    }
+
+    logger.info(`${serviceLocation}: Fetched user info for ${result.user.username}.`);
+    res.status(200).json({
+      fetch: true,
+      message: "User information fetched successfully.",
+      user: result.user,
+    });
+  } catch (error: unknown) {
+    logger.error(`${serviceLocation}: Error fetching user info: ${error}`);
+    res.status(500).json({ fetch: false, message: "Internal error during user fetch." });
+  }
+});
+
 // Middleware-protected route
 // This route is only accessible to users who are logged in (i.e., authenticated users). It acts as a basic protected endpoint.
 router.get("/protected", isAuth, (req: Request, res: Response) => {
