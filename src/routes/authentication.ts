@@ -270,7 +270,45 @@ router.post("/update-password",
     }
   });
 
-// Todo - Update route for user role
+// Update route for user role
+router.post("/update-role",
+  isAuthAndAdmin,
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const { username, newrole } = req.body;
+      if (!username || !newrole) {
+        res.status(400).json({ update: false, message: "User ID and new role are required." });
+        return;
+      }
+      // Find the user by username
+      const userExists = await readUser({ username });
+      if (userExists && userExists.users && userExists.users.length === 0) {
+        res.status(404).json({ update: false, message: "User not found." });
+        return;
+      }
+      if (userExists && userExists.users && userExists.users.length === 1) {
+        const user = userExists.users[0];
+        // Update the user role in the database
+        if (user && user._id) {
+          const result = await updateUser(user._id, { role: newrole });
+          if (!result.success) {
+            res.status(400).json({ update: false, message: result.message });
+            return;
+          }
+          logger.info(`${serviceLocation}: User ${username} role updated to ${newrole}.`);
+          res.status(200).json({
+            update: true,
+            message: `User ${username} role updated to ${newrole}.`,
+            user: result.user,
+          });
+        }
+      }
+    } catch (error: unknown) {
+      logger.error(`${serviceLocation}: Error during user role update: ${error}`);
+      res.status(500).json({ message: "Internal error during user role update." });
+    }
+  }
+)
 
 // Fetch user information route
 router.get("/fetch", isAuth, async (req: Request, res: Response): Promise<void> => {
