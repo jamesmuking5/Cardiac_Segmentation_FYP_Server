@@ -3,7 +3,7 @@
 
 import express, { Request, Response, NextFunction } from "express";
 import passport from "passport";
-import { IUser, IUserSafe, UserRole, createUser, readUser, updateUser, deleteUser } from "../services/database"; // CRUD + Auth functions for User
+import { IUser, IUserSafe, UserRole, createUser, readUser, updateUser, deleteUser, authenticateUser } from "../services/database"; // CRUD + Auth functions for User
 import { isAuth, isAuthAndAdmin, isAuthAndUser } from "../services/passportjs"; // Import Passport.js middleware
 import logger from "../services/logger"; // Import logger
 import validateFields from "../utils/field_validation"; // Import reusable validation middleware
@@ -231,6 +231,46 @@ router.post("/update",
       res.status(500).json({ message: "Internal error during user update." });
     }
   });
+
+// Update route for user password
+router.post("/update-password",
+  isAuthAndUser,
+  validateFields[1], async (req: Request, res: Response): Promise<void> => {
+    try {
+      if (req.user && req.user._id) {
+        const userid = req.user._id;
+        const { old_password, password } = req.body;
+
+        // Check if the old password is correct
+        const isPasswordValid = await authenticateUser(req.user.username, old_password);
+        if (!isPasswordValid.success) {
+          res.status(401).json({ update: false, message: "Old password is incorrect." });
+          return;
+        }
+
+        // Update the user password in the database
+        const result = await updateUser(userid, { password });
+
+        if (!result.success) {
+          res.status(400).json({ update: false, message: result.message });
+          return;
+        }
+
+        logger.info(`${serviceLocation}: User ${userid} password updated successfully.`);
+        res.status(200).json({
+          update: true,
+          message: "User password updated successfully.",
+          user: result.user,
+        });
+      }
+    }
+    catch (error: unknown) {
+      logger.error(`${serviceLocation}: Error during user password update: ${error}`);
+      res.status(500).json({ message: "Internal error during user password update." });
+    }
+  });
+
+// Todo - Update route for user role
 
 // Fetch user information route
 router.get("/fetch", isAuth, async (req: Request, res: Response): Promise<void> => {
