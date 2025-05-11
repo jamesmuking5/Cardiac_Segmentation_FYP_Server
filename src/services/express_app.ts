@@ -60,8 +60,16 @@ app.use(
 )
 
 // Enable CORS for all routes (adjust as needed for production)
+let corsOrigin: string | boolean = false; // Default to false
+if (envType === 'development') {
+  corsOrigin = true;
+}
+else {
+  corsOrigin = process.env.CORS_ORIGIN || 'http://localhost:5371';
+}
+
 app.use(cors({
-  origin: process.env.CORS_ORIGIN || 'http://localhost:5371', // Adjust as needed
+  origin: corsOrigin, // Allow requests from the specified origin
   credentials: true, // Allow credentials (cookies) to be sent
 }));
 
