@@ -312,7 +312,7 @@ const readUser = async (
  *
  * @async
  * @function updateUser
- * @param {string} username - The current username of the user to update. This is used for the initial lookup.
+ * @param {string} userid - The current id of the user to update. This is used for the initial lookup and can be taken from session (doubling as authentication).
  * @param {object} updates - An object containing the fields to update. All properties are optional.
  * @param {string} [updates.username] - The new username.
  * @param {string} [updates.password] - The new plain-text password.
@@ -537,7 +537,7 @@ const authenticateUser = async (
 
     // 2. Handle case where username doesn't exist
     if (!user) {
-      logger.warn(`Database: Login attempt failed for non-existent username: ${username}`);
+      logger.warn(`Database: Authentication attempt failed for non-existent username: ${username}`);
       return { success: false, operation, message: 'Invalid username or password.' };
     }
 
@@ -552,12 +552,12 @@ const authenticateUser = async (
 
     // 4. Handle case where passwords don't match
     if (!isMatch) {
-      logger.warn(`Database: Login attempt failed for username: ${username} (Incorrect password)`);
+      logger.warn(`Database: Authentication attempt failed for username: ${username} (Incorrect password)`);
       return { success: false, operation, message: 'Invalid username or password.' };
     }
 
     // 5. Authentication successful!
-    logger.info(`Database: Login successful for username: ${username}`);
+    logger.info(`Database: Authentication successful for username: ${username}`);
     return { success: true, operation, user: toIUserSafe(user) };
 
   } catch (error: unknown) {
