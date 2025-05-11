@@ -205,23 +205,26 @@ router.post("/update",
   validateFields,
   isAuthAndUser, async (req: Request, res: Response): Promise<void> => {
     try {
-      const userid = String(req.user?._id);
-      const { username, email, phone } = req.body;
+      if (req.user && req.user._id) {
+        const userid = req.user._id;
+        // Only allow updates to username, email, and phone (not password or role)
+        const { username, email, phone } = req.body;
 
-      // Update the user information in the database
-      const result = await updateUser(userid, { username, email, phone });
+        // Update the user information in the database
+        const result = await updateUser(userid, { username, email, phone });
 
-      if (!result.success) {
-        res.status(400).json({ update: false, message: result.message });
-        return;
+        if (!result.success) {
+          res.status(400).json({ update: false, message: result.message });
+          return;
+        }
+
+        logger.info(`${serviceLocation}: User ${userid} updated successfully.`);
+        res.status(200).json({
+          update: true,
+          message: "User information updated successfully.",
+          user: result.user,
+        });
       }
-
-      logger.info(`${serviceLocation}: User ${username} updated successfully.`);
-      res.status(200).json({
-        update: true,
-        message: "User information updated successfully.",
-        user: result.user,
-      });
     }
     catch (error: unknown) {
       logger.error(`${serviceLocation}: Error during user update: ${error}`);

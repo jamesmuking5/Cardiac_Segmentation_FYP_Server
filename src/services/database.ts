@@ -328,7 +328,7 @@ const readUser = async (
  */
 const updateUser = async (
   // Identifying parameter
-  username: string,
+  userid: string,
   // Updates object
   updates: {
     username?: string;
@@ -340,12 +340,13 @@ const updateUser = async (
 ): Promise<UserCrudResult> => {
   try {
     // Check if the user exists
-    const existingUser = await userModel.findOne({ username: username });
+    const existingUser = await userModel.findOne({ _id: userid });
     if (!existingUser) {
-      logger.warn(`Database: User ${username} does not exist.`);
-      return { success: false, operation: CRUDOperation.UPDATE, message: `User ${username} does not exist.` };
+      logger.warn(`Database: User ${userid} does not exist.`);
+      return { success: false, operation: CRUDOperation.UPDATE, message: `User ${userid} does not exist.` };
     }
-    // NOTE - use user._id from now on instead of username because username be one of the fields being updated.
+
+    // NOTE - use user._id from session from now on instead of username because username be one of the fields being updated.
     // Create update object and track what fields are being updated
     const updateData: Partial<IUser> = {};
     const unchangedFields: string[] = [];
@@ -425,17 +426,17 @@ const updateUser = async (
 
     // Return if no fields were updated at all
     if (Object.keys(updateData).length === 0) {
-      logger.warn(`Database: No fields to update for user ${username}. Unchanged fields: ${unchangedFields.join(", ")}`);
-      return { success: false, operation: CRUDOperation.UPDATE, message: `No fields to update for user ${username}.`, };
+      logger.warn(`Database: No fields to update for user ${userid}. Unchanged fields: ${unchangedFields.join(", ")}`);
+      return { success: false, operation: CRUDOperation.UPDATE, message: `No fields to update for user ${userid}.`, };
     }
 
     // Perform the update
     const updatedUser = existingUser.set(updateData);
     await updatedUser.save();
-    logger.info(`Database: User ${username} updated successfully. Updated fields: ${Object.keys(updateData).join(", ")}`);
+    logger.info(`Database: User ${userid} with username ${updatedUser.username} updated successfully. Updated fields: ${Object.keys(updateData).join(", ")}`);
     return { success: true, operation: CRUDOperation.UPDATE, user: toIUserSafe(updatedUser) };
   } catch (error: unknown) {
-    LogError(error as Error, serviceLocation, `Error updating user ${username}.`);
+    LogError(error as Error, serviceLocation, `Error updating user ${userid}.`);
     return { success: false, operation: CRUDOperation.UPDATE, message: "Error updating user." };
   }
 };
