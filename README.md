@@ -1,20 +1,26 @@
-# Project README
+# VisHeart Backend Server
+
+Stack: 
+
+![NodeJS](https://img.shields.io/badge/node.js-6DA55F?style=for-the-badge&logo=node.js&logoColor=white)
+![Express.js](https://img.shields.io/badge/express.js-%23404d59.svg?style=for-the-badge&logo=express&logoColor=%2361DAFB)
+![MongoDB](https://img.shields.io/badge/MongoDB-%234ea94b.svg?style=for-the-badge&logo=mongodb&logoColor=white)
+
+Written in:
+
+![TypeScript](https://img.shields.io/badge/typescript-%23007ACC.svg?style=for-the-badge&logo=typescript&logoColor=white)
 
 ## Overview
 
-VisHeart is a backend server built with Node.js and Express.js, utilizing TypeScript. It provides the foundational infrastructure for a cardiac segmentation application designed to work with NIFTI and DICOM medical imaging formats. The server currently focuses on user management, authentication, secure file metadata storage, and robust logging, setting the stage for future integration of segmentation processing capabilities.
+VisHeart is a Node.js backend server built with TypeScript and Express.js. It provides APIs for user management, authentication, medical image file (NIFTI, DICOM) handling, metadata extraction via Python, and data persistence using MongoDB with Mongoose. It supports local or AWS S3 file storage and is designed to integrate with a GPU-accelerated inference server.
 
-## Description
-
-This project is a Node.js backend application built with TypeScript. It serves as an API for managing user accounts (registration, login with password hashing, guest access), handling file uploads (specifically NIfTI medical image files, `.nii` or `.nii.gz`), extracting metadata from these files using an integrated Python script, and interacting with a MongoDB database via Mongoose to store user and project information. It uses Express.js for routing and middleware. File storage can be configured for local disk or AWS S3.
-
-The GPU-accelerated server can be deployed on a cloud platform or locally, and the source code can be accessed at the [VisHeart GitHub Repository](https://github.com/jamesmuking5/visheart-inference-gpu).
+The GPU server component can be found at [VisHeart GPU Inference Repository](https://github.com/jamesmuking5/visheart-inference-gpu).
 
 ## Authentication API
 
 Provides endpoints for user registration, session management, and role-based access control.
 
-**Base URL**: `/api/auth`
+**Base URL**: `/api/auth` (or as configured)
 
 **Authentication**: Session-based using `express-session` and Passport.js (`passport-local`). A session cookie is issued upon successful login.
 
@@ -62,8 +68,9 @@ Registers a new standard user account.
 
 **Error Responses**:
 
-- `400 Bad Request`: Validation failed (e.g., `{"register": false, "errors": [...]}`).
+- `400 Bad Request`: Validation failed (e.g., `{"register": false, "errors": [{"field": "username", "message": "Username must be unique"}]}`).
 - `400 Bad Request`: Username or email already exists (e.g., `{"register": false, "message": "Username already exists."}`).
+- `500 Internal Server Error`: Server-side issue.
 
 ---
 
@@ -95,9 +102,9 @@ Authenticates a user and establishes a session.
 
 **Error Responses**:
 
-- `400 Bad Request`: Missing fields (e.g., `{"login": false, "errors": [...]}`).
+- `400 Bad Request`: Missing fields.
 - `401 Unauthorized`: Invalid credentials (e.g., `{"login": false, "message": "Incorrect username or password."}`).
-- `500 Internal Server Error`: Server-side issue during authentication.
+- `500 Internal Server Error`: Server-side issue.
 
 ---
 
@@ -146,36 +153,37 @@ Terminates the current user session.
 **Error Responses**:
 
 - `401 Unauthorized`: No active session.
-- `500 Internal Server Error`: Server-side issue during logout.
+- `500 Internal Server Error`: Server-side issue.
 
 **Notes**:
 
-- If the logged-out user is a guest, their account and associated data are deleted.
+- If the logged-out user is a guest, their account and associated data (projects, files) are deleted.
 
 ---
 
 ### `POST /update`
 
-Updates an authenticated user's profile information.
+Updates an authenticated user's profile information (username, email, phone).
 
-**Auth Required**: Yes (Role: User or Admin, not Guest)
+**Auth Required**: Yes (Role: `user` or `admin`)
 
 **Request Body**:
 
 ```json
 {
-  "username": "string",
-  "password": "string",
-  "email": "string",
-  "phone": "string"
+  "username": "string (optional)",
+  "email": "string (optional)",
+  "phone": "string (optional)"
 }
 ```
 
+_At least one field must be provided._
+
 **Validation**:
 
-- `username`: 3-20 chars, alphanumeric + underscore. Must be unique.
-- `email`: Valid email format. Must be unique.
-- `phone`: 10-15 digits.
+- `username`: 3-20 chars, alphanumeric + underscore. Must be unique if provided.
+- `email`: Valid email format. Must be unique if provided.
+- `phone`: 10-15 digits if provided.
 
 **Success Response (200 OK)**:
 
@@ -188,7 +196,7 @@ Updates an authenticated user's profile information.
     "username": "string",
     "email": "string",
     "phone": "string",
-    "role": "user"
+    "role": "user" | "admin"
   }
 }
 ```
@@ -196,15 +204,140 @@ Updates an authenticated user's profile information.
 **Error Responses**:
 
 - `400 Bad Request`: Validation failed (e.g., `{"update": false, "errors": [...]}`).
-- `400 Bad Request`: Username or email already exists (e.g., `{"update": false, "message": "Username already exists."}`).
+- `400 Bad Request`: Username or email already exists (e.g., `{"update": false, "message": "Email already exists."}`).
+- `400 Bad Request`: No fields to update provided (e.g., `{"update": false, "message": "No fields to update were provided."}`).
 - `401 Unauthorized`: No active session.
-- `403 Forbidden`: User is authenticated but has Guest role.
-- `500 Internal Server Error`: Server-side issue during update.
+- `403 Forbidden`: Authenticated user has `guest` role.
+- `500 Internal Server Error`: Server-side issue.
 
 **Notes**:
 
-- Password updates are handled through a separate endpoint.
 - Only the user's own profile can be updated with this endpoint.
+
+---
+
+### `POST /update-password`
+
+Updates an authenticated user's password.
+
+**Auth Required**: Yes (Role: `user` or `admin`)
+
+**Request Body**:
+
+```json
+{
+  "old_password": "string",
+  "password": "string"
+}
+```
+
+**Validation**:
+
+- `old_password`: Must match the user's current password.
+- `password` (new password): 8+ chars, requires uppercase, lowercase, number, special character.
+
+**Success Response (200 OK)**:
+
+```json
+{
+  "update": true,
+  "message": "User password updated successfully.",
+  "user": {
+    "_id": "string",
+    "username": "string",
+    "email": "string",
+    "phone": "string",
+    "role": "user" | "admin"
+  }
+}
+```
+
+**Error Responses**:
+
+- `400 Bad Request`: Validation failed for the new password.
+- `400 Bad Request`: New password is the same as the old password.
+- `401 Unauthorized`: No active session.
+- `401 Unauthorized`: Old password incorrect.
+- `403 Forbidden`: Authenticated user has `guest` role.
+- `500 Internal Server Error`: Server-side issue.
+
+---
+
+### `POST /update-role`
+
+Updates a specified user's role.
+
+**Auth Required**: Yes (Role: `admin`)
+
+**Request Body**:
+
+```json
+{
+  "username": "string",
+  "newrole": "user" | "admin" | "guest"
+}
+```
+
+**Validation**:
+
+- `username`: Must correspond to an existing user.
+- `newrole`: Must be a valid `UserRole`.
+
+**Success Response (200 OK)**:
+
+```json
+{
+  "update": true,
+  "message": "User <username> role updated to <newrole>.",
+  "user": {
+    "_id": "string",
+    "username": "string",
+    "email": "string",
+    "phone": "string",
+    "role": "user" | "admin" | "guest"
+  }
+}
+```
+
+**Error Responses**:
+
+- `400 Bad Request`: Missing `username` or `newrole`.
+- `400 Bad Request`: Invalid `newrole` value (schema validation).
+- `400 Bad Request`: Attempting to change the role of the last administrator.
+- `401 Unauthorized`: No active session.
+- `403 Forbidden`: Authenticated user is not an `admin`.
+- `404 Not Found`: User specified by `username` not found.
+- `500 Internal Server Error`: Server-side issue.
+
+---
+
+### `GET /fetch`
+
+Fetches the profile information for the currently authenticated user.
+
+**Auth Required**: Yes
+
+**Success Response (200 OK)**:
+
+```json
+{
+  "fetch": true,
+  "message": "User information fetched successfully.",
+  "user": {
+    "_id": "string",
+    "username": "string",
+    "email": "string",
+    "phone": "string",
+    "role": "user" | "admin" | "guest"
+  }
+}
+```
+
+**Error Responses**:
+
+- `401 Unauthorized`: No active session.
+- `404 Not Found`: Authenticated user not found in database (should be rare).
+- `500 Internal Server Error`: Server-side issue.
 
 ---
 
@@ -232,7 +365,7 @@ Test endpoint to verify user authentication.
 
 Test endpoint to verify admin privileges.
 
-**Auth Required**: Yes (Role: Admin)
+**Auth Required**: Yes (Role: `admin`)
 
 **Success Response (200 OK)**:
 
@@ -245,63 +378,65 @@ Test endpoint to verify admin privileges.
 **Error Responses**:
 
 - `401 Unauthorized`: No active session.
-- `403 Forbidden`: User is authenticated but does not have the 'Admin' role.
+- `403 Forbidden`: User is authenticated but not an `admin`.
 
 ---
 
 ## User Roles and Access Control
 
-The API supports three user roles:
-
-1. **Admin**: Full system access including admin-only endpoints
-2. **User**: Standard authenticated access to protected resources
-3. **Guest**: Limited access with temporary account
+- **Admin**: Full system access, including user management.
+- **User**: Standard authenticated access to protected resources and their own data.
+- **Guest**: Limited, temporary access. Data associated with guest accounts is typically ephemeral.
 
 ## Error Handling
 
-All endpoints follow consistent error formats:
-
-- **Validation errors**: Return 400 with array of validation details
-- **Authentication failures**: Return 401 with error message
-- **Permission issues**: Return 403 with error message
-- **Server errors**: Return 500 with error message
+- **400 Bad Request**: Client-side errors (e.g., validation, missing parameters). Response often includes an `errors` array or specific `message`.
+- **401 Unauthorized**: Authentication required or failed (e.g., invalid credentials, no session).
+- **403 Forbidden**: Authenticated user lacks necessary permissions for the resource.
+- **404 Not Found**: Requested resource does not exist.
+- **500 Internal Server Error**: Unexpected server-side error.
 
 ## Security Notes
 
-1. Passwords are securely hashed before storage
-2. Session management includes proper timeout handling
-3. Input validation is performed on all endpoints
+- Passwords are hashed using bcrypt.
+- Sessions are managed securely with `httpOnly` cookies.
+- Input validation is applied to prevent common vulnerabilities.
+- Role-based access control restricts endpoint access.
 
 ## Usage
 
+### Prerequisites
+
+- Node.js (version specified in `.nvmrc` or latest LTS)
+- npm or yarn
+- MongoDB instance (local or remote)
+- Python (for metadata extraction script)
+
+### Setup
+
+1.  Clone the repository.
+2.  Install dependencies: `npm install`
+3.  Create a .env file from .env.template and configure variables (e.g., `MONGODB_URI`, `SESSION_SECRET`, `PORT`).
+
 ### Development
 
-- Start the development server with TypeScript compilation and hot-reloading using `nodemon`:
+- Start the server with TypeScript compilation and hot-reloading:
   ```bash
   npm run dev
   ```
 
-### Testing
-
-- Run the Jest test suite (uses in-memory MongoDB):
-  ```bash
-  npm test
-  ```
-
 ### Production
 
-1.  **Build the project:** Compile TypeScript to JavaScript in the `dist/` directory:
-
+1.  **Build:** Compile TypeScript to JavaScript:
     ```bash
     npm run build
     ```
-
-2.  **Start the production server:** Run the compiled JavaScript code:
+2.  **Start:** Run the compiled application:
     ```bash
     npm start
     ```
-    Ensure your `.env` file is configured correctly for your production environment (especially `MONGODB_URI` and secrets).
+    Ensure production environment variables are set in .env.
 
 ## License
 
-This project is licensed under the MIT License - see the LICENSE file for details.
+This project is licensed under the MIT License. See the LICENSE file for details.
