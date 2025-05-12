@@ -1161,21 +1161,27 @@ const createProjectSegmentationMask = async (
       return { success: false, operation, message: `Invalid input parameters for project segmentation mask creation: frames array must be populated with at least one frame.` };
     }
 
-    // New validation: If a slice has a segmentationmasks array, each entry in it must have non-empty segmentationmaskcontents
+    // Validate that each slice has a segmentation mask with its contents populated
     for (const frame of psm.frames) {
       if (frame.slices && Array.isArray(frame.slices)) { // Ensure slices array exists for the frame
         for (const slice of frame.slices) {
           if (slice.segmentationmasks && Array.isArray(slice.segmentationmasks) && slice.segmentationmasks.length > 0) {
             const emptyContentMasks = slice.segmentationmasks.filter(
-              maskEntry => !maskEntry.segmentationmaskcontents || typeof maskEntry.segmentationmaskcontents !== 'string' || maskEntry.segmentationmaskcontents.trim() === ''
+              maskEntry => !maskEntry.segmentationmaskcontents || typeof maskEntry.segmentationmaskcontents !== 'string' // Removed: || maskEntry.segmentationmaskcontents.trim() === ''
             );
             if (emptyContentMasks.length > 0) {
               const offendingLocation = `frame ${frame.frameindex}, slice ${slice.sliceindex}`;
-              logger.warn(`Database: Invalid input parameters for project segmentation mask creation: segmentationmaskcontents cannot be empty for provided segmentation masks in ${offendingLocation}.`);
-              return {
-                success: false,
-                operation,
-                message: `Invalid input parameters for project segmentation mask creation: segmentationmaskcontents cannot be empty for provided segmentation masks in ${offendingLocation}.`
+              let messageDetail = "segmentationmaskcontents must be a non-empty string";
+              if (emptyContentMasks.some(m => !m.segmentationmaskcontents)) {
+                 messageDetail = "segmentationmaskcontents is missing";
+              } else if (emptyContentMasks.some(m => typeof m.segmentationmaskcontents !== 'string')) {
+                 messageDetail = "segmentationmaskcontents must be a string";
+              }
+              logger.warn(`Database: Invalid input parameters for project segmentation mask creation: ${messageDetail} for provided segmentation masks in ${offendingLocation}.`);
+              return { 
+                success: false, 
+                operation, 
+                message: `Invalid input parameters for project segmentation mask creation: ${messageDetail} for provided segmentation masks in ${offendingLocation}.` 
               };
             }
           }
