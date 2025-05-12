@@ -13,6 +13,7 @@ const serviceLocation = "Database"; // Service location for error logging
 // Import Types
 import { IUser, IUserDocument, IUserSafe, UserRole, CRUDOperation, UserCrudResult, IProjectDocument, IProjectSegmentationMaskDocument } from "../types/database_types"; // Import the user types
 import { FileType, FileDataType, ComponentBoundingBoxesClass, IProject, IProjectSegmentationMask, ProjectCrudResult, ProjectSegmentationMaskCrudResult } from "../types/database_types"; // Import the project types
+import { JobStatus, IJob, IJobDocument, JobCrudResult } from "../types/database_types"; // Import the job types
 
 // Load environment variables from .env file
 try {
@@ -1355,10 +1356,93 @@ const deleteProjectSegmentationMask = async (maskid: string): Promise<ProjectSeg
   }
 }
 
-// Auxiliary Project Segmentation Mask functions
-// For granular updates, such as adding/removing slices or frames
-// const 
+// Job Queue section
+// Create Job schema
+const jobSchema = new mongoose.Schema({
+  userid: { type: String, required: true },
+  projectid: { type: String, required: true },
+  uuid: { type: String, required: true, unique: true }, // Unique identifier for the job
+  status: { type: String, required: true, enum: Object.values(JobStatus) },
+  result: { type: String, required: false }, // Result of the job 
+  message: { type: String, required: false }, // Message related to the job
+}, { timestamps: true });
+const jobModel = mongoose.model<IJobDocument>('Job', jobSchema);
+
+// Job CRUD functions
+const createJob = async (job: IJob): Promise<JobCrudResult> => {
+  const operation = CRUDOperation.CREATE;
+  try {
+    const newJob = new jobModel(job);
+    const results = await newJob.save();
+    if (results._id) {
+      logger.info(`Database: Job ${results._id} created successfully.`);
+      return { success: true, operation, job: newJob };
+    }
+    else {
+      throw new Error(`Job ${results._id} was not created successfully.`);
+    }
+  } catch (error: unknown) {
+    LogError(error as Error, serviceLocation, `Error creating job.`);
+    return { success: false, operation, message: "Error creating job." };
+  }
+}
+
+// readJob function
+const readJob = async (uuid: string): Promise<JobCrudResult> => {
+  const operation = CRUDOperation.READ;
+  try {
+    const job = await jobModel.findOne({ uuid: uuid });
+    if (!job) {
+      logger.warn(`Database: Job for user ${uuid} not found.`);
+      return { success: false, operation, message: `Job for user ${uuid} not found.` };
+    }
+    logger.info(`Database: Job ${job._id} found matching UUID if ${uuid}.`);
+    return { success: true, operation, job: job };
+  } catch (error: unknown) {
+    LogError(error as Error, serviceLocation, `Error reading job.`);
+    return { success: false, operation, message: "Error reading job." };
+  }
+}
+
+// updateJob function
+const updateJob = async (uuid: string, updates: Partial<IJob>): Promise<JobCrudResult> => {
+  const operation = CRUDOperation.UPDATE;
+  try {
+    const job = await jobModel.findOne({ uuid: uuid });
+    if (!job) {
+      logger.warn(`Database: Job for user ${uuid} not found.`);
+      return { success: false, operation, message: `Job for user ${uuid} not found.` };
+    }
+    // Update the job with the provided updates
+    Object.assign(job, updates);
+    await job.save();
+    logger.info(`Database: Job ${job._id} updated successfully.`);
+    return { success: true, operation, job: job };
+  } catch (error: unknown) {
+    LogError(error as Error, serviceLocation, `Error updating job.`);
+    return { success: false, operation, message: "Error updating job." };
+  }
+}
+
+// deleteJob function
+const deleteJob = async (uuid: string): Promise<JobCrudResult> => {
+  const operation = CRUDOperation.DELETE;
+  try {
+    const job = await jobModel.findOne({ uuid: uuid });
+    if (!job) {
+      logger.warn(`Database: Job for user ${uuid} not found.`);
+      return { success: false, operation, message: `Job for user ${uuid} not found.` };
+    }
+    await job.deleteOne();
+    logger.info(`Database: Job ${job._id} deleted successfully.`);
+    return { success: true, operation, message: `Job ${job._id} deleted successfully.` };
+  } catch (error: unknown) {
+    LogError(error as Error, serviceLocation, `Error deleting job.`);
+    return { success: false, operation, message: "Error deleting job." };
+  }
+}
+
 
 // Using ES modules instead of CommonJS which is module.exports = {connectToDatabase, User};
 // ONLY unit tests should use userModel, fileModel directly, otherwise use the created functions to create users/files.
-export { connectToDatabase, userModel, createUser, readUser, updateUser, deleteUser, authenticateUser, UserRole, IUser, IUserSafe, UserCrudResult, CRUDOperation, IUserDocument, IProject, IProjectSegmentationMask, projectModel, projectSegmentationMaskModel, createProject, readProject, updateProject, deleteProject, createProjectSegmentationMask, readProjectSegmentationMask, updateProjectSegmentationMask, deleteProjectSegmentationMask };
+export { connectToDatabase, userModel, createUser, readUser, updateUser, deleteUser, authenticateUser, UserRole, IUser, IUserSafe, UserCrudResult, CRUDOperation, IUserDocument, IProject, IProjectSegmentationMask, projectModel, projectSegmentationMaskModel, createProject, readProject, updateProject, deleteProject, createProjectSegmentationMask, readProjectSegmentationMask, updateProjectSegmentationMask, deleteProjectSegmentationMask, jobModel, createJob, readJob, updateJob, deleteJob, JobStatus, IJob, IJobDocument, IProjectSegmentationMaskDocument, ProjectSegmentationMaskCrudResult, ProjectCrudResult };
