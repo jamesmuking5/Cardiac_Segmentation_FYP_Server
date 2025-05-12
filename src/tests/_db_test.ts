@@ -164,7 +164,7 @@ async function updateTestUser(username: string) {
         };
 
         // CHANGE THIS LINE - Pass the username as an object instead of a string
-        const updateResult = await updateUser({ username: username }, updates);  // <-- MODIFIED LINE
+        const updateResult = await updateUser(originalUser._id, updates);  // <-- MODIFIED LINE
 
         if (!updateResult.success) {
             logger.error(`Manual Test: User update failed: ${updateResult.message}`);
@@ -263,6 +263,7 @@ async function createTestProject(projectData: IProject) {
         projectData.userid,
         projectData.name,
         projectData.originalfilename,
+        projectData.description,
         projectData.isSaved,
         projectData.filename,
         projectData.filetype,
@@ -274,7 +275,6 @@ async function createTestProject(projectData: IProject) {
         projectData.datatype,
         projectData.dimensions,
         projectData.voxelsize,
-        projectData.description,
     );
 
     if (result.success) {
