@@ -644,9 +644,16 @@ projectSchema.pre('deleteOne', { document: true, query: false }, async function 
 const projectModel = model<IProject, Model<IProject>>("Project", projectSchema);
 
 // Project Segmentation Mask Collection
+// Create segmentation mask content schema for use in project segmentation mask schema (Nest Depth: 3)
+const projectSegmentationMaskContentSchema = new Schema({
+  class: { type: String, required: true, enum: Object.values(ComponentBoundingBoxesClass) }, // Class of the bounding box (rv, myo, lvc)
+  segmentationmaskcontents: { type: String, required: true }, // Segmentation mask content (e.g., S3 bucket URL)
+}, { _id: false }); // Disable automatic creation of an _id field for this subdocument
+
 // Create bounding box schema for use in project segmentation mask schema's slice schema (Nest Depth: 3)
 const projectSegmentationMaskSliceComponentBoundingBoxesSchema = new Schema({
   class: { type: String, required: true, enum: Object.values(ComponentBoundingBoxesClass) }, // Class of the bounding box (rv, myo, lvc)
+  confidence: { type: Number, required: true }, // Confidence score of the bounding box
   x_min: { type: Number, required: true }, // Minimum X coordinate of the bounding box
   y_min: { type: Number, required: true }, // Minimum Y coordinate of the bounding box
   x_max: { type: Number, required: true }, // Maximum X coordinate of the bounding box
@@ -657,6 +664,7 @@ const projectSegmentationMaskSliceComponentBoundingBoxesSchema = new Schema({
 const projectSegmentationMaskSliceSchema = new Schema({
   sliceindex: { type: Number, required: true }, // Index of the slice (0-based)
   componentboundingboxes: [{ type: projectSegmentationMaskSliceComponentBoundingBoxesSchema, required: false }], // Array of component bounding boxes for the slicesegmentation mask image (e.g., S3 bucket URL) - assume CSV? or RLE?
+  segmentationmasks: [{ type: projectSegmentationMaskContentSchema, required: false }], // Array of segmentation masks for the frame
 }, { _id: false }); // Disable automatic creation of an _id field for this subdocument
 
 // Create frames schema (Nest Depth: 1)
@@ -674,7 +682,6 @@ const projectSegmentationMaskSchema = new Schema<IProjectSegmentationMask>({
   name: { type: String, required: true }, // Name of the segmentation mask
   description: { type: String, required: false }, // Description of the segmentation mask
   isSaved: { type: Boolean, required: true, default: false }, // Indicates if the segmentation mask is saved
-  segmentationmaskpath: { type: String, required: false }, // Path to the segmentation mask file (e.g., S3 bucket URL)
   segmentationmaskRLE: { type: Boolean, required: false }, // RLE of the segmentation mask (e.g., S3 bucket URL)
   isMedSAMOutput: { type: Boolean, required: true, default: false }, // Indicates if the segmentation mask is a MedSAM output
   // Properties of extracted folder + location tracking
