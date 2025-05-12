@@ -645,7 +645,7 @@ const projectModel = model<IProject, Model<IProject>>("Project", projectSchema);
 
 // Project Segmentation Mask Collection
 // Create segmentation mask content schema for use in project segmentation mask schema (Nest Depth: 3)
-const projectSegmentationMaskContentSchema = new Schema({
+const projectSegmentationMaskSliceContentSchema = new Schema({
   class: { type: String, required: true, enum: Object.values(ComponentBoundingBoxesClass) }, // Class of the bounding box (rv, myo, lvc)
   segmentationmaskcontents: { type: String, required: true }, // Segmentation mask content (e.g., S3 bucket URL)
 }, { _id: false }); // Disable automatic creation of an _id field for this subdocument
@@ -664,7 +664,7 @@ const projectSegmentationMaskSliceComponentBoundingBoxesSchema = new Schema({
 const projectSegmentationMaskSliceSchema = new Schema({
   sliceindex: { type: Number, required: true }, // Index of the slice (0-based)
   componentboundingboxes: [{ type: projectSegmentationMaskSliceComponentBoundingBoxesSchema, required: false }], // Array of component bounding boxes for the slicesegmentation mask image (e.g., S3 bucket URL) - assume CSV? or RLE?
-  segmentationmasks: [{ type: projectSegmentationMaskContentSchema, required: false }], // Array of segmentation masks for the frame
+  segmentationmasks: [{ type: projectSegmentationMaskSliceContentSchema, required: false }], // Array of segmentation masks for the frame
 }, { _id: false }); // Disable automatic creation of an _id field for this subdocument
 
 // Create frames schema (Nest Depth: 1)
@@ -1124,7 +1124,6 @@ const createProjectSegmentationMask = async (
     const stringInputs = [
       psm.name,
     ]
-    if (psm.segmentationmaskpath) stringInputs.push(psm.segmentationmaskpath); // Optional field
     const emptyStringInputs = stringInputs.filter(input => !input || typeof input !== 'string' || input.trim() === '');
     if (emptyStringInputs.length > 0) {
       logger.warn(`Database: Invalid input parameters for project segmentation mask creation: ${emptyStringInputs.join(", ")}`);
@@ -1156,6 +1155,33 @@ const createProjectSegmentationMask = async (
       logger.warn(`Database: Invalid input parameters for project segmentation mask creation: frames array must be populated with at least one frame.`);
       return { success: false, operation, message: `Invalid input parameters for project segmentation mask creation: frames array must be populated with at least one frame.` };
     }
+    // Validate that frames array is populated
+    if (!psm.frames || !Array.isArray(psm.frames) || psm.frames.length === 0) {
+      logger.warn(`Database: Invalid input parameters for project segmentation mask creation: frames array must be populated with at least one frame.`);
+      return { success: false, operation, message: `Invalid input parameters for project segmentation mask creation: frames array must be populated with at least one frame.` };
+    }
+
+    // New validation: If a slice has a segmentationmasks array, each entry in it must have non-empty segmentationmaskcontents
+    for (const frame of psm.frames) {
+      if (frame.slices && Array.isArray(frame.slices)) { // Ensure slices array exists for the frame
+        for (const slice of frame.slices) {
+          if (slice.segmentationmasks && Array.isArray(slice.segmentationmasks) && slice.segmentationmasks.length > 0) {
+            const emptyContentMasks = slice.segmentationmasks.filter(
+              maskEntry => !maskEntry.segmentationmaskcontents || typeof maskEntry.segmentationmaskcontents !== 'string' || maskEntry.segmentationmaskcontents.trim() === ''
+            );
+            if (emptyContentMasks.length > 0) {
+              const offendingLocation = `frame ${frame.frameindex}, slice ${slice.sliceindex}`;
+              logger.warn(`Database: Invalid input parameters for project segmentation mask creation: segmentationmaskcontents cannot be empty for provided segmentation masks in ${offendingLocation}.`);
+              return {
+                success: false,
+                operation,
+                message: `Invalid input parameters for project segmentation mask creation: segmentationmaskcontents cannot be empty for provided segmentation masks in ${offendingLocation}.`
+              };
+            }
+          }
+        }
+      }
+    }
 
     // Validate that each frame has a slices array that is populated
     const framesWithEmptySlices = psm.frames.filter(frame =>
@@ -1167,7 +1193,6 @@ const createProjectSegmentationMask = async (
       logger.warn(`Database: Invalid input parameters for project segmentation mask creation: frames with indexes [${frameindexesWithEmptySlices}] have empty slices arrays.`);
       return { success: false, operation, message: `Invalid input parameters for project segmentation mask creation: each frame must have at least one slice.` };
     }
-
 
     // Create new project segmentation mask instance
     const newProjectSegmentationMask = new projectSegmentationMaskModel(psm);
