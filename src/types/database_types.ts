@@ -195,22 +195,22 @@ export enum ComponentBoundingBoxesClass {
  * @property {string} name - The name of the segmentation mask.
  * @property {string} description - A description of the segmentation mask (optional).
  * @property {boolean} isSaved - Indicates if the segmentation mask should be saved.
- * @property {string} segmentationmaskpath - The path to the segmentation mask tar (e.g., S3 bucket URL) (optional).
  * @property {boolean} segmentationmaskRLE - Indicates if the mask is in RLE format (optional).
  * @property {boolean} isMedSAMOutput - Indicates if the segmentation mask is a MedSAM output (should not delete if its the output of MedSAM).
  * @property {object[]} frames - An array of frame objects, each containing slice information.
- * @property {boolean} frameinferred - Indicates if the frame has been inferred (user must manually run MedSAM on it)
- * @property {number} frameindex - The index of the frame (0-based).
- * @property {object[]} slices - An array of slice objects, each containing segmentation mask information.
- * @property {number} sliceindex - The index of the slice (0-based).
- * @property {object[]} componentboundingboxes - An array of component bounding box objects (optional).
- * @property {string} class - The class of the component (e.g., rv, myo, lvc).
- * @property {number} x_min - The X coordinate of the minimum bounding box corner.
- * @property {number} y_min - The Y coordinate of the minimum bounding box corner.
- * @property {number} x_max - The X coordinate of the maximum bounding box corner.
- * @property {number} y_max - The Y coordinate of the maximum bounding box corner.
- * @property {string} path - The path to the segmentation mask CSV (e.g., S3 bucket URL).
- * @property {boolean} isRLE - Indicates if the mask is in RLE format.
+ * @property {boolean} frames.frameinferred - Indicates if the frame has been inferred (user must manually run MedSAM on it)
+ * @property {number} frames.frameindex - The index of the frame (0-based).
+ * @property {object[]} frames.slices - An array of slice objects, each containing segmentation mask information.
+ * @property {number} frames.slices.sliceindex - The index of the slice (0-based).
+ * @property {object[]} frames.slices.componentboundingboxes - An array of component bounding box objects (optional).
+ * @property {string} frames.slices.componentboundingboxes.class - The class of the component for the slices (e.g., rv, myo, lvc).
+ * @property {number} frames.slices.componentboundingboxes.x_min - The X coordinate of the minimum bounding box corner.
+ * @property {number} frames.slices.componentboundingboxes.y_min - The Y coordinate of the minimum bounding box corner.
+ * @property {number} frames.slices.componentboundingboxes.x_max - The X coordinate of the maximum bounding box corner.
+ * @property {number} frames.slices.componentboundingboxes.y_max - The Y coordinate of the maximum bounding box corner.
+ * @property {object[]} frames.slices.segmentationmasks - An array of segmentation mask objects (optional).
+ * @property {string} frames.slices.segmentationmasks.class - The class of the component for the masks and should tally with bboxes (e.g., rv, myo, lvc).
+ * @property {string} frames.slices.segmentationmasks.segmentationmaskcontents - The contents of the segmentation mask (e.g., RLE format).
  */
 export interface IProjectSegmentationMask {
     // Identifiers
@@ -219,7 +219,6 @@ export interface IProjectSegmentationMask {
     name: string; // Name of the segmentation mask
     description?: string; // Description of the segmentation mask
     isSaved: boolean; // Indicates if the segmentation mask is saved in the database
-    segmentationmaskpath: string; // Path to the segmentation mask tar (e.g., S3 bucket URL)
     segmentationmaskRLE: boolean; // Indicates if the mask is in RLE format
     isMedSAMOutput: boolean; // Indicates if the segmentation mask is a MedSAM output (should not delete if its the output of MedSAM)
     // Properties of the bounding box coordinates used to input into MedSAM for segmentation
@@ -232,10 +231,15 @@ export interface IProjectSegmentationMask {
             sliceindex: number; // The index of the slice (0-based)
             componentboundingboxes?: {
                 class: ComponentBoundingBoxesClass; // Class of the component (e.g., rv, myo, lvc)
+                confidence: number; // Confidence score of the bounding box
                 x_min: number; // X coordinate of the minimum bounding box corner
                 y_min: number; // Y coordinate of the minimum bounding box corner
                 x_max: number; // X coordinate of the maximum bounding box corner
                 y_max: number; // Y coordinate of the maximum bounding box corner
+            }[];
+            segmentationmasks?: {
+                class: ComponentBoundingBoxesClass; // Class of the component (e.g., rv, myo, lvc)
+                segmentationmaskcontents: string;
             }[];
         }[];
     }[];
@@ -353,7 +357,7 @@ export interface ProjectSegmentationMaskCrudResult {
 }
 
 // Define result type for job CRUD operations
-export interface JobCrudResult { 
+export interface JobCrudResult {
     success: boolean; // Indicates whether the operation was successful
     operation: CRUDOperation; // The type of operation performed (CREATE, READ, UPDATE, DELETE)
     job?: IJobDocument; // The created or updated job document (applicable for CREATE and UPDATE operations)
