@@ -7,7 +7,7 @@ import { injectGpuAuthToken } from "../middleware/gpuauthmiddleware"; // Import 
 import { updateJob } from "../services/database"; // Import database function to update job status
 import { JobStatus } from "../types/database_types"; // Import JobStatus enum 
 
-const serviceLocation = "API(Upload)";
+const serviceLocation = "InferenceCallback(Webhook)";
 const router = express.Router();
 
 // Route to start inference for a specific project
