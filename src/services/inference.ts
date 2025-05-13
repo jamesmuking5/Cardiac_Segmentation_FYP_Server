@@ -29,21 +29,45 @@ const sendInferenceRequestToCloudGpu = async (inferenceData: any, gpuAuthToken: 
     const inferenceEndpoint = `${cloudGpuBaseUrl}/inference/v2/medsam-inference`; // Adjust the endpoint as needed
 
     try {
-        logger.debug(`${serviceLocation}: Sending headers:`, { Authorization: `Bearer ${gpuAuthToken}` /* Add other headers if you suspect */ });
         const response = await axios.post(inferenceEndpoint, inferenceData, {
             headers: {
                 Authorization: `Bearer ${gpuAuthToken}`,
-                'Content-Type': 'application/json', // Explicitly set Content-Type
-                // Add any other headers the API might require
+                'Content-Type': 'application/json',
             },
-            timeout: 100000,
+            timeout: 120000, // e.g., 2 minutes, adjust as needed
         });
-        if (response.status === 202) { // Expecting 202 for successful initiation
-            logger.info(`${serviceLocation}: Successfully sent inference request to ${inferenceEndpoint}. Response Status: ${response.status}, Response Data:`, response.data);
-            return { success: true };
+
+        // **** THIS IS WHERE YOU LOG THE GPU SERVER'S RESPONSE DATA ****
+        // The existing logger.info call here should already be doing this.
+        // We log the full response.data object.
+        logger.info(`${serviceLocation}: Successfully received response from Cloud GPU for UUID ${inferenceData.uuid}. Status: ${response.status}, Full Response Data:`, response.data);
+
+        // Attempt to extract a job ID from common fields
+        // Adjust these fields (job_id, jobId, uuid) based on what your GPU server actually returns
+        interface InferenceResponse {
+            job_id?: string;
+            jobId?: string;
+            uuid?: string;
+            [key: string]: any; // Allow additional properties if needed
+        }
+
+        const responseData = response.data as InferenceResponse;
+        const returnedJobId = responseData.job_id || responseData.jobId || responseData.uuid;
+
+        if (response.status === 202 && response.data) { // Or other success statuses like 200, 201
+            if (returnedJobId) {
+                logger.info(`${serviceLocation}: GPU Job ID identified: ${returnedJobId} for local UUID ${inferenceData.uuid}.`);
+                return { success: true, jobId: returnedJobId };
+            } else {
+                logger.warn(`${serviceLocation}: GPU request successful (Status ${response.status}) for UUID ${inferenceData.uuid}, but no clear Job ID found in response. Response data logged above.`);
+                // Decide if this is still a success for your workflow.
+                // You might still return success and use your internal UUID if the GPU doesn't provide one.
+                return { success: true, jobId: inferenceData.uuid }; // Fallback to internal UUID if no external one
+            }
         } else {
-            logger.error(`${serviceLocation}: Failed to send inference request to ${inferenceEndpoint}. Cloud GPU responded with status ${response.status}:`, response.data);
-            return { success: false, error: `Cloud GPU responded with status ${response.status}: ${JSON.stringify(response.data)}` };
+            // Handle cases where status might be 2xx but data is not as expected, or status is not 202
+            logger.error(`${serviceLocation}: Unexpected successful response from Cloud GPU for UUID ${inferenceData.uuid}. Status: ${response.status}, Data:`, response.data);
+            return { success: false, error: `Cloud GPU responded with status ${response.status} but data was unexpected: ${JSON.stringify(response.data)}` };
         }
     } catch (error: any) {
         logger.error(`${serviceLocation}: Error sending inference request to ${inferenceEndpoint}: ${error.message}`, { error });
