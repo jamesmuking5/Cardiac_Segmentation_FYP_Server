@@ -7,10 +7,6 @@ import { upload } from "../middleware/uploadmiddleware";
 import { handleUpload } from "../services/upload";
 import { isAuth } from "../services/passportjs";
 import logger from "../services/logger"; // Import Winston Logger
-import { startInference } from "../services/inference"; // Import startInference function
-import { injectGpuAuthToken } from "../middleware/gpuauthmiddleware"; // Import GPU auth middleware
-import { updateJob } from "../services/database"; // Import database function to update job status
-import { JobStatus } from "../types/database_types"; // Import JobStatus enum 
 
 const serviceLocation = "API(Upload)";
 const router = express.Router();

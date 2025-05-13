@@ -72,3 +72,6 @@ router.post("/api/gpu-webhook", async (req: Request, res: Response) => {
         return res.status(500).send("Unexpected error occurred");
     }
 });
+
+
+export default router;
