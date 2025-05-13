@@ -1401,11 +1401,14 @@ const jobSchema = new mongoose.Schema({
   projectid: { type: String, required: true },
   uuid: { type: String, required: true, unique: true }, // Unique identifier for the job
   status: { type: String, required: true, enum: Object.values(JobStatus) },
-  result: { type: String, required: false }, // Result of the job 
+  result: { 
+    type: mongoose.Schema.Types.Mixed, // Changed to Mixed type
+    required: false 
+  }, 
   message: { type: String, required: false }, // Message related to the job
 }, { timestamps: true });
 const jobModel = mongoose.model<IJobDocument>('Job', jobSchema);
-
+ 
 // Job CRUD functions
 const createJob = async (job: IJob): Promise<JobCrudResult> => {
   const operation = CRUDOperation.CREATE;
