@@ -6,25 +6,30 @@ import { startInference } from "../services/inference"; // Import startInference
 import { injectGpuAuthToken } from "../middleware/gpuauthmiddleware"; // Import GPU auth middleware
 import { updateJob } from "../services/database"; // Import database function to update job status
 import { JobStatus } from "../types/database_types"; // Import JobStatus enum 
+import LogError from "../utils/error_logger";
 
 const serviceLocation = "InferenceCallback(Webhook)";
 const router = express.Router();
 
 // Route to start inference for a specific project
-router.post("/start-inference/:projectId", isAuth, injectGpuAuthToken, async (req: Request, res: Response, next: NextFunction) => {
-    const { projectId } = req.params;
-    try {
+router.post("/start-inference/:projectId",
+    isAuth,
+    injectGpuAuthToken,
+    async (req: Request, res: Response) => {
+        const { projectId } = req.params;
         logger.info(`${serviceLocation}: Received start inference request for project ${projectId} by user ${req.user?.username} with id ${req.user?._id}`);
-        const result = await startInference(projectId, req.user, res.locals.gpuAuthToken); // Pass the token here
-        if (result.success) {
-            res.status(200).json({ message: result.message, uuid: result.uuid }); // Return the UUID to the client
-        } else {
-            res.status(500).json({ message: result.message });
+        try {
+            logger.info(`${serviceLocation}: Received start inference request for project ${projectId} by user ${req.user?.username} with id ${req.user?._id}`);
+            const result = await startInference(projectId, req.user, res.locals.gpuAuthToken); // Pass the token here
+            if (result.success) {
+                res.status(200).json({ message: result.message, uuid: result.uuid }); // Return the UUID to the client
+            } else {
+                res.status(500).json({ message: result.message });
+            }
+        } catch (error: unknown) {
+            LogError(error as Error, serviceLocation, "Error starting inference");
         }
-    } catch (error) {
-        next(error);
-    }
-});
+    });
 
 // router.post("/api/gpu-webhook", async (req: Request, res: Response) => {
 //     logger.info(`${serviceLocation}: Received callback from Cloud GPU. Headers:`, req.headers, "Body:", req.body);
@@ -82,7 +87,7 @@ router.post("/api/gpu-webhook", async (req: Request, res: Response) => {
         logger.info(`${serviceLocation}: Cloud GPU Job ID received in header: ${gpuJobId}`);
     } else {
         logger.error(`${serviceLocation}: Cloud GPU Job ID (X-Job-ID) not found in request headers. Body:`, req.body);
-        return res.status(400).send("Missing Cloud GPU Job ID in headers");
+        return res.status(400).json("Missing Cloud GPU Job ID in headers");
     }
 
     // MODIFIED: Destructure 'error' instead of 'message' for error details
@@ -91,11 +96,11 @@ router.post("/api/gpu-webhook", async (req: Request, res: Response) => {
 
     if (!status) {
         logger.error(`${serviceLocation}: Callback missing status.`);
-        return res.status(400).send("Missing status in callback body");
+        return res.status(400).json("Missing status in callback body");
     }
 
     let jobStatus: JobStatus;
-    if (status === 'completed') { 
+    if (status === 'completed') {
         jobStatus = JobStatus.COMPLETED;
     } else if (status === 'failed') {
         jobStatus = JobStatus.FAILED;
@@ -111,13 +116,13 @@ router.post("/api/gpu-webhook", async (req: Request, res: Response) => {
         const updateResult = await updateJob(gpuJobId, { status: jobStatus, result: result, message: error });
         if (!updateResult.success) {
             logger.error(`${serviceLocation}: Failed to update job with GPU Job ID ${gpuJobId} status: ${updateResult.message || "Unknown error"}`);
-            return res.status(500).send("Failed to update job status");
+            return res.status(500).json("Failed to update job status");
         }
         logger.info(`${serviceLocation}: Successfully updated job with GPU Job ID ${gpuJobId} to status ${jobStatus}.`);
-        return res.status(200).send("Job status updated");
+        return res.status(200).json("Job status updated");
     } catch (dbError) { // Renamed error to dbError to avoid conflict
         logger.error(`${serviceLocation}: Unexpected error while updating job with GPU Job ID ${gpuJobId}: ${(dbError instanceof Error) ? dbError.message : "Unknown error"}`);
-        return res.status(500).send("Unexpected error occurred");
+        return res.status(500).json("Unexpected error occurred");
     }
 });
 
