@@ -17,7 +17,7 @@ const serviceLocation = "ExpressApp"; // For logging context
 
 /* Middleware */
 // Apply essential middleware like parsing JSON bodies
-app.use(express.json());
+app.use(express.json({limit: '100mb'})); // Increase limit for large JSON payloads
 
 // Setup Redis session store
 const redisStore = new RedisStore({
