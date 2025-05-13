@@ -154,7 +154,7 @@ export const startInference = async (projectId: string, user?: IUserSafe, gpuAut
 
         // The logger in sendInferenceRequestToCloudGpu will log the full payload.
         // You can add a summary log here if preferred:
-        logger.info(`${serviceLocation}: Prepared inference data for project ${projectId}, UUID ${jobUuid}. TAR S3 Key: ${objectKeyForTar}`);
+        logger.info(`${serviceLocation}: Prepared inference data for project ${projectId}, UUID ${jobUuid}. TAR S3 Key: ${objectKeyForTar}. Callback URL being sent: ${inferenceData.callback_url}`); 
 
         const inferenceResult = await sendInferenceRequestToCloudGpu(inferenceData, gpuAuthToken);
 
