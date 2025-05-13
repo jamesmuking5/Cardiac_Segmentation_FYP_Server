@@ -5,6 +5,7 @@ import { RedisStore } from 'connect-redis';
 import { redisClient } from './redis';
 import authenticationRoute from '../routes/authentication';
 import uploadRoute from '../routes/uploadroutes';
+import webhookRoute from '../routes/webhook_routes';
 import debugRoute from '../routes/debug_routes';
 import gpuStatusRoute from '../routes/gpu_status';
 import logger from './logger';
@@ -87,8 +88,12 @@ app.get('/', (req: Request, res: Response) => { // Use _req if req is unused
 
 // Mount authentication routes under '/auth'
 app.use('/auth', authenticationRoute);
-app.use('/', uploadRoute); // File Upload route
 
+// Mount upload routes under root path
+app.use('/', uploadRoute); 
+
+// Mount GPU webhook routes under root path
+app.use('/', webhookRoute);
 
 // Debug Route
 if (envType === 'development') {
