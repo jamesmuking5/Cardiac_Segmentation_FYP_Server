@@ -166,14 +166,19 @@ router.post("/api/gpu-webhook", async (req: Request, res: Response) => {
                 if (segmentationData.boxes && Array.isArray(segmentationData.boxes)) {
                     for (const box of segmentationData.boxes) {
                         if (box && typeof box === 'object' && box.bbox && Array.isArray(box.bbox) && box.bbox.length === 4) {
-                            currentSliceData.componentboundingboxes.push({
-                                class: box.class_name || 'unknown', 
-                                confidence: typeof box.confidence === 'number' ? box.confidence : 0,
-                                x_min: box.bbox[0],
-                                y_min: box.bbox[1],
-                                x_max: box.bbox[2],
-                                y_max: box.bbox[3]
-                            });
+                            const mappedClass = mapGpuClassNameToEnum(box.class_name); // Use the mapping function
+                            if (mappedClass) { // Only push if the class was successfully mapped
+                                currentSliceData.componentboundingboxes.push({
+                                    class: mappedClass, 
+                                    confidence: typeof box.confidence === 'number' ? box.confidence : 0,
+                                    x_min: box.bbox[0],
+                                    y_min: box.bbox[1],
+                                    x_max: box.bbox[2],
+                                    y_max: box.bbox[3]
+                                });
+                            } else {
+                                logger.warn(`${serviceLocation}: Skipping box for ${imageFilename} due to unmappable class "${box.class_name}" in job ${gpuJobId}.`);
+                            }
                         } else {
                             logger.warn(`${serviceLocation}: Invalid box data for ${imageFilename}, class ${box?.class_name} in job ${gpuJobId}. Skipping box.`);
                         }
@@ -183,10 +188,15 @@ router.post("/api/gpu-webhook", async (req: Request, res: Response) => {
                 if (segmentationData.masks && typeof segmentationData.masks === 'object') {
                     for (const [className, rleString] of Object.entries(segmentationData.masks)) {
                         if (typeof rleString === 'string') {
-                            currentSliceData.segmentationmasks.push({
-                                class: className, 
-                                segmentationmaskcontents: rleString
-                            });
+                            const mappedClass = mapGpuClassNameToEnum(className); // Use the mapping function
+                            if (mappedClass) { // Only push if the class was successfully mapped
+                                currentSliceData.segmentationmasks.push({
+                                    class: mappedClass, 
+                                    segmentationmaskcontents: rleString
+                                });
+                            } else {
+                                logger.warn(`${serviceLocation}: Skipping RLE mask for ${imageFilename} due to unmappable class "${className}" in job ${gpuJobId}.`);
+                            }
                         } else {
                              logger.warn(`${serviceLocation}: Invalid RLE string for ${imageFilename}, class ${className} in job ${gpuJobId}. Skipping mask.`);
                         }
