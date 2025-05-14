@@ -104,6 +104,17 @@ router.post("/api/gpu-webhook", async (req: Request, res: Response) => {
 
             const framesDataMap = new Map<number, { frameindex: number; frameinferred: boolean; slices: Map<number, { sliceindex: number; componentboundingboxes: any[]; segmentationmasks: any[] }> }>();
 
+            // Helper function to map GPU class names to enum
+            const mapGpuClassNameToEnum = (gpuClassName: string | undefined): ComponentBoundingBoxesClass | undefined => {
+                if (!gpuClassName) return undefined;
+                const lowerGpuClassName = gpuClassName.toLowerCase();
+                if (lowerGpuClassName === "rv") return ComponentBoundingBoxesClass.RV;
+                if (lowerGpuClassName === "myo") return ComponentBoundingBoxesClass.MYO;
+                if (lowerGpuClassName === "lvc" || lowerGpuClassName === "lv") return ComponentBoundingBoxesClass.LVC; // Map "lv" to "lvc"
+                logger.warn(`${serviceLocation}: Unknown GPU class name "${gpuClassName}" received for job ${gpuJobId}. Cannot map to enum.`);
+                return undefined; 
+            };
+
             for (const [imageFilename, segmentationData] of Object.entries(gpuResult as Record<string, any>)) {
                 // Ensure segmentationData is an object with 'boxes' or 'masks'
                 if (typeof segmentationData !== 'object' || segmentationData === null) {
