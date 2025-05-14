@@ -7,6 +7,7 @@ import authenticationRoute from '../routes/authentication';
 import uploadRoute from '../routes/uploadroutes';
 import webhookRoute from '../routes/webhook_routes';
 import debugRoute from '../routes/debug_routes';
+import segmentationRoutes from '../routes/segmentation_routes'; 
 import gpuStatusRoute from '../routes/gpu_status';
 import logger from './logger';
 import cors from 'cors';
@@ -118,6 +119,9 @@ if (envType === 'development') {
   app.use(debugRoute); // Mount debug routes only in development mode
   logger.info(`${serviceLocation}: Debug routes mounted for development environment`);
 }
+
+// Segmentation Data Routes
+app.use('/api/segmentations', segmentationRoutes); // Mount the segmentation routes
 
 // Status Routes (mount under '/status')
 app.use('/status', gpuStatusRoute); // Mount GPU status routes
