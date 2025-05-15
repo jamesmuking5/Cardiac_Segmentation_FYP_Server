@@ -91,6 +91,7 @@ export const startInference = async (projectId: string, user?: IUserSafe, gpuAut
         logger.error(`${serviceLocation}: CALLBACK_URL is not set in environment variables. Cannot start inference for project ${projectId}.`);
         return { success: false, message: "Callback URL not configured for inference." };
     }
+    
 
     const s3BucketName = process.env.AWS_BUCKET_NAME;
     if (!s3BucketName) {
