@@ -21,15 +21,15 @@ export function isValidFileFormat(filename: string): boolean {
   );
 }
 
-/**
- * Computes a SHA-256 hash of the given file buffer.
- * Commonly used for deduplication or file integrity checks.
- *
- * @param fileBuffer - The file data as a Node.js Buffer.
- * @returns The hexadecimal SHA-256 hash of the file.
- */
-export function computeFileHash(fileBuffer: Buffer): string {
-  return crypto.createHash("sha256").update(fileBuffer).digest("hex");
+
+export async function computeFileHashStream(filePath: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const hash = crypto.createHash('sha256');
+    const stream = fs.createReadStream(filePath);
+    stream.on('data', (chunk) => hash.update(chunk));
+    stream.on('end', () => resolve(hash.digest('hex')));
+    stream.on('error', (err) => reject(err));
+  });
 }
 
 /**

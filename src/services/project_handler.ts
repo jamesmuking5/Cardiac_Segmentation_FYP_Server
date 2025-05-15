@@ -3,14 +3,13 @@
 // storing file metadata into the database, and preparing file details for response.
 
 import { Request, Response } from "express";
-import fs from "fs";
 import { uploadToS3 } from "../services/s3_handler";
 import { createProject, readProject } from "../services/database";
 import { IProject } from "../types/database_types";
 import { extractNiftiMetadata } from "../utils/nifti_parser";
 import {
   isValidFileFormat,
-  computeFileHash,
+  computeFileHashStream,
   isS3Storage,
   mapToFileDataType,
 } from "../utils/upload_validation";
@@ -18,7 +17,7 @@ import path from "path";
 import { exec } from "child_process";
 import logger from "./logger";
 import LogError from "../utils/error_logger";
-
+import fs from "fs";
 const serviceLocation = "Project Handler"
 
 export const saveFileAndPushToS3 = async (req: Request, res: Response) => {
@@ -41,6 +40,7 @@ export const saveFileAndPushToS3 = async (req: Request, res: Response) => {
       message: "Missing userId."
     });
   }
+
 
   // Get user-provided fields
   const projectName = req.body.name || '';
@@ -69,8 +69,7 @@ export const saveFileAndPushToS3 = async (req: Request, res: Response) => {
       }
 
       // Compute file hash early
-      const fileBuffer = fs.readFileSync(filePath);
-      const filehash = computeFileHash(fileBuffer);
+      const filehash = await computeFileHashStream(filePath);
 
       // NEW: Check if a project with this file hash already exists for this user
       const existingProjectResult = await readProject(
