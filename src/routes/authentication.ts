@@ -210,6 +210,12 @@ router.post("/update",
         // Only allow updates to username, email, and phone (not password or role)
         const { username, email, phone } = req.body;
 
+        // If other fields are provided, respond with an error
+        if (Object.keys(req.body).length > 3 || !username || !email || !phone) {
+          res.status(400).json({ update: false, message: "Only username, email, and phone fields are allowed." });
+          return;
+        }
+
         // Update the user information in the database
         const result = await updateUser(userid, { username, email, phone });
 
@@ -240,6 +246,12 @@ router.post("/update-password",
       if (req.user && req.user._id) {
         const userid = req.user._id;
         const { old_password, password } = req.body;
+
+        // If other fields are provided, respond with an error
+        if (Object.keys(req.body).length > 2 || !old_password || !password) {
+          res.status(400).json({ update: false, message: "Only old_password and password fields are allowed." });
+          return;
+        }
 
         // Check if the old password is correct
         const isPasswordValid = await authenticateUser(req.user.username, old_password);
