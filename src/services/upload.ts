@@ -4,8 +4,7 @@
 
 import { Request, Response } from "express";
 import fs from "fs";
-import mongoose from "mongoose";
-import { uploadToS3 } from "../middleware/uploadmiddleware";
+import { uploadToS3 } from "../services/s3_handler";
 import { createProject, readProject } from "../services/database";
 import { IProject } from "../types/database_types";
 import { extractNiftiMetadata } from "../utils/nifti_parser";
