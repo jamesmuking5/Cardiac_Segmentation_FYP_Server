@@ -1,37 +1,15 @@
 
 import express, { Request, Response, NextFunction } from "express";
-import { isAuth } from "../services/passportjs";
 import logger from "../services/logger"; // Import Winston Logger
-import { startInference } from "../services/inference"; // Import startInference function
-import { injectGpuAuthToken } from "../middleware/gpuauthmiddleware"; // Import GPU auth middleware
-import { updateJob, createProjectSegmentationMask } from "../services/database"; // Import database function to update job status
+
+import { updateJob, readJob, createProjectSegmentationMask } from "../services/database"; // Import database function to update job status
 import { JobStatus, IProjectSegmentationMask, ComponentBoundingBoxesClass, CRUDOperation, IJob } from "../types/database_types"; // Import JobStatus enum and IJob type
 import LogError from "../utils/error_logger";
 
 const serviceLocation = "InferenceCallback(Webhook)";
 const router = express.Router();
 
-// Route to start inference for a specific project
-router.post("/start-inference/:projectId",
-    isAuth,
-    injectGpuAuthToken,
-    async (req: Request, res: Response) => {
-        const { projectId } = req.params;
-        logger.info(`${serviceLocation}: Received start inference request for project ${projectId} by user ${req.user?.username} with id ${req.user?._id}`);
-        try {
-            logger.info(`${serviceLocation}: Received start inference request for project ${projectId} by user ${req.user?.username} with id ${req.user?._id}`);
-            const result = await startInference(projectId, req.user, res.locals.gpuAuthToken); // Pass the token here
-            if (result.success) {
-                res.status(200).json({ message: result.message, uuid: result.uuid }); // Return the UUID to the client
-            } else {
-                res.status(500).json({ message: result.message });
-            }
-        } catch (error: unknown) {
-            LogError(error as Error, serviceLocation, "Error starting inference");
-        }
-    });
-
-router.post("/api/gpu-webhook", async (req: Request, res: Response) => {
+router.post("/gpu-callback", async (req: Request, res: Response) => {
     logger.info(`${serviceLocation}: Received callback from Cloud GPU. Headers:`, req.headers, "Body:", req.body);
 
     const gpuJobId = req.headers['x-job-id'] as string | undefined;
@@ -41,6 +19,13 @@ router.post("/api/gpu-webhook", async (req: Request, res: Response) => {
     } else {
         logger.error(`${serviceLocation}: Cloud GPU Job ID (X-Job-ID) not found in request headers. Body:`, req.body);
         return res.status(400).json("Missing Cloud GPU Job ID in headers");
+    }
+
+    // Check if job-id exists in database
+    const jobReadResult = await readJob(gpuJobId);
+    if (!jobReadResult.success || !jobReadResult.job) {
+        logger.error(`${serviceLocation}: Job with GPU Job ID ${gpuJobId} not found in database. Reason: ${jobReadResult.message || "Job not found"}`);
+        return res.status(404).json({ message: `Job with GPU Job ID ${gpuJobId} not found` });
     }
 
     // MODIFIED: Destructure 'error' instead of 'message' for error details
