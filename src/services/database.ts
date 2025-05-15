@@ -872,6 +872,7 @@ const createProject = async (
  * @param {object} [filesize] - Optional object defining a file size range.
  * @param {number} [filesize.minsize] - Minimum file size (inclusive).
  * @param {number} [filesize.maxsize] - Maximum file size (inclusive).
+ * @param {string} [filehash] - Optional file hash to filter by (exact match).
  * @param {FileDataType[]} [datatype] - Optional array of data types to filter by.
  * @param {object} [dimensions] - Optional object defining dimension ranges. All provided dimension ranges must be met (AND logic).
  * @param {object} [dimensions.width] - Width range { minsize?, maxsize? }.
@@ -900,6 +901,7 @@ const readProject = async (
   filename?: string,
   filetype?: FileType[], // array of file types to filter by (e.g., [FileType.NIFTI, FileType.DICOM])
   filesize?: { minsize?: number; maxsize?: number },
+  filehash?: string, // exact match for file hash
   datatype?: FileDataType[],
   dimensions?: { width?: { minsize?: number; maxsize?: number }, height?: { minsize?: number; maxsize?: number }, slices?: { minsize?: number; maxsize?: number }, frames?: { minsize?: number; maxsize?: number }, },
   voxelsize?: { x?: { minsize?: number; maxsize?: number }, y?: { minsize?: number; maxsize?: number }, z?: { minsize?: number; maxsize?: number }, t?: { minsize?: number; maxsize?: number }, },
@@ -919,6 +921,7 @@ const readProject = async (
     if (filesize.minsize) searchConditions.push({ filesize: { $gte: filesize.minsize } }); // Search by minimum file size
     if (filesize.maxsize) searchConditions.push({ filesize: { $lte: filesize.maxsize } }); // Search by maximum file size
   }
+  if (filehash) searchConditions.push({ filehash: filehash }); // Search by file hash
   if (datatype) searchConditions.push({ datatype: { $in: datatype } }); // Search by data type
   if (dimensions) searchConditions.push({
     $and: [
