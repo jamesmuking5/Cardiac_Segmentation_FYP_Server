@@ -13,7 +13,7 @@ const serviceLocation = "API(Upload)";
 const router = express.Router();
 
 // Upload route with PUT method
-router.put("/upload", isAuth, upload, uploadErrorHandler, async (req: Request, res: Response) => {
+router.put("/upload-new-project", isAuth, upload, uploadErrorHandler, async (req: Request, res: Response) => {
   try {
     logger.info(`${serviceLocation}: Received file upload request from user ${req.user?.username} with id ${req.user?._id}`);
     await handleUpload(req, res);
@@ -25,10 +25,6 @@ router.put("/upload", isAuth, upload, uploadErrorHandler, async (req: Request, r
       message: "An error occurred while processing the upload." 
     });  
   }
-});
-// Informative GET route
-router.get("/upload", (req: Request, res: Response) => {
-  res.send("Use PUT method to upload files.");
 });
 
 // Get project routes?
