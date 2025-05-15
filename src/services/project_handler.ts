@@ -18,7 +18,8 @@ import { exec } from "child_process";
 import logger from "./logger";
 import LogError from "../utils/error_logger";
 import fs from "fs";
-const serviceLocation = "Project Handler"
+
+const serviceLocation = "Project Handler";
 
 export const saveFileAndPushToS3 = async (req: Request, res: Response) => {
   // With fields configuration, files are now in req.files.files
@@ -267,3 +268,4 @@ export const saveFileAndPushToS3 = async (req: Request, res: Response) => {
     }))
   });
 };
+
