@@ -2,8 +2,8 @@
 // Description: Routes for handling file uploads using Multer middleware and Express framework.
 // This module defines the routes for uploading files, including a POST route for handling file uploads and a GET route to inform about the expected HTTP method.
 
-import express, { Request, Response, NextFunction } from "express";
-import { upload } from "../middleware/uploadmiddleware";
+import express, { Request, Response } from "express";
+import { upload, uploadErrorHandler } from "../middleware/uploadmiddleware";
 import { handleUpload } from "../services/upload";
 import { isAuth } from "../services/passportjs";
 import logger from "../services/logger"; // Import Winston Logger
@@ -13,17 +13,19 @@ const serviceLocation = "API(Upload)";
 const router = express.Router();
 
 // Upload route with PUT method
-router.put("/upload", isAuth, upload.any(), async (req: Request, res: Response, next: NextFunction) => {
+router.put("/upload", isAuth, upload, uploadErrorHandler, async (req: Request, res: Response) => {
   try {
     logger.info(`${serviceLocation}: Received file upload request from user ${req.user?.username} with id ${req.user?._id}`);
     await handleUpload(req, res);
   } catch (error) {
     LogError(error as Error, serviceLocation, "Error handling file upload");
     logger.error(`${serviceLocation}: Error handling file upload: ${error}`);
-    res.status(500).json({ message: "An error occurred while processing the upload." });  
+    res.status(500).json({ 
+      success: false,
+      message: "An error occurred while processing the upload." 
+    });  
   }
 });
-
 // Informative GET route
 router.get("/upload", (req: Request, res: Response) => {
   res.send("Use PUT method to upload files.");

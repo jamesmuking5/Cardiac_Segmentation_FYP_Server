@@ -75,8 +75,6 @@ export enum FileType {
     NIFTI = "application/octet-stream", // .nii (standard MIME for NIfTI files)
     NIFTI_GZ = "application/gzip", // .nii.gz (standard MIME for gzip-compressed NIfTI files)
     DICOM = "application/dicom", // .dcm (standard MIME for DICOM files)
-    NIFTI_CUSTOM = "image/nifti", // .nii (non-standard, custom MIME for NIfTI)
-    NIFTI_GZ_CUSTOM = "image/nifti-gz", // .nii.gz (non-standard, custom MIME for NIfTI compressed files)
 }
 
 // Enumeration for DataType
