@@ -4,6 +4,9 @@
 import { execFile } from 'child_process';
 import path from 'path';
 import { promisify } from 'util';
+import LogError from './error_logger';
+
+const serviceLocation = "NIfTI Parser";
 
 const execFileAsync = promisify(execFile);
 
@@ -44,9 +47,9 @@ export async function extractNiftiMetadata(niftiPath: string): Promise<INiftiMet
         const parsed: INiftiMetadata = JSON.parse(stdout);
         return parsed;
   
-    } catch (error: any) {
+    } catch (error: unknown) {
         // Log an error if metadata extraction fails
-        console.error('Failed to extract NIfTI metadata:', error.message || error);
+        LogError(error as Error, serviceLocation, "Error extracting metadata from NIfTI file");
   
         // Return a fallback object with default values to ensure robustness
         return {

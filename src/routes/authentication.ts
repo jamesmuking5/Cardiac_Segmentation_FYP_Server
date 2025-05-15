@@ -351,7 +351,7 @@ router.get("/fetch", isAuth, async (req: Request, res: Response): Promise<void> 
 // Middleware-protected route
 // This route is only accessible to users who are logged in (i.e., authenticated users). It acts as a basic protected endpoint.
 router.get("/protected", isAuth, (req: Request, res: Response) => {
-  res.status(200).json({ message: "You are authenticated!" });
+  res.status(200).json({ message: "You are authenticated!", you: req.user?.username });
 });
 
 // Admin-only route

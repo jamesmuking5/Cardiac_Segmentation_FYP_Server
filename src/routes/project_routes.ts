@@ -3,7 +3,7 @@
 // This module defines the routes for uploading files, including a POST route for handling file uploads and a GET route to inform about the expected HTTP method.
 
 import express, { Request, Response } from "express";
-import { upload, uploadErrorHandler } from "../middleware/uploadmiddleware";
+import { projectUploadFilter } from "../middleware/uploadmiddleware";
 import { handleUpload } from "../services/upload";
 import { isAuth } from "../services/passportjs";
 import logger from "../services/logger"; // Import Winston Logger
@@ -13,19 +13,18 @@ const serviceLocation = "API(Upload)";
 const router = express.Router();
 
 // Upload route with PUT method
-router.put("/upload-new-project", isAuth, upload, uploadErrorHandler, async (req: Request, res: Response) => {
-  try {
-    logger.info(`${serviceLocation}: Received file upload request from user ${req.user?.username} with id ${req.user?._id}`);
-    await handleUpload(req, res);
-  } catch (error) {
-    LogError(error as Error, serviceLocation, "Error handling file upload");
-    logger.error(`${serviceLocation}: Error handling file upload: ${error}`);
-    res.status(500).json({ 
-      success: false,
-      message: "An error occurred while processing the upload." 
-    });  
-  }
-});
+router.put("/upload-new-project",
+  isAuth, // Middleware to check if the user is authenticated
+  projectUploadFilter, // Checks if the uploaded file in req.file and fields in req.body are valid
+  async (req: Request, res: Response) => {
+    try {
+      logger.info(`${serviceLocation}: Received file upload request from user ${req.user?.username} with id ${req.user?._id}`);
+      await handleUpload(req, res);
+    } catch (error) {
+      LogError(error as Error, serviceLocation, "Error handling file upload");
+      res.status(500).json({ success: false, message: "An error occurred while processing the upload." });
+    }
+  });
 
 // Get project routes?
 // Get project information routes?
