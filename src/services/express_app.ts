@@ -4,7 +4,7 @@ import passport from 'passport';
 import { RedisStore } from 'connect-redis';
 import { redisClient } from './redis';
 import authenticationRoute from '../routes/authentication';
-import uploadRoute from '../routes/uploadroutes';
+import projectRoute from '../routes/project_routes';
 import webhookRoute from '../routes/webhook_routes';
 import debugRoute from '../routes/debug_routes';
 import segmentationRoutes from '../routes/segmentation_routes';
@@ -109,7 +109,7 @@ app.get('/', (req: Request, res: Response) => { // Use _req if req is unused
 app.use('/auth', authenticationRoute);
 
 // Mount upload routes under root path
-app.use('/', uploadRoute);
+app.use('/project', projectRoute);
 
 // Mount GPU webhook routes under root path
 app.use('/', webhookRoute);

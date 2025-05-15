@@ -115,8 +115,7 @@ export const handleUpload = async (req: Request, res: Response) => {
       newFilePath = path.join(path.dirname(filePath), newFileName);
       fs.renameSync(filePath, newFilePath);
 
-      const projectId = new mongoose.Types.ObjectId();
-      const generatedFilename = `${userId}_${projectId.toHexString()}${fileExtension}`;
+      const generatedFilename = `${userId}_${filehash}${fileExtension}`;
 
       let niftiMetadata: any = {};
       try {
