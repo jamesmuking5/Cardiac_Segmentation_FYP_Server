@@ -7,6 +7,7 @@ import { upload } from "../middleware/uploadmiddleware";
 import { handleUpload } from "../services/upload";
 import { isAuth } from "../services/passportjs";
 import logger from "../services/logger"; // Import Winston Logger
+import LogError from "../utils/error_logger"; // Import error logging utility
 
 const serviceLocation = "API(Upload)";
 const router = express.Router();
@@ -17,7 +18,9 @@ router.put("/upload", isAuth, upload.any(), async (req: Request, res: Response, 
     logger.info(`${serviceLocation}: Received file upload request from user ${req.user?.username} with id ${req.user?._id}`);
     await handleUpload(req, res);
   } catch (error) {
-    next(error);
+    LogError(error as Error, serviceLocation, "Error handling file upload");
+    logger.error(`${serviceLocation}: Error handling file upload: ${error}`);
+    res.status(500).json({ message: "An error occurred while processing the upload." });  
   }
 });
 
