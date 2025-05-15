@@ -1,4 +1,4 @@
-// File: src/services/upload.ts
+// File: src/services/project_handler.ts
 // Description: Service layer for handling file upload logic including generating SHA-256 hashes,
 // storing file metadata into the database, and preparing file details for response.
 
@@ -19,13 +19,14 @@ import { exec } from "child_process";
 import logger from "./logger";
 import LogError from "../utils/error_logger";
 
-const serviceLocation = "Upload"
+const serviceLocation = "Project Handler"
 
-export const handleUpload = async (req: Request, res: Response) => {
+export const saveFileAndPushToS3 = async (req: Request, res: Response) => {
   // With fields configuration, files are now in req.files.files
   const files = req.files && 'files' in req.files ? req.files.files : [];
   const userId = (req.user as any)?._id;
 
+  // Should not fall here due to Multer
   if (!files || files.length === 0) {
     return res.status(400).json({
       success: false,
@@ -33,6 +34,7 @@ export const handleUpload = async (req: Request, res: Response) => {
     });
   }
 
+  // Should not fall here due to isAuth
   if (!userId) {
     return res.status(400).json({
       success: false,
@@ -57,6 +59,7 @@ export const handleUpload = async (req: Request, res: Response) => {
     let actualTarFilePath: string | undefined;
     let storedPath: string | undefined;
 
+    // Should not fall here due to Multer
     try {
       if (!isValidFileFormat(originalname)) {
         return res.status(400).json({
@@ -191,7 +194,7 @@ export const handleUpload = async (req: Request, res: Response) => {
         name: projectName || originalname,
         originalfilename: originalname,
         description: description || "",
-        isSaved: true,
+        isSaved: false,
         filename: generatedFilename,
         filetype: mimetype as any,
         filesize: size,

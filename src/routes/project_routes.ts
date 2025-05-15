@@ -4,7 +4,7 @@
 
 import express, { Request, Response } from "express";
 import { projectUploadFilter } from "../middleware/uploadmiddleware";
-import { handleUpload } from "../services/upload";
+import { saveFileAndPushToS3 } from "../services/project_handler";
 import { isAuth } from "../services/passportjs";
 import logger from "../services/logger"; // Import Winston Logger
 import LogError from "../utils/error_logger"; // Import error logging utility
@@ -19,7 +19,7 @@ router.put("/upload-new-project",
   async (req: Request, res: Response) => {
     try {
       logger.info(`${serviceLocation}: Received file upload request from user ${req.user?.username} with id ${req.user?._id}`);
-      await handleUpload(req, res);
+      await saveFileAndPushToS3(req, res);
     } catch (error) {
       LogError(error as Error, serviceLocation, "Error handling file upload");
       res.status(500).json({ success: false, message: "An error occurred while processing the upload." });
