@@ -112,7 +112,7 @@ app.use('/auth', authenticationRoute);
 app.use('/project', projectRoute);
 
 // Mount GPU webhook routes under root path
-app.use('/', webhookRoute);
+app.use('/webhook', webhookRoute);
 
 // Debug Route
 if (envType === 'development') {
@@ -121,7 +121,7 @@ if (envType === 'development') {
 }
 
 // Segmentation Data Routes
-app.use('/api/segmentations', segmentationRoutes); // Mount the segmentation routes
+app.use('/segmentation', segmentationRoutes); // Mount the segmentation routes
 
 // Status Routes (mount under '/status')
 app.use('/status', gpuStatusRoute); // Mount GPU status routes
