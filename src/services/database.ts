@@ -1431,7 +1431,7 @@ const createJob = async (job: IJob): Promise<JobCrudResult> => {
   }
 }
 
-// readJob function
+// readJob function (only single job)
 const readJob = async (uuid: string): Promise<JobCrudResult> => {
   const operation = CRUDOperation.READ;
   try {
