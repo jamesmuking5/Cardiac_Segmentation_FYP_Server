@@ -7,7 +7,7 @@ import authenticationRoute from '../routes/authentication';
 import uploadRoute from '../routes/uploadroutes';
 import webhookRoute from '../routes/webhook_routes';
 import debugRoute from '../routes/debug_routes';
-import segmentationRoutes from '../routes/segmentation_routes'; 
+import segmentationRoutes from '../routes/segmentation_routes';
 import gpuStatusRoute from '../routes/gpu_status';
 import logger from './logger';
 import cors from 'cors';
@@ -18,7 +18,7 @@ const serviceLocation = "ExpressApp"; // For logging context
 
 /* Middleware */
 // Apply essential middleware like parsing JSON bodies
-app.use(express.json({limit: '10mb'})); // Increase limit for large JSON payloads (for webhook callback)
+app.use(express.json({ limit: '10mb' })); // Increase limit for large JSON payloads (for webhook callback)
 
 // Setup Redis session store
 const redisStore = new RedisStore({
