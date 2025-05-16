@@ -4,7 +4,7 @@
 import express, { Request, Response, NextFunction } from "express";
 import passport from "passport";
 import { IUser, IUserSafe, UserRole, createUser, readUser, updateUser, deleteUser, authenticateUser } from "../services/database"; // CRUD + Auth functions for User
-import { isAuth, isAuthAndAdmin, isAuthAndUser } from "../services/passportjs"; // Import Passport.js middleware
+import { isAuth, isAuthAndAdmin, isAuthAndNotGuest } from "../services/passportjs"; // Import Passport.js middleware
 import logger from "../services/logger"; // Import logger
 import validateFields from "../utils/field_validation"; // Import reusable validation middleware
 import { validationResult } from 'express-validator'; // Import express-validator for input validation
@@ -203,7 +203,7 @@ router.post("/guest", async (req: Request, res: Response): Promise<void> => {
 router.post("/update",
   // Validate the input fields for update
   validateFields,
-  isAuthAndUser, async (req: Request, res: Response): Promise<void> => {
+  isAuthAndNotGuest, async (req: Request, res: Response): Promise<void> => {
     try {
       if (req.user && req.user._id) {
         const userid = req.user._id;
@@ -240,7 +240,7 @@ router.post("/update",
 
 // Update route for user password
 router.post("/update-password",
-  isAuthAndUser,
+  isAuthAndNotGuest,
   validateFields[1], async (req: Request, res: Response): Promise<void> => {
     try {
       if (req.user && req.user._id) {
