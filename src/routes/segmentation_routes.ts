@@ -29,6 +29,7 @@ router.post("/start-segmentation/:projectId",
         }
     });
 
+    
 // router.get("/results/project/:projectId", isAuth, async (req: Request, res: Response) => {
 //     const { projectId } = req.params;
 
