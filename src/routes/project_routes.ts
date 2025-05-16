@@ -5,7 +5,7 @@
 import express, { Request, Response } from "express";
 import { projectUploadFilter } from "../middleware/uploadmiddleware";
 import { saveFileAndPushToS3 } from "../services/project_handler";
-import { isAuth } from "../services/passportjs";
+import { isAuth, isAuthAndNotGuest } from "../services/passportjs";
 import { readProject, updateProject } from "../services/database";
 import { FileType } from "../types/database_types"; // Import FileType enum
 
@@ -147,6 +147,98 @@ router.patch("/update-project", isAuth, async (req: Request, res: Response) => {
       logger.error(`${serviceLocation}: Error updating project ${projectId} - ${error.message}`);
       return res.status(500).json({ message: "Failed to update project details." });
     }
+});
+
+// Route to save project (isSaved = true)
+// This route is for updating project status to save, so that cron job would not delete
+router.patch("/save-project", isAuthAndNotGuest, async (req: Request, res: Response) => {
+  try {
+    const { projectId, isSaved } = req.body;
+    const userId = (req.user)?._id;
+    
+    // Check for user authentication
+    if (!userId) {
+      return res.status(401).json({ 
+        success: false, 
+        message: "Unauthorized. User ID not found." 
+      });
+    }
+    
+    // If projectId and isSaved are not provided, return error
+    if (!projectId) {
+      return res.status(400).json({ 
+        success: false, 
+        message: "Missing projectId." 
+      });
+    }
+    
+    if (isSaved === undefined) {
+      return res.status(400).json({ 
+        success: false, 
+        message: "Missing isSaved value." 
+      });
+    }
+
+    // Check if isSaved is a valid boolean
+    if (typeof isSaved !== "boolean") {
+      return res.status(400).json({ 
+        success: false, 
+        message: "isSaved must be a boolean." 
+      });
+    }
+
+    // Check if projectId is valid and belongs to the user
+    const projectExist = await readProject(projectId, userId);
+    
+    // Handle case where project doesn't exist or doesn't belong to user
+    if (!projectExist.success) {
+      return res.status(404).json({ 
+        success: false, 
+        message: projectExist.message || `Error looking up project ${projectId}.` 
+      });
+    }
+    
+    if (!projectExist.projects || projectExist.projects.length === 0) {
+      return res.status(404).json({ 
+        success: false, 
+        message: `Project ${projectId} not found or you don't have access to it.` 
+      });
+    }
+
+    // Update the project status - pass both projectId and userId for security
+    const updateProjectToSaved = await updateProject(
+      projectId,
+      { isSaved: isSaved } // Update only the isSaved field
+    );
+
+    // Handle update result with proper error handling
+    if (updateProjectToSaved.success) {
+      logger.info(`${serviceLocation}: User ${userId} updated project ${projectId} saved status to ${isSaved}`);
+      return res.status(200).json({ 
+        success: true,
+        message: `Project ${projectId} saved status updated to ${isSaved}.` 
+      });
+    } else {
+      // Handle failed update
+      return res.status(400).json({ 
+        success: false, 
+        message: updateProjectToSaved.message || `Failed to update saved status for project ${projectId}.` 
+      });
+    }
+  } catch (error) {
+    // Catch and log any unexpected errors
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    LogError(
+      error instanceof Error ? error : new Error(errorMessage),
+      serviceLocation,
+      `Error updating project saved status for project ID: ${req.body?.projectId}`
+    );
+    
+    return res.status(500).json({ 
+      success: false,
+      message: "An unexpected error occurred while updating the project status." 
+    });
+  }
 });
 
 export default router;
