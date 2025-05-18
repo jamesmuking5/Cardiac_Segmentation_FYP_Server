@@ -1409,6 +1409,8 @@ const jobSchema = new mongoose.Schema({
     required: false 
   }, 
   message: { type: String, required: false }, // Message related to the job
+  segmentationName: { type: String, required: false }, // Optional user-defined name
+  segmentationDescription: { type: String, required: false }, // Optional user-defined description
 }, { timestamps: true });
 const jobModel = mongoose.model<IJobDocument>('Job', jobSchema);
  

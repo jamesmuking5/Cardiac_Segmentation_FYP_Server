@@ -78,7 +78,8 @@ router.post("/start-manual-segmentation/:projectId",
     injectGpuAuthToken,
     async (req: Request, res: Response) => {
         const { projectId } = req.params;
-        const { image_name, bbox } = req.body; // Expect image_name and bbox in the request body
+        // Extract image_name, bbox, segmentation_source, segmentationName, and segmentationDescription
+        const { image_name, bbox, segmentation_source, segmentationName, segmentationDescription } = req.body; 
 
         logger.info(`${serviceLocation}: Received start MANUAL inference request for project ${projectId}, image ${image_name} by user ${req.user?.username} with id ${req.user?._id}`);
 
@@ -92,9 +93,24 @@ router.post("/start-manual-segmentation/:projectId",
             return res.status(400).json({ message: "Invalid 'bbox' in request body. Expected an array of 4 numbers." });
         }
 
+        // Validate segmentationName and segmentationDescription if needed (e.g., length)
+        if (segmentationName && typeof segmentationName !== 'string') {
+            logger.warn(`${serviceLocation}: Manual segmentation request for project ${projectId} has invalid 'segmentationName'.`);
+            return res.status(400).json({ message: "Invalid 'segmentationName'. Must be a string." });
+        }
+        if (segmentationDescription && typeof segmentationDescription !== 'string') {
+            logger.warn(`${serviceLocation}: Manual segmentation request for project ${projectId} has invalid 'segmentationDescription'.`);
+            return res.status(400).json({ message: "Invalid 'segmentationDescription'. Must be a string." });
+        }
+    
         try {
-            const manualInput = { image_name, bbox };
-            // Ensure req.user is correctly typed or cast if necessary for startManualInference
+            const manualInput = { 
+                image_name, 
+                bbox, 
+                segmentation_source,
+                segmentationName,      // Pass to service
+                segmentationDescription // Pass to service
+            };
             const result = await startManualInference(projectId, req.user as any, res.locals.gpuAuthToken, manualInput);
             
             if (result.success) {
