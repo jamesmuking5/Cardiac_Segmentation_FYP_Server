@@ -15,6 +15,9 @@ const cloudGpuBaseUrl = process.env.CLOUD_GPU_URL_AND_PORT;
 interface ManualSegmentationInput {
     image_name: string;
     bbox: number[]; // e.g., [x_min, y_min, x_max, y_max]
+    segmentation_source?: 'original' | 'ai_processed';
+    segmentationName?: string;
+    segmentationDescription?: string;
 }
 
 const sendInferenceRequestToCloudGpu = async (inferenceData: any, gpuAuthToken: string): Promise<{ success: boolean; jobId?: string; error?: string }> => {
@@ -97,7 +100,6 @@ export const startInference = async (projectId: string, user?: IUserSafe, gpuAut
         logger.error(`${serviceLocation}: CALLBACK_URL is not set in environment variables. Cannot start inference for project ${projectId}.`);
         return { success: false, message: "Callback URL not configured for inference." };
     }
-    
 
     const s3BucketName = process.env.AWS_BUCKET_NAME;
     if (!s3BucketName) {
@@ -212,9 +214,9 @@ export const startManualInference = async (
         return { success: false, message: "GPU authentication token is required." };
     }
 
-    const callback_url = process.env.CALLBACK_URL; // Using GPU_CALLBACK_URL as specified for manual
+    const callback_url = process.env.CALLBACK_URL; 
     if (!callback_url) {
-        logger.error(`${serviceLocationManual}: GPU_CALLBACK_URL is not set in environment variables for project ${projectId}.`);
+        logger.error(`${serviceLocationManual}: CALLBACK_URL is not set in environment variables for project ${projectId}.`);
         return { success: false, message: "Callback URL for GPU server is not configured." };
     }
 
@@ -286,6 +288,8 @@ export const startManualInference = async (
                 projectid: projectId,
                 uuid: jobUuid, // Our internal UUID
                 status: JobStatus.PENDING,
+                segmentationName: manualInput.segmentationName, // Store the name
+                segmentationDescription: manualInput.segmentationDescription, // Store the description
             };
             const jobCreationResult = await createJob(jobData);
             if (!jobCreationResult.success) {
@@ -302,6 +306,8 @@ export const startManualInference = async (
                 projectid: projectId,
                 uuid: jobUuid,
                 status: JobStatus.PENDING,
+                segmentationName: manualInput.segmentationName, // Store the name
+                segmentationDescription: manualInput.segmentationDescription, // Store the description
             };
             await createJob(jobData); // Attempt to create job, log if fails but proceed
             return { success: true, message: `Manual inference request sent for project ${projectId}, but no Job ID was clearly identified from GPU. Using local UUID: ${jobUuid}`, uuid: jobUuid };

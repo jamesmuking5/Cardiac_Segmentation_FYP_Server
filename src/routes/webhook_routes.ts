@@ -1,7 +1,6 @@
 
 import express, { Request, Response, NextFunction } from "express";
 import logger from "../services/logger"; // Import Winston Logger
-
 import { updateJob, readJob, createProjectSegmentationMask } from "../services/database"; // Import database function to update job status
 import { JobStatus, IProjectSegmentationMask, ComponentBoundingBoxesClass, CRUDOperation, IJob } from "../types/database_types"; // Import JobStatus enum and IJob type
 import LogError from "../utils/error_logger";
@@ -27,6 +26,7 @@ router.post("/gpu-callback", async (req: Request, res: Response) => {
         logger.error(`${serviceLocation}: Job with GPU Job ID ${gpuJobId} not found in database. Reason: ${jobReadResult.message || "Job not found"}`);
         return res.status(404).json({ message: `Job with GPU Job ID ${gpuJobId} not found` });
     }
+    const job = jobReadResult.job; // Get the full job object
 
     // MODIFIED: Destructure 'error' instead of 'message' for error details
     // MODIFIED: 'status' from Python will be 'completed' or 'failed'
@@ -79,11 +79,11 @@ router.post("/gpu-callback", async (req: Request, res: Response) => {
 
             const newSegmentationSet: Partial<IProjectSegmentationMask> = {
                 projectid: projectId,
-                name: `AI Output - Job ${gpuJobId.substring(0, 8)}`, // Example name
-                description: `Automated segmentation results from inference job ${gpuJobId}`,
-                isSaved: true,
-                isMedSAMOutput: true, 
-                segmentationmaskRLE: true, 
+                // Use the name and description from the job, or fallback/generate if not present
+                name: job.segmentationName || `AI Output - Job ${gpuJobId.substring(0, 8)}`, 
+                description: job.segmentationDescription || `Automated segmentation results from inference job ${gpuJobId}`,
+                isSaved: true, // Or based on some logic/default
+                isMedSAMOutput: true, // Assuming manual inference implies MedSAM output
                 frames: []
             };
 

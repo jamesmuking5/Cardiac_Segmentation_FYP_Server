@@ -262,6 +262,8 @@ export interface IJob {
     status: JobStatus; // Current status of the job (e.g., pending, in_progress, completed, failed)
     result?: string; // Result of the job (e.g., path to the output file, success message, etc.)
     message?: string; // Optional error message if the job fails
+    segmentationName?: string; // Optional user-defined name for the resulting segmentation
+    segmentationDescription?: string; // Optional user-defined description for the resulting segmentation
 }
 export interface IJobDocument extends IJob, Document { }
 
