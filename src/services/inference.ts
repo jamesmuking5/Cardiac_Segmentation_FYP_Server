@@ -12,6 +12,11 @@ import { generatePresignedGetUrl } from "../utils/s3_presigned_url";
 const serviceLocation = "Inference";
 const cloudGpuBaseUrl = process.env.CLOUD_GPU_URL_AND_PORT;
 
+interface ManualSegmentationInput {
+    image_name: string;
+    bbox: number[]; // e.g., [x_min, y_min, x_max, y_max]
+}
+
 const sendInferenceRequestToCloudGpu = async (inferenceData: any, gpuAuthToken: string): Promise<{ success: boolean; jobId?: string; error?: string }> => {
     if (!cloudGpuBaseUrl) {
         logger.error(`${serviceLocation}: CLOUD_GPU_URL_AND_PORT is not set in environment variables.`);
@@ -78,6 +83,7 @@ const sendInferenceRequestToCloudGpu = async (inferenceData: any, gpuAuthToken: 
         return { success: false, error: errorMessage };
     }
 };
+
 export const startInference = async (projectId: string, user?: IUserSafe, gpuAuthToken?: string): Promise<{ success: boolean; message: string; uuid?: string }> => {
     logger.info(`${serviceLocation}: Received start inference request for project ${projectId} by user ${user?.username} with id ${user?._id}`);
 
@@ -189,5 +195,122 @@ export const startInference = async (projectId: string, user?: IUserSafe, gpuAut
     } catch (error: any) {
         logger.error(`${serviceLocation}: Critical error starting inference for project ${projectId}:`, error);
         return { success: false, message: `Error starting inference: ${error.message}` };
+    }
+};
+
+export const startManualInference = async (
+    projectId: string,
+    user: IUserSafe | undefined,
+    gpuAuthToken: string,
+    manualInput: ManualSegmentationInput
+): Promise<{ success: boolean; message: string; uuid?: string }> => {
+    const serviceLocationManual = `${serviceLocation}/startManualInference`;
+    logger.info(`${serviceLocationManual}: Starting manual inference for project ${projectId}, image ${manualInput.image_name} by user ${user?.username}`);
+
+    if (!gpuAuthToken) {
+        logger.error(`${serviceLocationManual}: GPU authentication token is missing for project ${projectId}.`);
+        return { success: false, message: "GPU authentication token is required." };
+    }
+
+    const callback_url = process.env.GPU_CALLBACK_URL; // Using GPU_CALLBACK_URL as specified for manual
+    if (!callback_url) {
+        logger.error(`${serviceLocationManual}: GPU_CALLBACK_URL is not set in environment variables for project ${projectId}.`);
+        return { success: false, message: "Callback URL for GPU server is not configured." };
+    }
+
+    const s3BucketName = process.env.AWS_BUCKET_NAME || process.env.S3_BUCKET_NAME; // Consistent with startInference, with a fallback
+    if (!s3BucketName) {
+        logger.error(`${serviceLocationManual}: AWS_BUCKET_NAME or S3_BUCKET_NAME environment variable is not set for project ${projectId}.`);
+        return { success: false, message: "S3 bucket name not configured." };
+    }
+
+    try {
+        const projectResult: ProjectCrudResult = await readProject(projectId);
+        // Consistent with startInference: check projects array
+        if (!projectResult.success || !projectResult.projects || projectResult.projects.length === 0) {
+            logger.warn(`${serviceLocationManual}: Project with ID ${projectId} not found or error reading project.`);
+            return { success: false, message: projectResult.message || `Project with ID ${projectId} not found.` };
+        }
+
+        const projectData = projectResult.projects[0];
+
+        // Use extractedfolderpath, consistent with startInference
+        const s3HttpsUrlForTar = projectData.extractedfolderpath;
+        if (!s3HttpsUrlForTar) {
+            logger.error(`${serviceLocationManual}: Project ${projectId} does not have an extractedfolderpath (URL for the .tar file).`);
+            return { success: false, message: "Project TAR file URL is missing." };
+        }
+
+        let objectKeyForTar: string;
+        try {
+            const parsedUrl = new URL(s3HttpsUrlForTar);
+            objectKeyForTar = parsedUrl.pathname;
+            if (objectKeyForTar.startsWith('/')) {
+                objectKeyForTar = objectKeyForTar.substring(1); // Remove leading slash
+            }
+        } catch (e: any) {
+            logger.error(`${serviceLocationManual}: Invalid S3 URL format in project.extractedfolderpath for project ${projectId}: ${s3HttpsUrlForTar}`, e);
+            return { success: false, message: `Invalid project TAR file URL format: ${e.message}` };
+        }
+
+        if (!objectKeyForTar) {
+            logger.error(`${serviceLocationManual}: Could not extract S3 object key from TAR file URL for project ${projectId}: ${s3HttpsUrlForTar}`);
+            return { success: false, message: "Failed to determine S3 object key for TAR file." };
+        }
+
+        const dataUrlForGpu = await generatePresignedGetUrl(s3BucketName, objectKeyForTar);
+        if (!dataUrlForGpu) {
+            logger.error(`${serviceLocationManual}: Failed to generate presigned S3 URL for project ${projectId}, TAR S3 Key: ${objectKeyForTar}`);
+            return { success: false, message: "Failed to prepare TAR file URL for inference." };
+        }
+
+        const jobUuid = uuidv4();
+        
+        const inferenceData = {
+            uuid: jobUuid,
+            callback_url: callback_url, // Using the specific GPU_CALLBACK_URL
+            url: dataUrlForGpu,
+            image_name: manualInput.image_name,
+            bbox: manualInput.bbox,
+        };
+
+        logger.info(`${serviceLocationManual}: Prepared manual inference data for project ${projectId}, UUID ${jobUuid}. Image: ${manualInput.image_name}, BBox: [${manualInput.bbox.join(', ')}]. TAR S3 Key: ${objectKeyForTar}. Callback URL: ${inferenceData.callback_url}`);
+
+        const inferenceResult = await sendInferenceRequestToCloudGpu(inferenceData, gpuAuthToken);
+
+        if (inferenceResult.success && inferenceResult.jobId) {
+            logger.info(`${serviceLocationManual}: Manual inference request sent successfully for project ${projectId}. GPU Job ID: ${inferenceResult.jobId}, Local UUID: ${jobUuid}.`);
+
+            const jobData: IJob = {
+                userid: user?._id?.toString() || 'unknown',
+                projectid: projectId,
+                uuid: jobUuid, // Our internal UUID
+                status: JobStatus.PENDING,
+            };
+            const jobCreationResult = await createJob(jobData);
+            if (!jobCreationResult.success) {
+                logger.error(`${serviceLocationManual}: Failed to create job entry in database for project ${projectId}, UUID ${jobUuid}: ${jobCreationResult.message}`);
+                // Still return success as GPU request was made, but log the local tracking failure
+                return { success: true, message: `Manual inference accepted by GPU (Job ID: ${inferenceResult.jobId}), but failed to track job locally. UUID: ${jobUuid}`, uuid: jobUuid };
+            }
+            return { success: true, message: "Manual inference started successfully.", uuid: jobUuid };
+        } else if (inferenceResult.success) { // Success but no definite jobId from GPU
+             logger.warn(`${serviceLocationManual}: Manual inference request reported success for project ${projectId} but no definite Job ID was returned from GPU. Local UUID: ${jobUuid}. Using local UUID as Job ID.`);
+            // Create job with local UUID if GPU doesn't return one but call was successful
+            const jobData: IJob = {
+                userid: user?._id?.toString() || 'unknown',
+                projectid: projectId,
+                uuid: jobUuid,
+                status: JobStatus.PENDING,
+            };
+            await createJob(jobData); // Attempt to create job, log if fails but proceed
+            return { success: true, message: `Manual inference request sent for project ${projectId}, but no Job ID was clearly identified from GPU. Using local UUID: ${jobUuid}`, uuid: jobUuid };
+        } else {
+            logger.error(`${serviceLocationManual}: Failed to send manual inference request to Cloud GPU for project ${projectId}. Error: ${inferenceResult.error}`);
+            return { success: false, message: inferenceResult.error || "Failed to start manual inference on Cloud GPU." };
+        }
+    } catch (error: any) {
+        logger.error(`${serviceLocationManual}: Critical error starting manual inference for project ${projectId}:`, error);
+        return { success: false, message: `Error starting manual inference: ${error.message}` };
     }
 };
