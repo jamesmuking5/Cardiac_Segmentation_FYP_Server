@@ -212,7 +212,7 @@ export const startManualInference = async (
         return { success: false, message: "GPU authentication token is required." };
     }
 
-    const callback_url = process.env.GPU_CALLBACK_URL; // Using GPU_CALLBACK_URL as specified for manual
+    const callback_url = process.env.CALLBACK_URL; // Using GPU_CALLBACK_URL as specified for manual
     if (!callback_url) {
         logger.error(`${serviceLocationManual}: GPU_CALLBACK_URL is not set in environment variables for project ${projectId}.`);
         return { success: false, message: "Callback URL for GPU server is not configured." };
