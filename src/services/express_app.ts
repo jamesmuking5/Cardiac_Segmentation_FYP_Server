@@ -59,6 +59,7 @@ app.use(
       httpOnly: true,
       sameSite: 'none', // Allow cross-site requests 
       maxAge: 1000 * 60 * 60 * 24, // 1 day
+      sameSite: 'none', 
     },
   })
 )
