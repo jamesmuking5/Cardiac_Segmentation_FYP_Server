@@ -2,6 +2,7 @@
 // Description: This module handles AWS S3 interactions, including uploading files, deleting objects, and extracting S3 keys from URLs.
 
 import { S3Client, PutObjectCommand, PutObjectCommandInput, DeleteObjectCommand } from "@aws-sdk/client-s3";
+import { projectModel } from "../services/database";
 import logger from "./logger"; // Import your logger
 import fs from "fs";
 
@@ -161,5 +162,44 @@ export const uploadToS3 = async (
         ? `Error uploading to S3: ${error.message}`
         : "Error uploading to S3: Unknown error occurred"
     );
+  }
+};
+
+export const cleanupUserS3Storage = async (userId: string): Promise<void> => {
+  const serviceLocation = "S3Handler - Cleanup User S3 Storage";
+  try {
+    logger.info(`${serviceLocation}: Starting S3 cleanup for user ${userId}.`);
+
+    // Step 1: Find all projects for the user
+    const projects = await projectModel.find({ userid: userId }).lean();
+    if (!projects || projects.length === 0) {
+      logger.info(`${serviceLocation}: No projects found for user ${userId}.`);
+      return;
+    }
+
+    // Step 2: Collect all S3 keys from the projects
+    const s3Keys: string[] = [];
+    for (const project of projects) {
+      if (project.originalfilepath) {
+        const key = extractS3KeyFromUrl(project.originalfilepath);
+        if (key) s3Keys.push(key);
+      }
+      if (project.extractedfolderpath) {
+        const key = extractS3KeyFromUrl(project.extractedfolderpath);
+        if (key) s3Keys.push(key);
+      }
+    }
+
+    // Step 3: Delete all S3 files
+    for (const key of s3Keys) {
+      const success = await deleteFromS3(key);
+      if (!success) {
+        logger.warn(`${serviceLocation}: Failed to delete S3 file with key ${key}.`);
+      }
+    }
+
+    logger.info(`${serviceLocation}: S3 cleanup completed for user ${userId}.`);
+  } catch (error) {
+    logger.error(`${serviceLocation}: Error during S3 cleanup for user ${userId}:`, error);
   }
 };
