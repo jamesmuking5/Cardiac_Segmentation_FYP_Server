@@ -21,6 +21,14 @@ RUN npm run build
 FROM node:18-alpine
 WORKDIR /app
 
+# Install Python and its dependencies (no --no-cache on initial apk add, better to prune later)
+RUN apk add python3 py3-pip \
+    build-base \
+    g++ \
+    libgomp \
+    # Clean up apk cache immediately to reduce layer size
+    && rm -rf /var/cache/apk/*
+
 # Copy package files again for production install
 COPY package*.json ./
 
@@ -30,8 +38,24 @@ RUN npm ci --only=production
 # Copy built application from the builder stage
 COPY --from=builder /app/dist ./dist
 
-# Optional: If you pruned in the builder stage, copy node_modules
+# Copy Node.js node_modules from the builder stage
 COPY --from=builder /app/node_modules ./node_modules
+
+# Create a directory for Python scripts inside the /app directory
+RUN mkdir -p /app/python
+
+# Copy the Python scripts
+COPY src/python/extract_metadata.py /app/python/
+COPY src/python/convert_to_jpeg.py /app/python/
+
+# Install Python dependencies for your scripts in a virtual environment
+COPY src/python/requirements.txt /app/python/
+RUN python3 -m venv /opt/venv \
+    && /opt/venv/bin/pip install --no-cache-dir -r /app/python/requirements.txt
+
+# Activate the virtual environment for subsequent commands
+# This ensures that when Node.js calls 'python3', it uses the one from the venv
+ENV PATH="/opt/venv/bin:$PATH"
 
 EXPOSE 3000
 
