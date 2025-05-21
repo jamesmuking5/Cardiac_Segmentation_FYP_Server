@@ -82,7 +82,7 @@ router.post("/gpu-callback", async (req: Request, res: Response) => {
                 // Use the name and description from the job, or fallback/generate if not present
                 name: job.segmentationName || `AI Output - Job ${gpuJobId.substring(0, 8)}`, 
                 description: job.segmentationDescription || `Automated segmentation results from inference job ${gpuJobId}`,
-                isSaved: true, // Or based on some logic/default
+                isSaved: false, // Or based on some logic/default
                 isMedSAMOutput: true, // Assuming manual inference implies MedSAM output
                 frames: []
             };

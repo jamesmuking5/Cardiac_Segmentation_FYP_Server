@@ -6,9 +6,12 @@ import passport from "passport";
 import { IUser, IUserSafe, UserRole, createUser, readUser, updateUser, deleteUser, authenticateUser } from "../services/database"; // CRUD + Auth functions for User
 import { isAuth, isAuthAndAdmin, isAuthAndNotGuest } from "../services/passportjs"; // Import Passport.js middleware
 import logger from "../services/logger"; // Import logger
+import { extractS3KeyFromUrl, deleteFromS3 } from "../services/s3_handler";
 import validateFields from "../utils/field_validation"; // Import reusable validation middleware
 import { validationResult } from 'express-validator'; // Import express-validator for input validation
 import { v4 as uuidv4 } from 'uuid'; // Import UUID for generating unique guest IDs
+import { cleanupUserS3Storage } from '../services/s3_handler';
+import { handleUserSaveUnsave } from "../jobs/projectcleanupjob"; // Import project handler for user project management
 
 const router = express.Router();
 const serviceLocation = "API(Authentication)"; // Service location for logging
@@ -91,7 +94,6 @@ router.post("/login",
 );
 
 router.post("/logout", isAuth, async (req: Request, res: Response): Promise<void> => {
-  // Store user info before logout for potential guest cleanup
   const user = req.user;
   const isGuest = user && typeof user.username === 'string' && user.username.startsWith('guest_');
   const userId = user?._id;
@@ -113,17 +115,15 @@ router.post("/logout", isAuth, async (req: Request, res: Response): Promise<void
       res.status(500).json({ message: "Internal error when logging out." });
       return; // Stop further execution
     }
-
-    // If this is a guest user, delete their account after logout
+    // If this is a guest user, delete their account and associated data
     if (isGuest && userId) {
       try {
         logger.info(`${serviceLocation}: Cleaning up guest user account: ${username}`);
 
-        // Here you would add your S3 cleanup code
-        // For example:
-        // await cleanupUserS3Storage(userId);
+        // Step 1: Cleanup S3 files for the guest user
+        await cleanupUserS3Storage(userId);
 
-        // Delete the user which will cascade delete all associated records
+        // Step 2: Delete the user, which will cascade delete all associated records
         const deleteResult = await deleteUser(userId);
 
         if (deleteResult.success) {
@@ -133,6 +133,21 @@ router.post("/logout", isAuth, async (req: Request, res: Response): Promise<void
         }
       } catch (cleanupError) {
         logger.error(`${serviceLocation}: Error during guest cleanup for ${username} (${userId}): ${cleanupError}`);
+        // Continue with response even if cleanup fails - the user is still logged out
+      }
+    }
+
+    // If this is a regular user (not a guest), handle their projects
+    if (!isGuest && userId) {
+      try {
+        logger.info(`${serviceLocation}: Cleaning up user projects for user: ${username}`);
+
+        // Use handleUserSaveUnsave to process user projects
+        await handleUserSaveUnsave(userId, false); // Set isSaved=false to delete unsaved projects
+
+        logger.info(`${serviceLocation}: User ${username} (${userId}) projects processed successfully.`);
+      } catch (cleanupError) {
+        logger.error(`${serviceLocation}: Error during user project cleanup for ${username} (${userId}): ${cleanupError}`);
         // Continue with response even if cleanup fails - the user is still logged out
       }
     }

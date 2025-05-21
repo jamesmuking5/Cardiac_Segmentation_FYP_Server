@@ -1,7 +1,7 @@
 import cron from 'node-cron';
 import { readUser, deleteUser, UserRole, } from '../services/database';
 import logger from '../services/logger';
-// import { cleanupUserS3Storage } from '../services/s3Cleanup'; // Assuming you create this
+import { cleanupUserS3Storage } from '../services/s3_handler';
 
 let INACTIVE_THRESHOLD_MS = parseInt(process.env.GUEST_INACTIVITY_THRESHOLD_HOURS || '24', 10) * 60 * 60 * 1000; // Default 24 hours
 // If development, set to 0 to trigger immediate cleanup
@@ -33,8 +33,8 @@ async function cleanupInactiveGuests(): Promise<void> {
             if (now - lastActivity > INACTIVE_THRESHOLD_MS) {
                 logger.info(`GuestCleanupJob: Found inactive guest ${guest.username} (${guest._id}). Last active: ${new Date(lastActivity).toISOString()}. Cleaning up...`);
 
-                // 1. TODO: Add S3 Cleanup
-                // await cleanupUserS3Storage(guest._id); 
+                // Step 1: Cleanup S3 files
+                await cleanupUserS3Storage(guest._id);
 
                 // 2. Delete DB Records
                 const deleteResult = await deleteUser(guest._id);
@@ -67,5 +67,4 @@ export async function scheduleGuestCleanup(): Promise<void> {
 
     // Optional: Run immediately on startup
     await cleanupInactiveGuests(); // Uncomment to run immediately on startup
-
 }
