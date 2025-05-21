@@ -57,7 +57,9 @@ app.use(
     cookie: {
       secure: process.env.NODE_ENV === 'production',
       httpOnly: true,
+      sameSite: 'none', // Allow cross-site requests 
       maxAge: 1000 * 60 * 60 * 24, // 1 day
+      sameSite: 'none', 
     },
   })
 )
@@ -102,7 +104,7 @@ app.use(passport.session()); // Enable persistent login sessions
 // Root Route
 app.get('/', (req: Request, res: Response) => { // Use _req if req is unused
   logger.info(`${serviceLocation}: Root route accessed`);
-  res.json({ message: 'Welcome to the VisHeart API!' });
+  res.json({ message: 'Welcome to the VisHeart API! Pushed 21/5/2025 5:30PM' });
 });
 
 // Mount authentication routes under '/auth'

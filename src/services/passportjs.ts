@@ -94,11 +94,13 @@ configureSessionHandling();
  * Middleware to check if the user is authenticated
  */
 const isAuth = (req: Request, res: Response, next: NextFunction): void => {
+  logger.info(`${serviceLocation}: Authenticated User: ${req.user ? JSON.stringify(req.user) : 'undefined'}`);
   if (req.isAuthenticated()) {
     return next();
   }
   res.status(401).json({ message: "Unauthorized. Please log in." });
 };
+
 
 /**
  * Middleware to check if the user is authenticated and has admin role
