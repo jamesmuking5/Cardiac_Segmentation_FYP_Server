@@ -59,7 +59,6 @@ app.use(
       httpOnly: true,
       sameSite: 'none', // Allow cross-site requests 
       maxAge: 1000 * 60 * 60 * 24, // 1 day
-      sameSite: 'none', 
     },
   })
 )
@@ -73,10 +72,13 @@ if (envType === 'development') {
 } else {
   const allowedOrigins: string[] = [];
   if (process.env.CORS_ORIGIN) {
-    allowedOrigins.push(process.env.CORS_ORIGIN);
+    // Split the CORS_ORIGIN string by comma and add each origin to the array
+    process.env.CORS_ORIGIN.split(',').forEach(origin => {
+      allowedOrigins.push(origin.trim()); // trim whitespace
+    });
   }
   if (process.env.GPU_SERVER_ORIGIN_FOR_CALLBACK) {
-    allowedOrigins.push(process.env.GPU_SERVER_ORIGIN_FOR_CALLBACK);
+    allowedOrigins.push(process.env.GPU_SERVER_ORIGIN_FOR_CALLBACK.trim());
   }
 
   if (allowedOrigins.length > 0) {
