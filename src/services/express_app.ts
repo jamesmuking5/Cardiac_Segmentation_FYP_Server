@@ -105,6 +105,9 @@ app.use(
   })
 );
 
+// Trust proxy to properly read X-Forwarded-For header
+app.set("trust proxy", "loopback");
+
 // Initialize Passport.js
 app.use(passport.initialize());
 app.use(passport.session()); // Enable persistent login sessions
