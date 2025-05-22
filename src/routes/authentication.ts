@@ -162,7 +162,7 @@ router.post("/logout", isAuth, async (req: Request, res: Response): Promise<void
 
 // Delete user route
 router.post("/delete",
-  isAuthAndUser,
+  isAuthAndNotGuest,
   async (req: Request, res: Response): Promise<void> => {
     try {
       if (req.user && req.user._id) {
