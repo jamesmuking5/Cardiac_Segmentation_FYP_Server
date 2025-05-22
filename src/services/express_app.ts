@@ -58,7 +58,7 @@ app.use(
     // but the corresponding session data won't be stored in Redis until something is saved to req.session.
     saveUninitialized: false,
     cookie: {
-      secure: false,
+      secure: true, // Use true if using HTTPS, false for HTTP
       httpOnly: true,
       // sameSite: 'none', // Allow cross-site requests 
       maxAge: 1000 * 60 * 60 * 24, // 1 day
