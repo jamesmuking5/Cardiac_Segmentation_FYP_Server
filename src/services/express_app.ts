@@ -13,6 +13,7 @@ import logger from './logger';
 import cors from 'cors';
 import path from 'path';
 import fs from 'fs';
+import helmet from 'helmet';
 
 // Create express app instance
 const app = express();
@@ -57,8 +58,8 @@ app.use(
     // but the corresponding session data won't be stored in Redis until something is saved to req.session.
     saveUninitialized: false,
     cookie: {
-      secure: process.env.NODE_ENV === 'production',
-      httpOnly: false,
+      secure: false,
+      httpOnly: true,
       // sameSite: 'none', // Allow cross-site requests 
       maxAge: 1000 * 60 * 60 * 24, // 1 day
     },
@@ -98,19 +99,17 @@ app.use(cors({
   origin: corsOriginConfig,
   credentials: true, // Allow credentials (cookies) to be sent
 }));
-
+app.use(
+  helmet({
+    contentSecurityPolicy: false,
+  })
+);
 
 // Initialize Passport.js
 app.use(passport.initialize());
 app.use(passport.session()); // Enable persistent login sessions
 
 /* Routes */
-// // Root Route
-// app.get('/', (req: Request, res: Response) => { // Use _req if req is unused
-//   logger.info(`${serviceLocation}: Root route accessed`);
-//   res.json({ message: 'Welcome to the VisHeart API! Pushed 21/5/2025 5:30PM' });
-// });
-
 // Mount authentication routes under '/auth'
 app.use('/auth', authenticationRoute);
 
