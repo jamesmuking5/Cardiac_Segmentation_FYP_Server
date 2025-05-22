@@ -11,6 +11,8 @@ import segmentationRoutes from '../routes/segmentation_routes';
 import gpuStatusRoute from '../routes/gpu_status';
 import logger from './logger';
 import cors from 'cors';
+import path from 'path';
+import fs from 'fs';
 
 // Create express app instance
 const app = express();
@@ -129,6 +131,46 @@ app.use('/segmentation', segmentationRoutes); // Mount the segmentation routes
 
 // Status Routes (mount under '/status')
 app.use('/status', gpuStatusRoute); // Mount GPU status routes
+
+// Configure static file serving
+const configureStaticFiles = () => {
+  // Define base paths
+  const publicDir = path.join(__dirname, '../../public');
+  const publicAssetsDir = path.join(__dirname, '../../public/assets');
+  const indexHtmlPath = path.join(publicDir, 'index.html');
+
+  // Verify that the public directory exists
+  if (!fs.existsSync(publicDir)) {
+    logger.warn(`${serviceLocation}: Public directory not found at ${publicDir}`);
+  }
+
+  // Configure static file middleware with caching options
+  const staticOptions = {
+    maxAge: envType === 'production' ? '1d' : 0, // Cache for 1 day in production
+    etag: true,
+  };
+
+  // Serve static files from the 'public' directory
+  app.use(express.static(publicDir, staticOptions));
+  
+  // Serve assets with specific route
+  app.use('/assets', express.static(publicAssetsDir, staticOptions));
+
+  // SPA fallback - serve index.html for any unmatched routes
+  app.get('*', (req: Request, res: Response) => {
+    if (fs.existsSync(indexHtmlPath)) {
+      res.sendFile(indexHtmlPath);
+    } else {
+      logger.error(`${serviceLocation}: index.html not found at ${indexHtmlPath}`);
+      res.status(404).send('Application entry point not found');
+    }
+  });
+
+  logger.info(`${serviceLocation}: Static file serving configured`);
+};
+
+// Apply static file configuration
+configureStaticFiles();
 
 // Export the configured app instance
 export { app };
