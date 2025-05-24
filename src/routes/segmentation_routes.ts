@@ -3,8 +3,9 @@ import logger from "../services/logger";
 import { startInference, startManualInference } from "../services/inference"; 
 import { injectGpuAuthToken } from "../middleware/gpuauthmiddleware";
 import { readProjectSegmentationMask } from "../services/database";
-import { isAuth } from "../services/passportjs"; 
+import { isAuth, isAuthAndAdmin } from "../services/passportjs"; 
 import LogError from "../utils/error_logger";
+import { jobModel, userModel, JobStatus } from "../services/database";
 
 const router = Router();
 const serviceLocation = "SegmentationRoutes";
@@ -29,7 +30,6 @@ router.post("/start-segmentation/:projectId",
         }
     });
 
-    
 router.get("/segmentation-results/:projectId", isAuth, async (req: Request, res: Response) => {
     const { projectId } = req.params;
 
@@ -123,5 +123,120 @@ router.post("/start-manual-segmentation/:projectId",
             res.status(500).json({ message: "An unexpected error occurred while starting manual inference." });
         }
     });
+
+router.get("/user-check-jobs", isAuth, async (req: Request, res: Response) => {
+    const userId = (req.user as any)?._id;
     
+    logger.info(`${serviceLocation}: Fetching all jobs for user ${req.user?.username}`);
+    
+    try {
+        // Find all jobs for this user
+        const jobs = await jobModel.find({ 
+            userid: userId
+        }).sort({ createdAt: -1 }).limit(20); // Increased limit to see more jobs
+        
+        // Get queue information
+        const pendingJobs = await jobModel.find({
+            status: JobStatus.PENDING
+        }).sort({ createdAt: 1 }); // Sort by oldest first to determine queue position
+        
+        // Get active job count
+        const activeJobCount = await jobModel.countDocuments({
+            userid: userId,
+            status: { $in: [JobStatus.PENDING, JobStatus.IN_PROGRESS] }
+        });
+        
+        return res.status(200).json({
+            success: true,
+            activeJobCount,
+            totalJobs: jobs.length,
+            jobs: jobs.map(job => {
+                // Calculate queue position for pending jobs
+                let queuePosition = null;
+                if (job.status === JobStatus.PENDING) {
+                    queuePosition = pendingJobs.findIndex(j => j.uuid === job.uuid) + 1;
+                }
+                
+                return {
+                    jobId: job.uuid,
+                    projectId: job.projectid,
+                    status: job.status,
+                    queuePosition: queuePosition
+                };
+            })
+        });
+    } catch (error: any) {
+        LogError(error as Error, serviceLocation, `Error fetching jobs for user ${userId}`);
+        return res.status(500).json({ 
+            success: false, 
+            message: "An error occurred while fetching jobs" 
+        });
+    }
+});
+
+// Add this new endpoint for admin access to all jobs
+router.get("/admin-check-all-jobs-status", isAuthAndAdmin, async (req: Request, res: Response) => {
+    logger.info(`${serviceLocation}: Admin ${req.user?.username} requesting all system jobs`);
+    
+    try {
+        // Get counts by status
+        const pendingCount = await jobModel.countDocuments({ status: JobStatus.PENDING });
+        const processingCount = await jobModel.countDocuments({ status: JobStatus.IN_PROGRESS });
+        const completedCount = await jobModel.countDocuments({ status: JobStatus.COMPLETED });
+        const failedCount = await jobModel.countDocuments({ status: JobStatus.FAILED });
+        
+        // Get latest jobs with pagination
+        const page = parseInt(req.query.page as string) || 1;
+        const limit = parseInt(req.query.limit as string) || 50;
+        const skip = (page - 1) * limit;
+        
+        // Get jobs with user information
+        const jobs = await jobModel.find()
+            .sort({ createdAt: -1 })
+            .skip(skip)
+            .limit(limit);
+        
+        // Get user information for these jobs
+        const userIds = [...new Set(jobs.map(job => job.userid))];
+        const users = await userModel.find({ _id: { $in: userIds } })
+            .select('_id username');
+        
+        // Create a map for quick user lookups
+        const userMap: { [key: string]: string } = {};
+        users.forEach(user => {
+            userMap[String(user._id)] = user.username;
+        });
+        
+        return res.status(200).json({
+            success: true,
+            stats: {
+                total: pendingCount + processingCount + completedCount + failedCount,
+                pending: pendingCount,
+                processing: processingCount,
+                completed: completedCount,
+                failed: failedCount
+            },
+            pagination: {
+                page,
+                limit,
+                totalPages: Math.ceil((pendingCount + processingCount + completedCount + failedCount) / limit)
+            },
+            jobs: jobs.map(job => ({
+                jobId: job.uuid,
+                projectId: job.projectid,
+                userId: job.userid,
+                username: userMap[job.userid] || 'Unknown',
+                status: job.status,
+                message: job.message || ""
+            }))
+        });
+    } catch (error: any) {
+        LogError(error as Error, serviceLocation, `Admin error fetching all jobs: ${error.message}`);
+        return res.status(500).json({ 
+            success: false, 
+            message: "An error occurred while fetching all jobs" 
+        });
+    }
+});
+
 export default router;
