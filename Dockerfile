@@ -38,6 +38,9 @@ RUN npm ci --only=production
 # Copy built application from the builder stage
 COPY --from=builder /app/dist ./dist
 
+# Copy public assets from the builder stage
+COPY --from=builder /app/public ./public
+
 # Copy Node.js node_modules from the builder stage
 COPY --from=builder /app/node_modules ./node_modules
 
