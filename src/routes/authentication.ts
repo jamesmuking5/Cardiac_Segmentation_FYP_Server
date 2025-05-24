@@ -396,6 +396,34 @@ router.get("/fetch", isAuth, async (req: Request, res: Response): Promise<void> 
   }
 });
 
+// Admin-only route
+// This route is restricted to admin users only. It ensures the user is logged in and has the admin role.
+router.get("/admin", isAuthAndAdmin, (req: Request, res: Response) => {
+  res.status(200).json({ message: "You are an admin!" });
+});
+
+// Fetch all users route (Admin only)
+router.get("/users", isAuthAndAdmin, async (req: Request, res: Response): Promise<void> => {
+  try {
+    const result = await readUser({}); // Or readUser() if that's the convention
+
+    if (!result.success || !result.users) {
+      res.status(404).json({ fetch: false, message: "No users found or error fetching users." });
+      return;
+    }
+
+    logger.info(`${serviceLocation}: Fetched all users.`);
+    res.status(200).json({
+      fetch: true,
+      message: "All users fetched successfully.",
+      users: result.users, // Assuming result.users is an array of IUserSafe
+    });
+  } catch (error: unknown) {
+    logger.error(`${serviceLocation}: Error fetching all users: ${error}`);
+    res.status(500).json({ fetch: false, message: "Internal error during user fetch." });
+  }
+});
+
 // Middleware-protected route
 // This route is only accessible to users who are logged in (i.e., authenticated users). It acts as a basic protected endpoint.
 router.get("/protected", isAuth, (req: Request, res: Response) => {
