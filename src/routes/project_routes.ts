@@ -50,49 +50,27 @@ router.put("/upload-new-project",
   });
 
 // Route to read/search projects (limited to id, name, filetype, daterange)
-router.get("/get-projects-list", isAuth, async (req: Request, res: Response) => {
-  const userId = (req.user as any)?._id;
-
-  const { projectid, name, filetype: filetypeParam, daterange: daterangeParam } = req.query;
-
-  // Helper function to safely parse JSON query parameters
-  const tryParseJSON = (value: any) => {
-    try {
-      return JSON.parse(value as string);
-    } catch (error) {
-      return undefined;
-    }
-  };
-
+router.get("/get-allusers-with-projects", isAuthAndAdmin, async (req: Request, res: Response): Promise<void> => {
   try {
-    const filetype: FileType[] | undefined = Array.isArray(filetypeParam)
-      ? filetypeParam.filter((type): type is FileType => Object.values(FileType).includes(type as FileType))
-      : filetypeParam && Object.values(FileType).includes(filetypeParam as FileType)
-      ? [filetypeParam as FileType]
-      : undefined;
+    const result = await readUser({}); 
 
-    const daterange: { start?: Date; end?: Date } | undefined = tryParseJSON(daterangeParam);
+    if (!result.success || !result.users) {
+      res.status(404).json({ fetch: false, message: "No users found or error fetching users." });
+      return;
+    }
 
-    const result = await readProject(
-      projectid as string | undefined,
-      userId,
-      name as string | undefined,
-      undefined, // description - not a filter
-      undefined, // isSaved - not a filter
-      undefined, // filename - not a filter
-      filetype,
-      undefined, // filesize - not a filter
-      undefined, // filehash - not a filter
-      undefined, // datatype - not a filter
-      undefined, // dimensions - not a filter
-      undefined, // voxelsize - not a filter
-      daterange
-    );
-
-    if (result.success && result.projects) {
-      // Sanitize the projects
-      const sanitized_results = result.projects.map((project) => {
-        return {
+    // Fetch projects for each user
+    const usersWithProjects = await Promise.all(result.users.map(async (user) => {
+      const projectResult = await readProject(undefined, user._id);
+      
+      return {
+        userId: user._id,
+        username: user.username,
+        email: user.email,
+        role: user.role,
+        createdAt: user.createdAt,
+        projectCount: projectResult.success && projectResult.projects ? projectResult.projects.length : 0,
+        projects: projectResult.success && projectResult.projects ? projectResult.projects.map(project => ({
           projectId: project._id,
           name: project.name,
           description: project.description,
@@ -100,19 +78,24 @@ router.get("/get-projects-list", isAuth, async (req: Request, res: Response) => 
           filesize: project.filesize,
           filetype: project.filetype,
           dimensions: project.dimensions,
-          voxelsize: project.voxelsize,
           createdAt: project.createdAt,
-          updatedAt: project.updatedAt,
-        };
-      });
+          updatedAt: project.updatedAt
+        })) : []
+      };
+    }));
 
-      return res.status(200).json({ projects: sanitized_results }); // Return the projects
-    } else {
-      return res.status(404).json({ message: result.message });
-    }
-  } catch (error: any) {
-    logger.error(`${serviceLocation}: Error reading projects - ${error.message}`);
-    return res.status(500).json({ message: "Failed to retrieve projects." });
+    // Filter out users with no projects
+    const usersWithProjectsOnly = usersWithProjects.filter(user => user.projectCount > 0);
+
+    logger.info(`${serviceLocation}: Fetched ${usersWithProjectsOnly.length} users with projects.`);
+    res.status(200).json({
+      fetch: true,
+      totalUsers: usersWithProjectsOnly.length,
+      data: usersWithProjectsOnly
+    });
+  } catch (error: unknown) {
+    logger.error(`${serviceLocation}: Error fetching users with projects: ${error}`);
+    res.status(500).json({ fetch: false, message: "Internal error during fetch." });
   }
 });
 
