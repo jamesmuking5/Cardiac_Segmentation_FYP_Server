@@ -112,7 +112,7 @@ export const uploadToS3 = async (
       contentType = 'application/octet-stream';
       break;
     case '.nii.gz':
-      contentType = 'application/gzip';
+      contentType = 'application/x-gzip';
       break;
     case '.dcm':
       contentType = 'application/dicom';
@@ -155,7 +155,7 @@ export const uploadToS3 = async (
     if (!fileStream.closed && !fileStream.destroyed) {
       fileStream.destroy();
     }
-    
+
     logger.error(`${serviceLocation}: Error uploading to S3: ${generatedFilename}`, error);
     throw new Error(
       error instanceof Error
