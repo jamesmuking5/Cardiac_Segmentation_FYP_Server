@@ -5,11 +5,12 @@
 import express, { Request, Response } from "express";
 import { projectUploadFilter } from "../middleware/uploadmiddleware";
 import { saveFileAndPushToS3 } from "../services/project_handler";
-import { isAuth, isAuthAndNotGuest } from "../services/passportjs";
-import { readProject, updateProject } from "../services/database";
+import { isAuth, isAuthAndNotGuest, isAuthAndAdmin } from "../services/passportjs";
+import { readProject, updateProject, readUser } from "../services/database";
 import { FileType } from "../types/database_types"; // Import FileType enum
 import { extractS3KeyFromUrl } from "../services/s3_handler"; // Import S3 URL utility
 import { generatePresignedGetUrl } from "../utils/s3_presigned_url"; // Import S3 presigned URL utility
+import { userModel } from "../services/database"; // Import UserModel
 
 import logger from "../services/logger"; // Import Winston Logger
 import LogError from "../utils/error_logger"; // Import error logging utility
@@ -112,6 +113,49 @@ router.get("/get-projects-list", isAuth, async (req: Request, res: Response) => 
   } catch (error: any) {
     logger.error(`${serviceLocation}: Error reading projects - ${error.message}`);
     return res.status(500).json({ message: "Failed to retrieve projects." });
+  }
+});
+
+router.get("/get-allusers-with-projects", isAuthAndAdmin, async (req: Request, res: Response): Promise<void> => {
+  try {
+    const result = await readUser({}); 
+
+    if (!result.success || !result.users) {
+      res.status(404).json({ fetch: false, message: "No users found or error fetching users." });
+      return;
+    }
+
+    // Fetch projects for each user
+    const usersWithProjects = await Promise.all(result.users.map(async (user) => {
+      const projectResult = await readProject(undefined, user._id);
+      
+      return {
+        userId: user._id,
+        username: user.username, // Include username as you mentioned
+        projectCount: projectResult.success && projectResult.projects ? projectResult.projects.length : 0,
+        projects: projectResult.success && projectResult.projects ? projectResult.projects.map(project => ({
+          projectId: project._id,
+          name: project.name,
+          description: project.description,
+          isSaved: project.isSaved,
+          filesize: project.filesize,
+          filetype: project.filetype,
+          dimensions: project.dimensions,
+          createdAt: project.createdAt,
+          updatedAt: project.updatedAt
+        })) : []
+      };
+    }));
+
+    logger.info(`${serviceLocation}: Fetched all users with their projects.`);
+    res.status(200).json({
+      fetch: true,
+      totalUsers: usersWithProjects.length,
+      data: usersWithProjects
+    });
+  } catch (error: unknown) {
+    logger.error(`${serviceLocation}: Error fetching users with projects: ${error}`);
+    res.status(500).json({ fetch: false, message: "Internal error during fetch." });
   }
 });
 
