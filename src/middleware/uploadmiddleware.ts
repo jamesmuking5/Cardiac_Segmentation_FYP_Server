@@ -29,7 +29,7 @@ const allowedExtensions = [".nii", ".nii.gz", ".dcm"];
 // This mapping assumes FileType enum values are the expected MIME types.
 const fileTypeToMimeMappings: Record<string, string> = {
   [FileType.NIFTI]: "application/octet-stream",
-  [FileType.NIFTI_GZ]: "application/gzip",
+  [FileType.NIFTI_GZ]: "application/x-gzip",
   [FileType.DICOM]: "application/dicom",
 };
 
@@ -44,16 +44,16 @@ const storage: StorageEngine = multer.diskStorage({
     try {
       // Sanitize original filename to prevent path traversal attacks
       const sanitizedOriginal = path.basename(file.originalname);
-      
+
       // Use name from form if provided, otherwise use the original filename
       const userFilename = req.body.name || path.parse(sanitizedOriginal).name;
-      
+
       let ext = path.extname(sanitizedOriginal).toLowerCase();
       // Special handling for '.nii.gz'
       if (sanitizedOriginal.toLowerCase().endsWith(".nii.gz")) {
         ext = ".nii.gz";
       }
-      
+
       // Create a unique filename with timestamp
       const timestamp = Date.now();
       const safeName = userFilename.replace(/[^a-zA-Z0-9_-]/g, '_');
@@ -101,7 +101,7 @@ const fileFilter = (req: Request, file: Express.Multer.File, cb: multer.FileFilt
 // When in upload route, this middleware will filter files based on the defined storage and file filter.
 export const projectUploadFilter = multer({
   storage,
-  limits: { 
+  limits: {
     fileSize: 200 * 1024 * 1024 * 1024, // 200 GB limit
     files: 10 // Maximum 10 files per request
   },
