@@ -8,6 +8,8 @@ import { saveFileAndPushToS3 } from "../services/project_handler";
 import { isAuth, isAuthAndNotGuest } from "../services/passportjs";
 import { readProject, updateProject } from "../services/database";
 import { FileType } from "../types/database_types"; // Import FileType enum
+import { extractS3KeyFromUrl } from "../services/s3_handler"; // Import S3 URL utility
+import { generatePresignedGetUrl } from "../utils/s3_presigned_url"; // Import S3 presigned URL utility
 
 import logger from "../services/logger"; // Import Winston Logger
 import LogError from "../utils/error_logger"; // Import error logging utility
@@ -239,6 +241,51 @@ router.patch("/save-project", isAuthAndNotGuest, async (req: Request, res: Respo
       message: "An unexpected error occurred while updating the project status." 
     });
   }
+});
+
+// Add this endpoint to get presigned URLs for project files
+router.get("/get-project-presigned-url", isAuth, async (req: Request, res: Response) => {
+    try {
+        const projectId = req.query.projectId as string;
+        const userId = (req.user as any)?._id;
+        const projectResult = await readProject(projectId, userId);
+        
+        if (!projectResult.success || !projectResult.project) {
+            return res.status(404).json({ success: false, message: "Project not found" });
+        }
+        
+        // Extract the S3 key from the URL
+        const s3HttpsUrlForTar = projectResult.project.extractedfolderpath;
+        if (!s3HttpsUrlForTar) {
+            return res.status(404).json({ success: false, message: "Project has no associated file" });
+        }
+        
+        // Use the existing function to extract the key
+        const objectKey = extractS3KeyFromUrl(s3HttpsUrlForTar);
+        if (!objectKey) {
+            return res.status(400).json({ success: false, message: "Invalid S3 URL format" });
+        }
+        
+        // Generate presigned URL with existing function
+        const presignedUrl = await generatePresignedGetUrl(
+            process.env.AWS_BUCKET_NAME!,
+            objectKey,
+            1800 // 30 minutes for frontend use
+        );
+        
+        if (!presignedUrl) {
+            return res.status(500).json({ success: false, message: "Failed to generate presigned URL" });
+        }
+        
+        return res.json({ 
+            success: true, 
+            presignedUrl,
+            expiresAt: Date.now() + (1800 * 1000)
+        });
+    } catch (error: any) {
+        logger.error(`${serviceLocation}: Error generating presigned URL: ${error.message}`, error);
+        return res.status(500).json({ success: false, message: "Server error generating presigned URL" });
+    }
 });
 
 export default router;
