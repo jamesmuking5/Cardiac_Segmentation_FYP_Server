@@ -169,7 +169,7 @@ router.post("/delete",
         const userId = req.user._id;
 
         // Clean up user data before deletion
-        // Add S3 cleanup code here 
+        await cleanupUserS3Storage(userId);
 
         // Delete the user from the database
         const deleteResult = await deleteUser(userId);
