@@ -2,10 +2,11 @@ import { Request, Response, Router } from "express";
 import logger from "../services/logger";
 import { startInference, startManualInference } from "../services/inference"; 
 import { injectGpuAuthToken } from "../middleware/gpuauthmiddleware";
-import { readProjectSegmentationMask } from "../services/database";
-import { isAuth, isAuthAndAdmin } from "../services/passportjs"; 
+import { readProjectSegmentationMask, updateProjectSegmentationMask, updateProject, readProject } from "../services/database";
+import { isAuth, isAuthAndAdmin, isAuthAndNotGuest } from "../services/passportjs"; 
 import LogError from "../utils/error_logger";
 import { jobModel, userModel, JobStatus } from "../services/database";
+import { uploadSegMaskToS3 } from "../services/s3_handler";
 
 const router = Router();
 const serviceLocation = "SegmentationRoutes";
@@ -238,5 +239,134 @@ router.get("/admin-check-all-jobs-status", isAuthAndAdmin, async (req: Request, 
         });
     }
 });
+
+router.patch("/save-segmentation", isAuthAndNotGuest, async (req: Request, res: Response) => {
+  try {
+      // segmentationMaskId will now come from form-data, not JSON body
+      const { segmentationMaskId } = req.body;
+      const userId = (req.user)?._id;
+      const uploadedFile = req.file; // The uploaded JPEG file
+
+      // Validate request
+      if (!userId) {
+        return res.status(401).json({
+          success: false,
+          message: "Unauthorized. User ID not found."
+        });
+      }
+
+      if (!segmentationMaskId) {
+        return res.status(400).json({
+          success: false,
+          message: "Missing segmentationMaskId."
+        });
+      }
+
+      if (!uploadedFile) {
+        return res.status(400).json({
+          success: false,
+          message: "Missing segmentationImage file."
+        });
+      }
+
+      // Validate file type (optional but recommended)
+      if (uploadedFile.mimetype !== 'image/jpeg') {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid file type. Only JPEG images are allowed."
+        });
+      }
+
+      // First get the segmentation mask to find its project ID
+      const maskResult = await readProjectSegmentationMask(segmentationMaskId);
+
+      if (!maskResult.success || !maskResult.projectsegmentationmask) {
+        return res.status(404).json({
+          success: false,
+          message: maskResult.message || "Segmentation mask not found (for associating project)"
+        });
+      }
+
+      const projectId = maskResult.projectsegmentationmask.projectid;
+
+      // Update segmentation mask to saved status in the database
+      const segmentationDbUpdateResult = await updateProjectSegmentationMask(
+        segmentationMaskId,
+        { isSaved: true } // You might want to store the S3 key of the JPEG here too
+      );
+
+      if (!segmentationDbUpdateResult.success || !segmentationDbUpdateResult.projectsegmentationmask) {
+        return res.status(400).json({
+          success: false,
+          message: segmentationDbUpdateResult.message || "Failed to update segmentation mask status in database"
+        });
+      }
+
+      // Save the uploaded JPEG to S3
+      let s3ImageUrl = '';
+      try {
+        // Define a new S3 key structure for images
+        const s3Key = `seg_mask/${projectId}/${segmentationMaskId}-${Date.now()}.jpeg`;
+        if (!process.env.S3_BUCKET_NAME) {
+          logger.error(`${serviceLocation}: S3_BUCKET_NAME environment variable is not set. Cannot upload image.`);
+          // Decide if this is a critical error
+        } else {
+          await uploadSegMaskToS3(
+            process.env.S3_BUCKET_NAME,
+            s3Key,
+            uploadedFile.buffer, // Pass the file buffer from multer
+            uploadedFile.mimetype // Pass the correct content type
+          );
+          s3ImageUrl = `s3://${process.env.S3_BUCKET_NAME}/${s3Key}`; // Store or return this URL
+          logger.info(`${serviceLocation}: Successfully uploaded segmentation JPEG ${s3Key} for project ${projectId} to S3.`);
+        }
+      } catch (s3Error) {
+        LogError(s3Error as Error, serviceLocation, `Failed to upload segmentation JPEG for mask ${segmentationMaskId} to S3.`);
+        // Decide if S3 upload failure should be a critical error for the client
+      }
+
+      // Check if project is already saved before updating it
+      const projectResult = await readProject(projectId, userId);
+
+      if (!projectResult.success || !projectResult.projects || projectResult.projects.length === 0) {
+        logger.warn(`${serviceLocation}: Could not find project ${projectId} to check save status, but segmentation mask ${segmentationMaskId} was saved (DB and S3 JPEG upload attempted).`);
+      } else {
+        const project = projectResult.projects[0];
+        if (!project.isSaved) {
+          const updateProjectResult = await updateProject(projectId, { isSaved: true });
+          if (!updateProjectResult.success) {
+            logger.warn(`${serviceLocation}: Failed to update project ${projectId} save status.`);
+          } else {
+            logger.info(`${serviceLocation}: Project ${projectId} save status updated to true.`);
+          }
+        } else {
+          logger.info(`${serviceLocation}: Project ${projectId} already saved.`);
+        }
+      }
+
+      logger.info(`${serviceLocation}: User ${userId} saved segmentation JPEG for mask ${segmentationMaskId}. DB status updated. S3 upload attempted.`);
+
+      return res.status(200).json({
+        success: true,
+        message: "Segmentation JPEG saved successfully. Database updated and S3 upload initiated.",
+        s3ImageUrl: s3ImageUrl, // Return the S3 URL of the image
+        segmentation: segmentationDbUpdateResult.projectsegmentationmask
+      });
+
+    } catch (error) {
+      // ... (existing error handling) ...
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      LogError(
+        error instanceof Error ? error : new Error(errorMessage),
+        serviceLocation,
+        `Error saving segmentation JPEG: ${req.body?.segmentationMaskId}`
+      );
+      return res.status(500).json({
+        success: false,
+        message: "An unexpected error occurred while saving the segmentation JPEG."
+      });
+    }
+  }
+);
 
 export default router;

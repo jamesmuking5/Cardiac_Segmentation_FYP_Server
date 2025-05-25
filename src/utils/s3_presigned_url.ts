@@ -62,35 +62,3 @@ export const generatePresignedGetUrl = async (
         return null;
     }
 };
-
-// Example of how you might generate a presigned PUT URL (not used by inference.ts but good for completeness)
-/*
-import { PutObjectCommand, PutObjectCommandInput } from "@aws-sdk/client-s3";
-
-export const generatePresignedPutUrl = async (
-    bucket: string,
-    key: string,
-    contentType: string,
-    expiresIn: number = 3600
-): Promise<string | null> => {
-    if (!bucket || !key || !contentType) {
-        logger.error(`${serviceLocation}: Bucket, Key, or ContentType is missing for generating presigned PUT URL. Bucket: ${bucket}, Key: ${key}, ContentType: ${contentType}`);
-        return null;
-    }
-    try {
-        const client = getS3Client();
-        const commandInput: PutObjectCommandInput = {
-            Bucket: bucket,
-            Key: key,
-            ContentType: contentType,
-        };
-        const command = new PutObjectCommand(commandInput);
-        const url = await getSignedUrl(client, command, { expiresIn });
-        logger.info(`${serviceLocation}: Successfully generated presigned PUT URL for s3://${bucket}/${key} (expires in ${expiresIn}s)`);
-        return url;
-    } catch (error: any) {
-        logger.error(`${serviceLocation}: Error generating presigned PUT URL for s3://${bucket}/${key}: ${error.message}`, { error });
-        return null;
-    }
-};
-*/

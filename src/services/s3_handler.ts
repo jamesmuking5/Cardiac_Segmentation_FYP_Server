@@ -4,6 +4,7 @@
 import { S3Client, PutObjectCommand, PutObjectCommandInput, DeleteObjectCommand } from "@aws-sdk/client-s3";
 import { projectModel } from "../services/database";
 import logger from "./logger"; // Import your logger
+import { ReadStream } from "fs";
 import fs from "fs";
 
 const serviceLocation = "S3Handler";
@@ -203,3 +204,46 @@ export const cleanupUserS3Storage = async (userId: string): Promise<void> => {
     logger.error(`${serviceLocation}: Error during S3 cleanup for user ${userId}:`, error);
   }
 };
+
+/**
+ * Uploads a segmentation mask (JSON string content) to S3.
+ * @param bucketName The S3 bucket name.
+ * @param key The full S3 object key (path and filename).
+ * @param body The JSON string content to upload.
+ * @param contentType The content type of the object (e.g., 'application/json').
+ * @returns Promise<void>
+ * @throws Error if the upload fails.
+ */
+export async function uploadSegMaskToS3(
+  bucketName: string,
+  key: string,
+  fileBuffer: Buffer,
+  contentType: string
+): Promise<void> {
+  const serviceLocation = "S3Handler_UploadImage";
+  logger.info(`${serviceLocation}: Attempting to upload image to S3. Bucket: ${bucketName}, Key: ${key}`);
+
+  if (!bucketName) {
+    throw new Error("S3_BUCKET_NAME is not configured.");
+  }
+
+  const params: PutObjectCommandInput = {
+    Bucket: bucketName,
+    Key: key,
+    Body: fileBuffer,
+    ContentType: contentType,
+    // ACL: 'private', // Optional: Set ACL
+  };
+
+  try {
+    const command = new PutObjectCommand(params);
+    if (!s3Client) {
+      throw new Error("AWS S3 client is not configured.");
+    }
+    await s3Client.send(command);
+    logger.info(`${serviceLocation}: Successfully uploaded image to s3://${bucketName}/${key}`);
+  } catch (error) {
+    logger.error(`${serviceLocation}: Failed to upload image to S3. Bucket: ${bucketName}, Key: ${key}`, error);
+    throw error;
+  }
+}
