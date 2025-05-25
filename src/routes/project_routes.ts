@@ -5,11 +5,12 @@
 import express, { Request, Response } from "express";
 import { projectUploadFilter } from "../middleware/uploadmiddleware";
 import { saveFileAndPushToS3 } from "../services/project_handler";
-import { isAuth, isAuthAndNotGuest } from "../services/passportjs";
-import { readProject, updateProject } from "../services/database";
+import { isAuth, isAuthAndNotGuest, isAuthAndAdmin } from "../services/passportjs";
+import { readProject, updateProject, readUser } from "../services/database";
 import { FileType } from "../types/database_types"; // Import FileType enum
 import { extractS3KeyFromUrl } from "../services/s3_handler"; // Import S3 URL utility
 import { generatePresignedGetUrl } from "../utils/s3_presigned_url"; // Import S3 presigned URL utility
+import { userModel } from "../services/database"; // Import UserModel
 
 import logger from "../services/logger"; // Import Winston Logger
 import LogError from "../utils/error_logger"; // Import error logging utility
@@ -112,6 +113,50 @@ router.get("/get-projects-list", isAuth, async (req: Request, res: Response) => 
   } catch (error: any) {
     logger.error(`${serviceLocation}: Error reading projects - ${error.message}`);
     return res.status(500).json({ message: "Failed to retrieve projects." });
+  }
+});
+
+// Route to read/search projects for admin (all users)
+router.get("/get-allusers-with-projects", isAuthAndAdmin, async (req: Request, res: Response): Promise<void> => {
+  try {
+    const result = await readUser({}); 
+
+    if (!result.success || !result.users) {
+      res.status(404).json({ fetch: false, message: "No users found or error fetching users." });
+      return;
+    }
+
+    // Fetch projects for each user
+    const usersWithProjects = await Promise.all(result.users.map(async (user) => {
+      const projectResult = await readProject(undefined, user._id);
+      
+      return {
+        userId: user._id,
+        username: user.username, // Include username as you mentioned
+        projectCount: projectResult.success && projectResult.projects ? projectResult.projects.length : 0,
+        projects: projectResult.success && projectResult.projects ? projectResult.projects.map(project => ({
+          projectId: project._id,
+          name: project.name,
+          description: project.description,
+          isSaved: project.isSaved,
+          filesize: project.filesize,
+          filetype: project.filetype,
+          dimensions: project.dimensions,
+          createdAt: project.createdAt,
+          updatedAt: project.updatedAt
+        })) : []
+      };
+    }));
+
+    logger.info(`${serviceLocation}: Fetched all users with their projects.`);
+    res.status(200).json({
+      fetch: true,
+      totalUsers: usersWithProjects.length,
+      data: usersWithProjects
+    });
+  } catch (error: unknown) {
+    logger.error(`${serviceLocation}: Error fetching users with projects: ${error}`);
+    res.status(500).json({ fetch: false, message: "Internal error during fetch." });
   }
 });
 
@@ -248,40 +293,39 @@ router.get("/get-project-presigned-url", isAuth, async (req: Request, res: Respo
     try {
         const projectId = req.query.projectId as string;
         const userId = (req.user as any)?._id;
+
         const projectResult = await readProject(projectId, userId);
-        
-        if (!projectResult.success || !projectResult.project) {
+        if (!projectResult.success || !projectResult.projects || projectResult.projects.length === 0) {
             return res.status(404).json({ success: false, message: "Project not found" });
         }
-        
-        // Extract the S3 key from the URL
-        const s3HttpsUrlForTar = projectResult.project.extractedfolderpath;
+        const project = projectResult.projects[0];
+        const s3HttpsUrlForTar = project.extractedfolderpath;
+
         if (!s3HttpsUrlForTar) {
             return res.status(404).json({ success: false, message: "Project has no associated file" });
         }
-        
-        // Use the existing function to extract the key
+
         const objectKey = extractS3KeyFromUrl(s3HttpsUrlForTar);
         if (!objectKey) {
             return res.status(400).json({ success: false, message: "Invalid S3 URL format" });
         }
-        
-        // Generate presigned URL with existing function
+
         const presignedUrl = await generatePresignedGetUrl(
             process.env.AWS_BUCKET_NAME!,
             objectKey,
-            1800 // 30 minutes for frontend use
+            1800
         );
-        
+
         if (!presignedUrl) {
             return res.status(500).json({ success: false, message: "Failed to generate presigned URL" });
         }
-        
-        return res.json({ 
-            success: true, 
+
+        return res.json({
+            success: true,
             presignedUrl,
             expiresAt: Date.now() + (1800 * 1000)
         });
+
     } catch (error: any) {
         logger.error(`${serviceLocation}: Error generating presigned URL: ${error.message}`, error);
         return res.status(500).json({ success: false, message: "Server error generating presigned URL" });
