@@ -84,11 +84,11 @@ router.post("/gpu-callback", async (req: Request, res: Response) => {
 
             const newSegmentationSet: Partial<IProjectSegmentationMask> = {
                 projectid: projectId,
-                name: currentJob.segmentationName || `AI Output - Job ${gpuJobId.substring(0, 8)}`, 
-                description: currentJob.segmentationDescription || `Automated segmentation results from inference job ${gpuJobId}`,
+                name: currentJob.segmentationName || `Output - Job ${gpuJobId.substring(0, 8)}`, // Generic name if not provided
+                description: currentJob.segmentationDescription || `Segmentation results from job ${gpuJobId}`,
                 isSaved: false, 
-                segmentationmaskRLE: true, // Assuming RLE format for masks from GPU
-                isMedSAMOutput: currentJob.segmentationSource === 'original', // Set based on the job's source
+                segmentationmaskRLE: true, 
+                isMedSAMOutput: currentJob.segmentationSource === 'ai_inference', // True if 'ai_inference', false if 'manual_inference'
                 frames: []
             };
 
