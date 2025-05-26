@@ -1,7 +1,7 @@
 // File: src/services/inference.ts
 // Description: Service layer for initiating the inference process, including Cloud GPU communication.
 
-import { IUserSafe, ProjectCrudResult } from "../types/database_types";
+import { IUserSafe, ProjectCrudResult, segmentationSource } from "../types/database_types";
 import logger from "./logger";
 import { readProject } from "./database";
 import { v4 as uuidv4 } from 'uuid';
@@ -15,7 +15,7 @@ const cloudGpuBaseUrl = process.env.CLOUD_GPU_URL_AND_PORT;
 interface ManualSegmentationInput {
     image_name: string;
     bbox: number[]; // e.g., [x_min, y_min, x_max, y_max]
-    segmentation_source?: 'original' | 'ai_processed';
+    segmentation_source?: segmentationSource;
     segmentationName?: string;
     segmentationDescription?: string;
 }
@@ -175,6 +175,7 @@ export const startInference = async (projectId: string, user?: IUserSafe, gpuAut
                 projectid: projectId,
                 uuid: jobUuid, // Our internal UUID
                 status: JobStatus.PENDING, // Or IN_PROGRESS if GPU confirms immediate start
+                segmentationSource: segmentationSource.AI_INFERENCE
             };
             const jobCreationResult = await createJob(jobData);
 
@@ -290,6 +291,7 @@ export const startManualInference = async (
                 status: JobStatus.PENDING,
                 segmentationName: manualInput.segmentationName, // Store the name
                 segmentationDescription: manualInput.segmentationDescription, // Store the description
+                segmentationSource: segmentationSource.MANUAL_INFERENCE // Indicate this is a manual inference
             };
             const jobCreationResult = await createJob(jobData);
             if (!jobCreationResult.success) {

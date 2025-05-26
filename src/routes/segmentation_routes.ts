@@ -94,6 +94,17 @@ router.post("/start-manual-segmentation/:projectId",
             return res.status(400).json({ message: "Invalid 'bbox' in request body. Expected an array of 4 numbers." });
         }
 
+        // Validate segmentation_source
+        if (segmentation_source && (segmentation_source !== 'ai_inference' && segmentation_source !== 'manual_inference')) {
+            logger.warn(`${serviceLocation}: Manual segmentation request for project ${projectId} has invalid 'segmentation_source'. Must be 'ai_inference' or 'manual_inference'. Received: ${segmentation_source}`);
+            return res.status(400).json({ message: "Invalid 'segmentation_source'. Must be 'ai_inference' or 'manual_inference'." });
+        }
+        // Ensure segmentation_source is provided if it's a manual inference that needs distinction
+        if (!segmentation_source) {
+            logger.warn(`${serviceLocation}: Manual segmentation request for project ${projectId} is missing 'segmentation_source'. It must be 'ai_inference' or 'manual_inference'.`);
+            return res.status(400).json({ message: "Missing 'segmentation_source'. It must be 'ai_inference' or 'manual_inference'." });
+        }
+
         // Validate segmentationName and segmentationDescription if needed (e.g., length)
         if (segmentationName && typeof segmentationName !== 'string') {
             logger.warn(`${serviceLocation}: Manual segmentation request for project ${projectId} has invalid 'segmentationName'.`);
@@ -240,7 +251,7 @@ router.get("/admin-check-all-jobs-status", isAuthAndAdmin, async (req: Request, 
     }
 });
 
-router.patch("/save-segmentation", isAuthAndNotGuest, async (req: Request, res: Response) => {
+router.patch("/save-ai-segmentation", isAuthAndNotGuest, async (req: Request, res: Response) => {
   try {
       // segmentationMaskId will now come from form-data, not JSON body
       const { segmentationMaskId } = req.body;
@@ -368,5 +379,155 @@ router.patch("/save-segmentation", isAuthAndNotGuest, async (req: Request, res: 
     }
   }
 );
+
+// Route to save a user-uploaded preview JPEG for a MANUAL segmentation mask
+router.patch("/save-manual-segmentation", isAuthAndNotGuest, async (req: Request, res: Response) => {
+  try {
+    const { segmentationMaskId } = req.body; // Comes from form-data
+    const userId = (req.user)?._id;
+    const uploadedFile = req.file; // The uploaded JPEG file
+
+    logger.info(`${serviceLocation}: Received request to save manual segmentation preview for mask ID ${segmentationMaskId} by user ${userId}. File: ${uploadedFile?.originalname}`);
+
+    // Validate request
+    if (!userId) {
+      logger.warn(`${serviceLocation}: Unauthorized attempt to save manual segmentation preview. User ID not found.`);
+      return res.status(401).json({
+        success: false,
+        message: "Unauthorized. User ID not found."
+      });
+    }
+
+    if (!segmentationMaskId) {
+      logger.warn(`${serviceLocation}: Missing segmentationMaskId for saving manual segmentation preview.`);
+      return res.status(400).json({
+        success: false,
+        message: "Missing segmentationMaskId."
+      });
+    }
+
+    if (!uploadedFile) {
+      logger.warn(`${serviceLocation}: Missing segmentationImage file for manual segmentation mask ${segmentationMaskId}.`);
+      return res.status(400).json({
+        success: false,
+        message: "Missing segmentationImage file."
+      });
+    }
+
+    // Validate file type
+    if (uploadedFile.mimetype !== 'image/jpeg') {
+      logger.warn(`${serviceLocation}: Invalid file type for manual segmentation mask ${segmentationMaskId}. Expected JPEG, got ${uploadedFile.mimetype}.`);
+      return res.status(400).json({
+        success: false,
+        message: "Invalid file type. Only JPEG images are allowed."
+      });
+    }
+
+    // 1. Get the segmentation mask to find its project ID and verify it's a manual segmentation
+    logger.debug(`${serviceLocation}: Reading segmentation mask ${segmentationMaskId} to verify type and get project ID.`);
+    const maskResult = await readProjectSegmentationMask(segmentationMaskId);
+
+    if (!maskResult.success || !maskResult.projectsegmentationmask) {
+      logger.warn(`${serviceLocation}: Segmentation mask ${segmentationMaskId} not found for saving manual preview. Message: ${maskResult.message}`);
+      return res.status(404).json({
+        success: false,
+        message: maskResult.message || "Segmentation mask not found."
+      });
+    }
+
+    // Ensure this is indeed a manual segmentation mask
+    if (maskResult.projectsegmentationmask.isMedSAMOutput) {
+      logger.warn(`${serviceLocation}: Attempt to save preview for AI segmentation mask ${segmentationMaskId} via manual route. User: ${userId}`);
+      return res.status(400).json({
+        success: false,
+        message: "This endpoint is for saving manual segmentations. The provided mask ID corresponds to an AI-generated segmentation."
+      });
+    }
+
+    const projectId = maskResult.projectsegmentationmask.projectid;
+    logger.info(`${serviceLocation}: Segmentation mask ${segmentationMaskId} (manual) belongs to project ${projectId}.`);
+
+    // 2. Update segmentation mask to saved status in the database
+    logger.debug(`${serviceLocation}: Updating manual segmentation mask ${segmentationMaskId} to isSaved: true.`);
+    const segmentationDbUpdateResult = await updateProjectSegmentationMask(
+      segmentationMaskId,
+      { isSaved: true } // Consider adding a field for s3ImageUrl here in the future
+    );
+
+    if (!segmentationDbUpdateResult.success || !segmentationDbUpdateResult.projectsegmentationmask) {
+      logger.error(`${serviceLocation}: Failed to update manual segmentation mask ${segmentationMaskId} status in database. Message: ${segmentationDbUpdateResult.message}`);
+      return res.status(400).json({
+        success: false,
+        message: segmentationDbUpdateResult.message || "Failed to update segmentation mask status in database."
+      });
+    }
+    logger.info(`${serviceLocation}: Successfully updated manual segmentation mask ${segmentationMaskId} status to saved in DB.`);
+
+    // 3. Save the uploaded JPEG to S3
+    let s3ImageUrl = '';
+    try {
+      const s3Key = `seg_mask_manual/${projectId}/${segmentationMaskId}-${Date.now()}.jpeg`;
+      if (!process.env.S3_BUCKET_NAME) {
+        logger.error(`${serviceLocation}: S3_BUCKET_NAME environment variable is not set. Cannot upload manual segmentation image for mask ${segmentationMaskId}.`);
+        // Not returning error to client, but image won't be on S3
+      } else {
+        logger.debug(`${serviceLocation}: Uploading manual segmentation preview ${uploadedFile.originalname} to S3 key ${s3Key} for mask ${segmentationMaskId}.`);
+        await uploadSegMaskToS3(
+          process.env.S3_BUCKET_NAME,
+          s3Key,
+          uploadedFile.buffer,
+          uploadedFile.mimetype
+        );
+        s3ImageUrl = `s3://${process.env.S3_BUCKET_NAME}/${s3Key}`;
+        logger.info(`${serviceLocation}: Successfully uploaded manual segmentation JPEG ${s3Key} for mask ${segmentationMaskId} to S3. URL: ${s3ImageUrl}`);
+      }
+    } catch (s3Error) {
+      LogError(s3Error as Error, serviceLocation, `Failed to upload manual segmentation JPEG for mask ${segmentationMaskId} to S3.`);
+      // S3 upload failure is not critical for the client response here, but logged
+    }
+
+    // 4. Check if the parent project is already saved before updating it
+    logger.debug(`${serviceLocation}: Checking save status of parent project ${projectId} for manual segmentation mask ${segmentationMaskId}.`);
+    const projectResult = await readProject(projectId, userId);
+
+    if (!projectResult.success || !projectResult.projects || projectResult.projects.length === 0) {
+      logger.warn(`${serviceLocation}: Could not find project ${projectId} to check/update save status after saving manual segmentation mask ${segmentationMaskId}.`);
+    } else {
+      const project = projectResult.projects[0];
+      if (!project.isSaved) {
+        logger.info(`${serviceLocation}: Parent project ${projectId} is not saved. Updating its status to saved.`);
+        const updateProjectResult = await updateProject(projectId, { isSaved: true });
+        if (!updateProjectResult.success) {
+          logger.warn(`${serviceLocation}: Failed to update project ${projectId} save status after manual segmentation save. Message: ${updateProjectResult.message}`);
+        } else {
+          logger.info(`${serviceLocation}: Parent project ${projectId} save status successfully updated to true.`);
+        }
+      } else {
+        logger.info(`${serviceLocation}: Parent project ${projectId} was already saved.`);
+      }
+    }
+
+    logger.info(`${serviceLocation}: User ${userId} successfully processed save request for manual segmentation preview for mask ${segmentationMaskId}. DB status updated. S3 upload attempted. Image URL: ${s3ImageUrl}`);
+    return res.status(200).json({
+      success: true,
+      message: "Manual segmentation preview saved successfully. Database updated and S3 upload initiated.",
+      s3ImageUrl: s3ImageUrl,
+      segmentation: segmentationDbUpdateResult.projectsegmentationmask
+    });
+
+  } catch (error) {
+    const segmentationMaskId = req.body?.segmentationMaskId || "unknown";
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    LogError(
+      error instanceof Error ? error : new Error(errorMessage),
+      serviceLocation,
+      `Error saving manual segmentation JPEG for mask ID: ${segmentationMaskId}`
+    );
+    return res.status(500).json({
+      success: false,
+      message: "An unexpected error occurred while saving the manual segmentation JPEG."
+    });
+  }
+});
 
 export default router;

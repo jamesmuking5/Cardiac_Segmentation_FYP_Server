@@ -11,7 +11,7 @@ import LogError from "../utils/error_logger"; // Import the error logging utilit
 const serviceLocation = "Database"; // Service location for error logging
 
 // Import Types
-import { IUser, IUserDocument, IUserSafe, UserRole, CRUDOperation, UserCrudResult, IProjectDocument, IProjectSegmentationMaskDocument } from "../types/database_types"; // Import the user types
+import { IUser, IUserDocument, IUserSafe, UserRole, CRUDOperation, UserCrudResult, IProjectDocument, IProjectSegmentationMaskDocument, segmentationSource } from "../types/database_types"; // Import the user types
 import { FileType, FileDataType, ComponentBoundingBoxesClass, IProject, IProjectSegmentationMask, ProjectCrudResult, ProjectSegmentationMaskCrudResult } from "../types/database_types"; // Import the project types
 import { JobStatus, IJob, IJobDocument, JobCrudResult } from "../types/database_types"; // Import the job types
 
@@ -1413,6 +1413,7 @@ const jobSchema = new mongoose.Schema({
   message: { type: String, required: false }, // Message related to the job
   segmentationName: { type: String, required: false }, // Optional user-defined name
   segmentationDescription: { type: String, required: false }, // Optional user-defined description
+  segmentationSouce: { type: String, required: false, enum: Object.values(segmentationSource) }, // Optional source of the segmentation
 }, { timestamps: true });
 const jobModel = mongoose.model<IJobDocument>('Job', jobSchema);
  
