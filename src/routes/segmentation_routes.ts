@@ -7,6 +7,7 @@ import { isAuth, isAuthAndAdmin, isAuthAndNotGuest } from "../services/passportj
 import LogError from "../utils/error_logger";
 import { jobModel, userModel, JobStatus } from "../services/database";
 import { uploadSegMaskToS3 } from "../services/s3_handler";
+import { ComponentBoundingBoxesClass} from "../types/database_types"; 
 
 const router = Router();
 const serviceLocation = "SegmentationRoutes";
@@ -380,47 +381,58 @@ router.patch("/save-ai-segmentation", isAuthAndNotGuest, async (req: Request, re
   }
 );
 
-// Route to save a user-uploaded preview JPEG for a MANUAL segmentation mask
+// Route to save a user-uploaded preview JPEG AND update RLE for a MANUAL segmentation mask
 router.patch("/save-manual-segmentation", isAuthAndNotGuest, async (req: Request, res: Response) => {
   try {
-    const { segmentationMaskId } = req.body; // Comes from form-data
+    const { 
+        segmentationMaskId, 
+        frameIndex: frameIndexStr, // Will be string from form-data
+        sliceIndex: sliceIndexStr, // Will be string from form-data
+        componentClass, 
+        rleString 
+    } = req.body; 
     const userId = (req.user)?._id;
     const uploadedFile = req.file; // The uploaded JPEG file
 
-    logger.info(`${serviceLocation}: Received request to save manual segmentation preview for mask ID ${segmentationMaskId} by user ${userId}. File: ${uploadedFile?.originalname}`);
+    logger.info(`${serviceLocation}: Received request to save manual segmentation (preview & RLE) for mask ID ${segmentationMaskId} by user ${userId}. File: ${uploadedFile?.originalname}. Slice: F${frameIndexStr}S${sliceIndexStr}, Class: ${componentClass}`);
 
-    // Validate request
+    // === Validate request ===
     if (!userId) {
-      logger.warn(`${serviceLocation}: Unauthorized attempt to save manual segmentation preview. User ID not found.`);
-      return res.status(401).json({
-        success: false,
-        message: "Unauthorized. User ID not found."
-      });
+      logger.warn(`${serviceLocation}: Unauthorized attempt to save manual segmentation. User ID not found.`);
+      return res.status(401).json({ success: false, message: "Unauthorized. User ID not found." });
     }
-
     if (!segmentationMaskId) {
-      logger.warn(`${serviceLocation}: Missing segmentationMaskId for saving manual segmentation preview.`);
-      return res.status(400).json({
-        success: false,
-        message: "Missing segmentationMaskId."
-      });
+      logger.warn(`${serviceLocation}: Missing segmentationMaskId for saving manual segmentation.`);
+      return res.status(400).json({ success: false, message: "Missing segmentationMaskId." });
     }
-
     if (!uploadedFile) {
       logger.warn(`${serviceLocation}: Missing segmentationImage file for manual segmentation mask ${segmentationMaskId}.`);
-      return res.status(400).json({
-        success: false,
-        message: "Missing segmentationImage file."
-      });
+      return res.status(400).json({ success: false, message: "Missing segmentationImage file." });
     }
-
-    // Validate file type
     if (uploadedFile.mimetype !== 'image/jpeg') {
       logger.warn(`${serviceLocation}: Invalid file type for manual segmentation mask ${segmentationMaskId}. Expected JPEG, got ${uploadedFile.mimetype}.`);
-      return res.status(400).json({
-        success: false,
-        message: "Invalid file type. Only JPEG images are allowed."
-      });
+      return res.status(400).json({ success: false, message: "Invalid file type. Only JPEG images are allowed." });
+    }
+
+    // Validate RLE update parameters
+    if (frameIndexStr === undefined || sliceIndexStr === undefined || !componentClass || !rleString) {
+        logger.warn(`${serviceLocation}: Missing RLE update parameters for mask ${segmentationMaskId}. Required: frameIndex, sliceIndex, componentClass, rleString.`);
+        return res.status(400).json({ success: false, message: "Missing RLE update parameters (frameIndex, sliceIndex, componentClass, rleString)." });
+    }
+    const frameIndex = parseInt(frameIndexStr, 10);
+    const sliceIndex = parseInt(sliceIndexStr, 10);
+    if (isNaN(frameIndex) || isNaN(sliceIndex) || frameIndex < 0 || sliceIndex < 0) {
+        logger.warn(`${serviceLocation}: Invalid frameIndex or sliceIndex for mask ${segmentationMaskId}. Received F:${frameIndexStr}, S:${sliceIndexStr}`);
+        return res.status(400).json({ success: false, message: "Invalid frameIndex or sliceIndex. Must be non-negative numbers." });
+    }
+    // Ensure componentClass is a valid enum value
+    if (!Object.values(ComponentBoundingBoxesClass).includes(componentClass as ComponentBoundingBoxesClass)) {
+        logger.warn(`${serviceLocation}: Invalid componentClass '${componentClass}' for mask ${segmentationMaskId}.`);
+        return res.status(400).json({ success: false, message: `Invalid componentClass. Must be one of: ${Object.values(ComponentBoundingBoxesClass).join(', ')}` });
+    }
+    if (typeof rleString !== 'string' || rleString.trim() === "") { // Also check if rleString is empty after trimming
+        logger.warn(`${serviceLocation}: Invalid rleString for mask ${segmentationMaskId}. Must be a non-empty string.`);
+        return res.status(400).json({ success: false, message: "rleString must be a non-empty string." });
     }
 
     // 1. Get the segmentation mask to find its project ID and verify it's a manual segmentation
@@ -428,16 +440,16 @@ router.patch("/save-manual-segmentation", isAuthAndNotGuest, async (req: Request
     const maskResult = await readProjectSegmentationMask(segmentationMaskId);
 
     if (!maskResult.success || !maskResult.projectsegmentationmask) {
-      logger.warn(`${serviceLocation}: Segmentation mask ${segmentationMaskId} not found for saving manual preview. Message: ${maskResult.message}`);
+      logger.warn(`${serviceLocation}: Segmentation mask ${segmentationMaskId} not found for saving manual preview/RLE. Message: ${maskResult.message}`);
       return res.status(404).json({
         success: false,
         message: maskResult.message || "Segmentation mask not found."
       });
     }
 
-    // Ensure this is indeed a manual segmentation mask
+    // Ensure this is indeed a manual segmentation mask (isMedSAMOutput should be false)
     if (maskResult.projectsegmentationmask.isMedSAMOutput) {
-      logger.warn(`${serviceLocation}: Attempt to save preview for AI segmentation mask ${segmentationMaskId} via manual route. User: ${userId}`);
+      logger.warn(`${serviceLocation}: Attempt to save RLE/preview for AI segmentation mask ${segmentationMaskId} via manual route. User: ${userId}`);
       return res.status(400).json({
         success: false,
         message: "This endpoint is for saving manual segmentations. The provided mask ID corresponds to an AI-generated segmentation."
@@ -445,23 +457,75 @@ router.patch("/save-manual-segmentation", isAuthAndNotGuest, async (req: Request
     }
 
     const projectId = maskResult.projectsegmentationmask.projectid;
-    logger.info(`${serviceLocation}: Segmentation mask ${segmentationMaskId} (manual) belongs to project ${projectId}.`);
+    logger.info(`${serviceLocation}: Segmentation mask ${segmentationMaskId} (manual) belongs to project ${projectId}. Proceeding with RLE update and preview save.`);
 
-    // 2. Update segmentation mask to saved status in the database
-    logger.debug(`${serviceLocation}: Updating manual segmentation mask ${segmentationMaskId} to isSaved: true.`);
+    // 2. Prepare update payload for RLE and isSaved status
+    let rleActuallyModified = false; // Flag to track if RLE was indeed changed or added
+    const updatedFrames = maskResult.projectsegmentationmask.frames.map(f => {
+        if (f.frameindex === frameIndex) {
+            let frameModified = false;
+            const updatedSlices = f.slices.map(s => {
+                if (s.sliceindex === sliceIndex) {
+                    let sliceModified = false;
+                    let componentFoundAndUpdated = false;
+                    let currentSegmentationMasks = s.segmentationmasks ? [...s.segmentationmasks] : [];
+
+                    currentSegmentationMasks = currentSegmentationMasks.map(sm => {
+                        if (sm.class === componentClass) {
+                            componentFoundAndUpdated = true;
+                            if (sm.segmentationmaskcontents !== rleString) {
+                                sliceModified = true;
+                                frameModified = true;
+                                rleActuallyModified = true;
+                                return { ...sm, segmentationmaskcontents: rleString };
+                            }
+                        }
+                        return sm;
+                    });
+
+                    if (!componentFoundAndUpdated) {
+                        currentSegmentationMasks.push({ class: componentClass as ComponentBoundingBoxesClass, segmentationmaskcontents: rleString });
+                        sliceModified = true;
+                        frameModified = true;
+                        rleActuallyModified = true;
+                    }
+                    return sliceModified ? { ...s, segmentationmasks: currentSegmentationMasks } : s;
+                }
+                return s;
+            });
+            return frameModified ? { ...f, slices: updatedSlices } : f;
+        }
+        return f;
+    });
+
+    if (!rleActuallyModified) {
+        logger.info(`${serviceLocation}: RLE for mask ${segmentationMaskId}, F${frameIndex}S${sliceIndex}, Class ${componentClass} was not modified or added (already up-to-date or target not found for update). Proceeding with save status and preview.`);
+        // If the RLE didn't change, you might only want to update isSaved if it's not already true.
+        // However, for simplicity, we'll update both.
+    }
+    
+    const updatePayload: any = { // Use 'any' for flexibility or define a more specific update type
+        isSaved: true,
+    };
+    if (rleActuallyModified) { // Only include frames in payload if they were actually changed
+        updatePayload.frames = updatedFrames;
+    }
+
+
+    logger.debug(`${serviceLocation}: Updating manual segmentation mask ${segmentationMaskId} with RLE (if changed) and isSaved: true.`);
     const segmentationDbUpdateResult = await updateProjectSegmentationMask(
       segmentationMaskId,
-      { isSaved: true } // Consider adding a field for s3ImageUrl here in the future
+      updatePayload 
     );
 
     if (!segmentationDbUpdateResult.success || !segmentationDbUpdateResult.projectsegmentationmask) {
-      logger.error(`${serviceLocation}: Failed to update manual segmentation mask ${segmentationMaskId} status in database. Message: ${segmentationDbUpdateResult.message}`);
+      logger.error(`${serviceLocation}: Failed to update manual segmentation mask ${segmentationMaskId} in database. Message: ${segmentationDbUpdateResult.message}`);
       return res.status(400).json({
         success: false,
-        message: segmentationDbUpdateResult.message || "Failed to update segmentation mask status in database."
+        message: segmentationDbUpdateResult.message || "Failed to update segmentation mask in database."
       });
     }
-    logger.info(`${serviceLocation}: Successfully updated manual segmentation mask ${segmentationMaskId} status to saved in DB.`);
+    logger.info(`${serviceLocation}: Successfully updated manual segmentation mask ${segmentationMaskId} (RLE & status) in DB.`);
 
     // 3. Save the uploaded JPEG to S3
     let s3ImageUrl = '';
@@ -469,7 +533,6 @@ router.patch("/save-manual-segmentation", isAuthAndNotGuest, async (req: Request
       const s3Key = `seg_mask_manual/${projectId}/${segmentationMaskId}-${Date.now()}.jpeg`;
       if (!process.env.S3_BUCKET_NAME) {
         logger.error(`${serviceLocation}: S3_BUCKET_NAME environment variable is not set. Cannot upload manual segmentation image for mask ${segmentationMaskId}.`);
-        // Not returning error to client, but image won't be on S3
       } else {
         logger.debug(`${serviceLocation}: Uploading manual segmentation preview ${uploadedFile.originalname} to S3 key ${s3Key} for mask ${segmentationMaskId}.`);
         await uploadSegMaskToS3(
@@ -488,7 +551,7 @@ router.patch("/save-manual-segmentation", isAuthAndNotGuest, async (req: Request
 
     // 4. Check if the parent project is already saved before updating it
     logger.debug(`${serviceLocation}: Checking save status of parent project ${projectId} for manual segmentation mask ${segmentationMaskId}.`);
-    const projectResult = await readProject(projectId, userId);
+    const projectResult = await readProject(projectId, userId.toString()); // Ensure userId is string
 
     if (!projectResult.success || !projectResult.projects || projectResult.projects.length === 0) {
       logger.warn(`${serviceLocation}: Could not find project ${projectId} to check/update save status after saving manual segmentation mask ${segmentationMaskId}.`);
@@ -507,25 +570,25 @@ router.patch("/save-manual-segmentation", isAuthAndNotGuest, async (req: Request
       }
     }
 
-    logger.info(`${serviceLocation}: User ${userId} successfully processed save request for manual segmentation preview for mask ${segmentationMaskId}. DB status updated. S3 upload attempted. Image URL: ${s3ImageUrl}`);
+    logger.info(`${serviceLocation}: User ${userId} successfully processed save request for manual segmentation (RLE & preview) for mask ${segmentationMaskId}. DB status updated. S3 upload attempted. Image URL: ${s3ImageUrl}`);
     return res.status(200).json({
       success: true,
-      message: "Manual segmentation preview saved successfully. Database updated and S3 upload initiated.",
+      message: "Manual segmentation (RLE & preview) saved successfully. Database updated and S3 upload initiated.",
       s3ImageUrl: s3ImageUrl,
-      segmentation: segmentationDbUpdateResult.projectsegmentationmask
+      segmentation: segmentationDbUpdateResult.projectsegmentationmask // Return the fully updated mask
     });
 
   } catch (error) {
-    const segmentationMaskId = req.body?.segmentationMaskId || "unknown";
+    const segmentationMaskIdBody = req.body?.segmentationMaskId || "unknown"; // Renamed to avoid conflict in catch block
     const errorMessage = error instanceof Error ? error.message : String(error);
     LogError(
       error instanceof Error ? error : new Error(errorMessage),
       serviceLocation,
-      `Error saving manual segmentation JPEG for mask ID: ${segmentationMaskId}`
+      `Error saving manual segmentation (RLE & preview) for mask ID: ${segmentationMaskIdBody}`
     );
     return res.status(500).json({
       success: false,
-      message: "An unexpected error occurred while saving the manual segmentation JPEG."
+      message: "An unexpected error occurred while saving the manual segmentation."
     });
   }
 });
