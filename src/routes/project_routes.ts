@@ -18,6 +18,43 @@ import LogError from "../utils/error_logger"; // Import error logging utility
 const serviceLocation = "API(Upload)";
 const router = express.Router();
 
+// Get project information route
+router.get("/get-project-info/:projectId", isAuth, async (req: Request, res: Response) => {
+  const {projectId} = req.params;
+  const userId = (req.user as any)?._id;
+
+  if (!projectId) {
+    return res.status(400).json({ success: false, message: "Missing projectId." });
+  }
+
+  try {
+    const result = await readProject(projectId, userId);
+    if (result.success && result.projects && result.projects.length > 0) {
+      const project = result.projects[0];
+      return res.status(200).json({
+        success: true,
+        project: {
+          projectId: project._id,
+          name: project.name,
+          description: project.description,
+          isSaved: project.isSaved,
+          filesize: project.filesize,
+          filetype: project.filetype,
+          dimensions: project.dimensions,
+          voxelsize: project.voxelsize,
+          createdAt: project.createdAt,
+          updatedAt: project.updatedAt
+        }
+      });
+    } else {
+      return res.status(404).json({ success: false, message: "Project not found." });
+    }
+  } catch (error) {
+    LogError(error as Error, serviceLocation, "Error fetching project info");
+    return res.status(500).json({ success: false, message: "An error occurred while fetching the project information." });
+  }
+});
+
 // Upload route with PUT method
 router.put("/upload-new-project",
   isAuth,
