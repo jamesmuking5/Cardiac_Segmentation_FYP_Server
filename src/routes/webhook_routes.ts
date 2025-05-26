@@ -71,19 +71,24 @@ router.post("/gpu-callback", async (req: Request, res: Response) => {
 
         // If job is completed and has results (gpuResult is the object form here), process and store structured segmentation masks
         if (jobStatus === JobStatus.COMPLETED && gpuResult && typeof gpuResult === 'object' && Object.keys(gpuResult).length > 0) {
-            const currentJob = updateResult.job;
+            const currentJob = updateResult.job; // This is the IJobDocument
+            if (!currentJob) {
+                logger.error(`${serviceLocation}: Job with UUID ${gpuJobId} not found after update during webhook processing.`);
+                // Potentially send a 404 or handle as an error state
+                return res.status(404).json({ message: `Job ${gpuJobId} not found after update.`});
+            }
             const projectId = currentJob.projectid;
-            // const userId = currentJob.userid; // userid is not part of IProjectSegmentationMask, linked via projectid
+            // const userId = currentJob.userid; 
 
-            logger.info(`${serviceLocation}: Processing structured segmentation results for job ${gpuJobId}, project ${projectId}`);
+            logger.info(`${serviceLocation}: Processing structured segmentation results for job ${gpuJobId}, project ${projectId}. Segmentation source from job: ${currentJob.segmentationSource}`);
 
             const newSegmentationSet: Partial<IProjectSegmentationMask> = {
                 projectid: projectId,
-                // Use the name and description from the job, or fallback/generate if not present
-                name: job.segmentationName || `AI Output - Job ${gpuJobId.substring(0, 8)}`, 
-                description: job.segmentationDescription || `Automated segmentation results from inference job ${gpuJobId}`,
-                isSaved: false, // Or based on some logic/default
-                isMedSAMOutput: true, // Assuming manual inference implies MedSAM output
+                name: currentJob.segmentationName || `AI Output - Job ${gpuJobId.substring(0, 8)}`, 
+                description: currentJob.segmentationDescription || `Automated segmentation results from inference job ${gpuJobId}`,
+                isSaved: false, 
+                segmentationmaskRLE: true, // Assuming RLE format for masks from GPU
+                isMedSAMOutput: currentJob.segmentationSource === 'original', // Set based on the job's source
                 frames: []
             };
 

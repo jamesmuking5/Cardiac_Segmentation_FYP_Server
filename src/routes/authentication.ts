@@ -402,6 +402,80 @@ router.get("/admin", isAuthAndAdmin, (req: Request, res: Response) => {
   res.status(200).json({ message: "You are an admin!" });
 });
 
+// Admin route to update any user's information
+router.post("/admin-update-user",
+  isAuthAndAdmin,
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const { targetUsername, updates } = req.body;
+
+      if (!targetUsername) {
+        res.status(400).json({ update: false, message: "Target username is required." });
+        return;
+      }
+
+      if (!updates || Object.keys(updates).length === 0) {
+        res.status(400).json({ update: false, message: "No update information provided." });
+        return;
+      }
+
+      // Find the user by username
+      const userToUpdateResult = await readUser({ username: targetUsername });
+
+      if (!userToUpdateResult.success || !userToUpdateResult.users || userToUpdateResult.users.length === 0) {
+        res.status(404).json({ update: false, message: `User "${targetUsername}" not found.` });
+        return;
+      }
+
+      const userToUpdate = userToUpdateResult.users[0];
+      if (!userToUpdate._id) {
+        res.status(500).json({ update: false, message: "User ID is missing for the target user." });
+        return;
+      }
+
+      // Prepare the updates object, filtering for allowed fields
+      const allowedUpdates: {
+        username?: string;
+        email?: string;
+        phone?: string;
+        role?: UserRole;
+        password?: string;
+      } = {};
+
+      if (updates.username !== undefined) allowedUpdates.username = updates.username;
+      if (updates.email !== undefined) allowedUpdates.email = updates.email;
+      if (updates.phone !== undefined) allowedUpdates.phone = updates.phone;
+      if (updates.role !== undefined) allowedUpdates.role = updates.role;
+      if (updates.password !== undefined) allowedUpdates.password = updates.password;
+
+      if (Object.keys(allowedUpdates).length === 0) {
+        res.status(400).json({ update: false, message: "No valid fields provided for update." });
+        return;
+      }
+
+      // Update the user information in the database
+      const result = await updateUser(userToUpdate._id, allowedUpdates);
+
+      if (!result.success) {
+        res.status(400).json({ update: false, message: result.message });
+        return;
+      }
+
+      logger.info(`${serviceLocation}: Admin ${req.user?.username} updated user ${targetUsername} successfully.`);
+      res.status(200).json({
+        update: true,
+        message: `User ${targetUsername}'s information updated successfully.`,
+        user: result.user, // Contains the updated user information (excluding password)
+      });
+
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : "Unknown error";
+      logger.error(`${serviceLocation}: Error during admin user update: ${errorMessage}`);
+      res.status(500).json({ update: false, message: "Internal error during admin user update." });
+    }
+  }
+);
+
 // Fetch all users route (Admin only)
 router.get("/users", isAuthAndAdmin, async (req: Request, res: Response): Promise<void> => {
   try {
