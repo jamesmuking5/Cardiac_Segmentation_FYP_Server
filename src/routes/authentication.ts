@@ -402,6 +402,62 @@ router.get("/admin", isAuthAndAdmin, (req: Request, res: Response) => {
   res.status(200).json({ message: "You are an admin!" });
 });
 
+// Admin-only route to delete a user
+// Admin-only route to delete a user by username
+router.post("/admin-delete-user",
+  isAuthAndAdmin,
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const { usernameToDelete } = req.body; // Expecting usernameToDelete in the request body
+
+      if (!usernameToDelete) {
+        res.status(400).json({ delete: false, message: "Username to delete is required." });
+        return;
+      }
+
+      // Check if the user exists by username
+      const userExistsResult = await readUser({ username: usernameToDelete });
+
+      if (!userExistsResult.success || !userExistsResult.users || userExistsResult.users.length === 0) {
+        res.status(404).json({ delete: false, message: `User with username '${usernameToDelete}' not found.` });
+        return;
+      }
+
+      // Assuming readUser returns an array and we take the first one if multiple (though username should be unique)
+      const userToDelete = userExistsResult.users[0];
+
+      if (!userToDelete._id) {
+        logger.error(`${serviceLocation}: User '${usernameToDelete}' found but has no _id.`);
+        res.status(500).json({ delete: false, message: "User data is inconsistent; missing ID." });
+        return;
+      }
+
+      const userIdToDelete = userToDelete._id;
+
+      // Clean up user data before deletion using their ID
+      await cleanupUserS3Storage(userIdToDelete);
+
+      // Delete the user from the database using their ID
+      const deleteResult = await deleteUser(userIdToDelete);
+
+      if (!deleteResult.success) {
+        res.status(400).json({ delete: false, message: deleteResult.message || `Failed to delete user '${usernameToDelete}'.` });
+        return;
+      }
+
+      logger.info(`${serviceLocation}: Admin deleted user '${usernameToDelete}' (ID: ${userIdToDelete}) successfully.`);
+      res.status(200).json({
+        delete: true,
+        message: `User '${usernameToDelete}' deleted successfully by admin.`,
+      });
+
+    } catch (error: unknown) {
+      logger.error(`${serviceLocation}: Error during admin user deletion (username: ${req.body.usernameToDelete}): ${error}`);
+      res.status(500).json({ delete: false, message: "Internal error during admin user deletion." });
+    }
+  }
+);
+
 // Admin route to update any user's information
 router.post("/admin-update-user",
   isAuthAndAdmin,
