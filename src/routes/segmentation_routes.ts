@@ -594,7 +594,7 @@ router.get("/export-project-data/:projectId", isAuth, async (req: Request, res: 
     const userId = (req.user as any)?._id;
     const serviceLocationExport = `${serviceLocation}/exportProjectDataNifti`;
     const tempExportId = uuidv4();
-    const baseTempDir = path.join(__dirname, '..', '..', 'temp_exports', tempExportId);
+    const baseTempDir = path.join(__dirname, '..', 'temp_exports', tempExportId);
     const segmentationsJsonPath = path.join(baseTempDir, 'segmentations.json');
     const tempOriginalNiftiPath = path.join(baseTempDir, `original_${tempExportId}.nii.gz`);
     const localOutputSegmentationNiftiPath = path.join(baseTempDir, `segmentation_output_${tempExportId}.nii.gz`);
@@ -642,7 +642,16 @@ router.get("/export-project-data/:projectId", isAuth, async (req: Request, res: 
         const segmentationMasksResult = await readProjectSegmentationMask(projectId);
         let segmentationsToProcess: IProjectSegmentationMask[] = []; 
         if (segmentationMasksResult.success && segmentationMasksResult.projectsegmentationmasks && segmentationMasksResult.projectsegmentationmasks.length > 0) {
-            segmentationsToProcess = [segmentationMasksResult.projectsegmentationmasks[0]];
+            // Prioritize the mask that is NOT an AI output (manual/edited mask)
+            const manualMask = segmentationMasksResult.projectsegmentationmasks.find(mask => mask.isMedSAMOutput === false);
+            if (manualMask) {
+                logger.info(`${serviceLocationExport}: Found manual segmentation mask (isMedSAMOutput: false) for project ${projectId}. Using it for export.`);
+                segmentationsToProcess = [manualMask];
+            } else {
+                // Fallback to the first available mask if no manual mask is found
+                logger.warn(`${serviceLocationExport}: No manual segmentation mask (isMedSAMOutput: false) found for project ${projectId}. Defaulting to the first available segmentation mask.`);
+                segmentationsToProcess = [segmentationMasksResult.projectsegmentationmasks[0]];
+            }
         } else {
             logger.warn(`${serviceLocationExport}: No segmentation data found for project ${projectId}. Export will result in an empty NIfTI (matching original geometry).`);
         }
