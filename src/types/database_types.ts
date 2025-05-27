@@ -68,8 +68,8 @@ export interface IUserDocument extends IUser, Document {
  * @property {string} NIFTI - Represents a NIfTI file (.nii).
  * @property {string} NIFTI_GZ - Represents a compressed NIfTI file (.nii.gz).
  * @property {string} DICOM - Represents a DICOM file (.dcm).
- * @property {string} NIFTI_CUSTOM - Represents a non-standard, custom MIME type for NIfTI files (.nii). 
- * @property {string} NIFTI_GZ_CUSTOM - Represents a non-standard, custom MIME type for compressed NIfTI files (.nii.gz). 
+ * @property {string} NIFTI_CUSTOM - Represents a non-standard, custom MIME type for NIfTI files (.nii).
+ * @property {string} NIFTI_GZ_CUSTOM - Represents a non-standard, custom MIME type for compressed NIfTI files (.nii.gz).
  */
 export enum FileType {
     NIFTI = "application/octet-stream", // .nii (standard MIME for NIfTI files)
@@ -116,7 +116,7 @@ export enum FileDataType {
  * @property {number} filesize - The size of the renamed file in bytes.
  * @property {string} filehash - The SHA256 hash of the renamed file.
  * @property {string} basepath - The base path for the file storage (e.g., s3://devel-visheart-s3-bucket/temp/"the-user-id"/"the-user-id"_2630fcede25328c13a15c4dfe6376c068201eb1f8d871736cd8197c2b1463ed3).
- * @property {string} originalfilepath - The original file location (e.g., s3://devel-visheart-s3-bucket/temp/"the-user-id"/"the-user-id"_2630fcede25328c13a15c4dfe6376c068201eb1f8d871736cd8197c2b1463ed3/"the-user-id"_2630fcede25328c13a15c4dfe6376c068201eb1f8d871736cd8197c2b1463ed3.nii.gz). 
+ * @property {string} originalfilepath - The original file location (e.g., s3://devel-visheart-s3-bucket/temp/"the-user-id"/"the-user-id"_2630fcede25328c13a15c4dfe6376c068201eb1f8d871736cd8197c2b1463ed3/"the-user-id"_2630fcede25328c13a15c4dfe6376c068201eb1f8d871736cd8197c2b1463ed3.nii.gz).
  * @property {string} extractedfolderpath - The folder where all the extracted JPEGs from NIfTI are saved. (e.g. s3://devel-visheart-s3-bucket/temp/${testUser._id}/${String(testUser._id)}_2630fcede25328c13a15c4dfe6376c068201eb1f8d871736cd8197c2b1463ed3/extracted)
 * @property {string} datatype - The data type of the image (e.g., uint8, float32).
  * @property {object} dimensions - The dimensions of the image.
@@ -157,7 +157,7 @@ export interface IProject {
         frames?: number; // Time/Frames dimension (optional, for 4D images)
     }
 
-    /** Physical size of one voxel (usually in mm). 
+    /** Physical size of one voxel (usually in mm).
      * From NIfTI pixdim = [?, 0.5, 0.5, 1.0, 2.0, 0, 0, 0], first ? and last 3 zeroes are not used,
      * but the 4 numbers are in mm, mm, mm and seconds. */
     voxelsize?: { x: number; y: number; z?: number; t?: number; };
@@ -176,11 +176,13 @@ export interface IProjectDocument extends IProject, Document { }
  * @property {string} rv - Represents the right ventricle.
  * @property {string} myo - Represents the myocardium.
  * @property {string} lvc - Represents the left ventricle cavity.
+ * @property {string} MANUAL - Represents a manually generated segmentation class.
  */
 export enum ComponentBoundingBoxesClass {
     RV = "rv",
     MYO = "myo",
     LVC = "lvc",
+    MANUAL = "manual", // Added for manual segmentations from GPU
 }
 
 /**
@@ -212,6 +214,7 @@ export enum ComponentBoundingBoxesClass {
  */
 export interface IProjectSegmentationMask {
     // Identifiers
+    _id?: any; // Allow _id to be compatible with the transformed object for new segmentations
     projectid: string; // MongoDB Project ID of the project to which the segmentation mask belongs
     // User inputs
     name: string; // Name of the segmentation mask
@@ -243,7 +246,9 @@ export interface IProjectSegmentationMask {
     }[];
 }
 // Segmentation Mask Model Interface (single segmentation mask document in the database)
-export interface IProjectSegmentationMaskDocument extends IProjectSegmentationMask, Document { }
+export interface IProjectSegmentationMaskDocument extends IProjectSegmentationMask, Document {
+    _id: any; // Ensure _id is part of the document type
+ }
 
 /*==================================== Project Section ends here =============================================*/
 /*==================================== Job Queue Section starts here =========================================*/
