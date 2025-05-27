@@ -14,7 +14,7 @@ import {
 } from "../services/database";
 import { isAuth, isAuthAndAdmin, isAuthAndNotGuest } from "../services/passportjs";
 import LogError from "../utils/error_logger";
-import { ComponentBoundingBoxesClass, IProjectSegmentationMask, IProjectDocument } from "../types/database_types";
+import { ComponentBoundingBoxesClass, IProjectSegmentationMask, IProjectDocument, IProjectSegmentationMaskDocument } from "../types/database_types";
 import fs from 'fs-extra'; // Use fs-extra for easier directory handling and tar extraction
 import path from 'path';
 import { exec } from 'child_process';
