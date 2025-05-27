@@ -139,20 +139,14 @@ router.post("/start-manual-segmentation/:projectId",
                 image_name, 
                 bbox, 
                 segmentation_source,
-                segmentationName,      // Pass to service
-                segmentationDescription // Pass to service
+                segmentationName,
+                segmentationDescription
             };
             // Call startManualInference with effectiveProjectId from params
             const result = await startManualInference(effectiveProjectId, req.user as any, res.locals.gpuAuthToken, manualInput);
             
-            if (result.success && result.segmentationData) { // Check for segmentationData
-                logger.info(`${serviceLocation}: Successfully processed direct manual segmentation for project ${projectId}, image ${image_name}. Sending structured result to frontend.`);
-                // Send the data structured like the AI inference results
-                return res.status(200).json({ 
-                    success: true,
-                    message: result.message || "Manual segmentation processed successfully.", // Use message from service
-                    segmentations: [result.segmentationData] // Wrap segmentationData in an array
-                });
+            if (result.success) {
+                res.status(200).json({ message: result.message, uuid: result.uuid }); // Return the UUID to the client
             } else {
                 // Use result.message if available, otherwise a generic error
                 res.status(500).json({ message: result.message || "Failed to start manual inference." });
