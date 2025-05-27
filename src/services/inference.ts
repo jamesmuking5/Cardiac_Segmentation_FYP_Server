@@ -345,9 +345,9 @@ export const startManualInference = async (
 
     const callback_url = process.env.GPU_CALLBACK_URL || process.env.CALLBACK_URL || "http://localhost/callback";
     
-    const s3BucketName = process.env.S3_BUCKET_NAME || process.env.AWS_S3_BUCKET_NAME;
+    const s3BucketName = process.env.AWS_BUCKET_NAME || process.env.AWS_AWS_BUCKET_NAME;
     if (!s3BucketName) {
-        logger.error(`${serviceLocationManual}: S3_BUCKET_NAME (or AWS_S3_BUCKET_NAME) is not set.`);
+        logger.error(`${serviceLocationManual}: AWS_BUCKET_NAME (or AWS_AWS_BUCKET_NAME) is not set.`);
         return { success: false, error: "S3 bucket configuration is missing." };
     }
 
@@ -484,9 +484,9 @@ export const startManualInference = async (
 //         return { success: false, message: "Callback URL for GPU server is not configured." };
 //     }
 
-//     const s3BucketName = process.env.AWS_BUCKET_NAME || process.env.S3_BUCKET_NAME; // Consistent with startInference, with a fallback
+//     const s3BucketName = process.env.AWS_BUCKET_NAME || process.env.AWS_BUCKET_NAME; // Consistent with startInference, with a fallback
 //     if (!s3BucketName) {
-//         logger.error(`${serviceLocationManual}: AWS_BUCKET_NAME or S3_BUCKET_NAME environment variable is not set for project ${projectId}.`);
+//         logger.error(`${serviceLocationManual}: AWS_BUCKET_NAME or AWS_BUCKET_NAME environment variable is not set for project ${projectId}.`);
 //         return { success: false, message: "S3 bucket name not configured." };
 //     }
 
