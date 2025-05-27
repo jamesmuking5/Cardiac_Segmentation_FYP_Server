@@ -588,4 +588,151 @@ router.put("/save-manual-segmentation/:projectId",
         }
     });
 
+    // Route to export project data as a NIfTI segmentation mask
+router.get("/export-project-data/:projectId", isAuth, async (req: Request, res: Response) => {
+    const { projectId } = req.params;
+    const userId = (req.user as any)?._id;
+    const serviceLocationExport = `${serviceLocation}/exportProjectDataNifti`;
+    const tempExportId = uuidv4();
+    const baseTempDir = path.join(__dirname, '..', '..', 'temp_exports', tempExportId);
+    const segmentationsJsonPath = path.join(baseTempDir, 'segmentations.json');
+    const tempOriginalNiftiPath = path.join(baseTempDir, `original_${tempExportId}.nii.gz`);
+    const localOutputSegmentationNiftiPath = path.join(baseTempDir, `segmentation_output_${tempExportId}.nii.gz`);
+
+    logger.info(`${serviceLocationExport}: Request to export NIfTI segmentation for project ${projectId} by user ${userId}. Temp ID: ${tempExportId}`);
+
+    if (!projectId) {
+        return res.status(400).json({ success: false, message: "Project ID is required." });
+    }
+
+    try {
+        await fs.ensureDir(baseTempDir);
+
+        // 1. Read Project Details (including dimensions and original NIfTI path)
+        const projectResult = await readProject(projectId, userId);
+        if (!projectResult.success || !projectResult.projects || projectResult.projects.length === 0) {
+            logger.warn(`${serviceLocationExport}: Project ${projectId} not found or user ${userId} does not have access. Message: ${projectResult.message}`);
+            return res.status(404).json({ success: false, message: projectResult.message || "Project not found or access denied." });
+        }
+        const project: IProjectDocument = projectResult.projects[0]; // IProject should be imported
+
+        if (!project.dimensions || project.dimensions.width == null || project.dimensions.height == null) {
+            logger.error(`${serviceLocationExport}: Project ${projectId} is missing critical dimension data (width/height). Cannot proceed with NIfTI export.`);
+            return res.status(500).json({ success: false, message: "Project is missing critical dimension data." });
+        }
+        const planeHeightForRLE = project.dimensions.height; 
+        const planeWidthForRLE = project.dimensions.width;   
+
+
+        // 2. Download Original NIfTI file (needed for header/affine by Python script)
+        const s3BucketName = process.env.AWS_BUCKET_NAME;
+        if (!project.originalfilepath || !s3BucketName) {
+            logger.error(`${serviceLocationExport}: Original NIfTI file path (project.originalfilepath) or S3 bucket name is missing for project ${projectId}.`);
+            return res.status(500).json({ success: false, message: "Configuration error: Missing original NIfTI path or S3 bucket." });
+        }
+        const originalNiftiS3Key = extractS3KeyFromUrl(project.originalfilepath);
+        if (!originalNiftiS3Key) {
+            logger.error(`${serviceLocationExport}: Could not extract S3 key from originalfilepath: ${project.originalfilepath}`);
+            return res.status(500).json({ success: false, message: "Configuration error: Invalid original NIfTI S3 URL." });
+        }
+        logger.info(`${serviceLocationExport}: Downloading original NIfTI ${originalNiftiS3Key} to ${tempOriginalNiftiPath}`);
+        await downloadFromS3(s3BucketName, originalNiftiS3Key, tempOriginalNiftiPath);
+
+        // 3. Read All Segmentation Masks and create segmentations.json
+        const segmentationMasksResult = await readProjectSegmentationMask(projectId);
+        let segmentationsToProcess: IProjectSegmentationMask[] = []; 
+        if (segmentationMasksResult.success && segmentationMasksResult.projectsegmentationmasks && segmentationMasksResult.projectsegmentationmasks.length > 0) {
+            segmentationsToProcess = [segmentationMasksResult.projectsegmentationmasks[0]];
+        } else {
+            logger.warn(`${serviceLocationExport}: No segmentation data found for project ${projectId}. Export will result in an empty NIfTI (matching original geometry).`);
+        }
+        await fs.writeJson(segmentationsJsonPath, segmentationsToProcess, { spaces: 2 });
+        logger.info(`${serviceLocationExport}: Created segmentations.json for project ${projectId} at ${segmentationsJsonPath}`);
+
+        // 4. Call Python script to create the segmentation NIfTI
+        const pythonScriptPath = path.join(__dirname, '..', '..', 'src', 'python', 'create_nifti_from_segmentations.py');
+        const pythonCommand = `python "${pythonScriptPath}" "${segmentationsJsonPath}" "${tempOriginalNiftiPath}" "${localOutputSegmentationNiftiPath}" "${planeHeightForRLE}" "${planeWidthForRLE}"`;
+
+        logger.info(`${serviceLocationExport}: Executing Python script: ${pythonCommand}`);
+        await new Promise<void>((resolve, reject) => {
+            exec(pythonCommand, { maxBuffer: 1024 * 1024 * 20 }, (error, stdout, stderr) => { 
+                if (error) {
+                    logger.error(`${serviceLocationExport}: Python script error for project ${projectId}: ${stderr || error.message}`);
+                    return reject(new Error(`NIfTI creation failed: ${stderr || error.message}`));
+                }
+                logger.info(`${serviceLocationExport}: Python script stdout for project ${projectId}: ${stdout}`);
+                if (stderr) logger.warn(`${serviceLocationExport}: Python script stderr for project ${projectId}: ${stderr}`);
+                
+                const niftiPathMatch = stdout.match(/NIFTI_FILE_PATH:(.*)/);
+                if (!niftiPathMatch || !niftiPathMatch[1] || !fs.existsSync(niftiPathMatch[1].trim())) {
+                     return reject(new Error(`Output NIfTI path not found in Python script output or file does not exist. Output: ${stdout}`));
+                }
+                resolve();
+            });
+        });
+
+        // 5. Upload the generated segmentation NIfTI to S3
+        let baseExportName = project.name.replace(/[^a-zA-Z0-9_.-]+/g, '_');
+        if (project.originalfilename) {
+            const originalName = project.originalfilename;
+            let base = path.basename(originalName, path.extname(originalName)); 
+            if (originalName.toLowerCase().endsWith(".nii.gz")) { 
+                base = path.basename(originalName, ".nii.gz");
+            }
+            baseExportName = base.replace(/[^a-zA-Z0-9_.-]+/g, '_'); 
+        }
+        const suggestedNiftiFilename = `${baseExportName}_segmentation.nii.gz`;
+        logger.info(`${serviceLocationExport}: Suggested filename for export NIfTI: ${suggestedNiftiFilename}`);
+
+        const exportNiftiFileStream = fs.createReadStream(localOutputSegmentationNiftiPath);
+        // This call expects uploadMaskToS3 to take 6 arguments
+        const exportS3Url = await uploadMaskToS3(
+            exportNiftiFileStream, // 1. fileStream
+            userId || 'system',    // 2. userId
+            tempExportId,          // 3. fileId
+            '.nii.gz',             // 4. fileExtension
+            `project_segmentations_nifti/${projectId}/`, // 5. s3KeyPrefix
+            suggestedNiftiFilename // 6. suggestedFilename 
+        );
+
+        if (!exportS3Url) {
+            throw new Error("Failed to upload segmentation NIfTI to S3 or get S3 URL.");
+        }
+
+        // 6. Generate Presigned URL for the uploaded NIfTI
+        const finalS3Key = extractS3KeyFromUrl(exportS3Url);
+        if (!finalS3Key) {
+            throw new Error(`Could not extract S3 key from the uploaded export URL: ${exportS3Url}`);
+        }
+        const presignedExportUrl = await generatePresignedGetUrl(s3BucketName!, finalS3Key, 3600); 
+
+        if (!presignedExportUrl) {
+            throw new Error("Failed to generate presigned URL for the segmentation NIfTI.");
+        }
+
+        logger.info(`${serviceLocationExport}: Successfully prepared NIfTI segmentation for project ${projectId}. Presigned URL: ${presignedExportUrl}`);
+        return res.status(200).json({
+            success: true,
+            message: "NIfTI segmentation exported successfully.",
+            projectId: project._id,
+            projectName: project.name,
+            exportPackageUrl: presignedExportUrl,
+            exportPackageUrlExpiresAt: Date.now() + (3600 * 1000),
+            exportContentType: "application/gzip" 
+        });
+
+    } catch (error) {
+        LogError(error as Error, serviceLocationExport, `Error exporting NIfTI segmentation for project ${projectId}`);
+        return res.status(500).json({
+            success: false,
+            message: "An unexpected error occurred while exporting NIfTI segmentation."
+        });
+    } finally {
+        if (await fs.pathExists(baseTempDir)) {
+            logger.info(`${serviceLocationExport}: Cleaning up temporary export directory ${baseTempDir} for project ${projectId}`);
+            await fs.remove(baseTempDir);
+        }
+    }
+});
+
 export default router;
