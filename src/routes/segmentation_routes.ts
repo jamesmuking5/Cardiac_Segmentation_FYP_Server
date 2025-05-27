@@ -1,596 +1,591 @@
-import { Request, Response, Router } from "express";
+// File: src/services/inference.ts
+// Description: Service layer for initiating the inference process, including Cloud GPU communication.
+
+import { IUserSafe, ProjectCrudResult, segmentationSource, IProjectSegmentationMask, ComponentBoundingBoxesClass } from "../types/database_types";
 import logger from "../services/logger";
-import { startInference, startManualInference } from "../services/inference"; 
-import { injectGpuAuthToken } from "../middleware/gpuauthmiddleware";
-import { readProjectSegmentationMask, updateProjectSegmentationMask, updateProject, readProject } from "../services/database";
-import { isAuth, isAuthAndAdmin, isAuthAndNotGuest } from "../services/passportjs"; 
-import LogError from "../utils/error_logger";
-import { jobModel, userModel, JobStatus } from "../services/database";
-import { uploadSegMaskToS3 } from "../services/s3_handler";
-import { ComponentBoundingBoxesClass} from "../types/database_types"; 
+import { readProject } from "../services/database";
+import { v4 as uuidv4 } from 'uuid';
+import { createJob, IJob, JobStatus } from "../services/database";
+import axios from 'axios';
+import { generatePresignedGetUrl } from "../utils/s3_presigned_url";
+import { URL } from 'url'; 
 
-const router = Router();
-const serviceLocation = "SegmentationRoutes";
+const router = require('express').Router();
 
-// Route to start inference for a specific project
-router.post("/start-segmentation/:projectId",
-    isAuth,
-    injectGpuAuthToken,
-    async (req: Request, res: Response) => {
-        const { projectId } = req.params;
-        logger.info(`${serviceLocation}: Received start inference request for project ${projectId} by user ${req.user?.username} with id ${req.user?._id}`);
-        try {
-            logger.info(`${serviceLocation}: Received start inference request for project ${projectId} by user ${req.user?.username} with id ${req.user?._id}`);
-            const result = await startInference(projectId, req.user, res.locals.gpuAuthToken); // Pass the token here
-            if (result.success) {
-                res.status(200).json({ message: result.message, uuid: result.uuid }); // Return the UUID to the client
-            } else {
-                res.status(500).json({ message: result.message });
-            }
-        } catch (error: unknown) {
-            LogError(error as Error, serviceLocation, "Error starting inference");
-        }
-    });
+const serviceLocation = "Inference";
+const GPU_SERVER_SSL = process.env.GPU_SERVER_SSL === 'true' || false;
+const GPU_SERVER_URL = process.env.GPU_SERVER_URL;
+const GPU_SERVER_PORT = process.env.GPU_SERVER_PORT;
+const cloudGpuBaseUrl = `${GPU_SERVER_SSL ? 'https' : 'http'}://${GPU_SERVER_URL}${GPU_SERVER_PORT ? `:${GPU_SERVER_PORT}` : ''}`;
 
-router.get("/segmentation-results/:projectId", isAuth, async (req: Request, res: Response) => {
-    const { projectId } = req.params;
+// Interface for manual segmentation input
+interface ManualSegmentationInput {
+    image_name: string;
+    bbox: number[]; // e.g., [x_min, y_min, x_max, y_max]
+    segmentation_source?: segmentationSource;
+    segmentationName?: string;
+    segmentationDescription?: string;
+}
 
-    if (!projectId) {
-        logger.warn(`${serviceLocation}: Project ID is required to fetch segmentation masks.`);
-        return res.status(400).json({ message: "Project ID is required." });
-    }
-
-    logger.info(`${serviceLocation}: Received request to fetch segmentation masks for project ID: ${projectId}`);
-
-    try {
-        const result = await readProjectSegmentationMask(projectId);
-
-        if (!result.success) {
-            // Differentiate between "project not found" and other errors
-            if (result.message?.includes("does not exist")) {
-                logger.warn(`${serviceLocation}: Project with ID ${projectId} not found when fetching segmentation masks.`);
-                return res.status(404).json({ message: result.message });
-            }
-            logger.error(`${serviceLocation}: Error reading segmentation masks for project ${projectId}: ${result.message}`);
-            return res.status(500).json({ message: result.message || "Error reading segmentation masks." });
-        }
-
-        // Handle case where project exists but has no segmentation masks
-        if (!result.projectsegmentationmasks || result.projectsegmentationmasks.length === 0) {
-            logger.info(`${serviceLocation}: No segmentation masks found for project ID ${projectId}.`);
-            return res.status(200).json({ 
-                message: "No segmentation masks found for this project.", 
-                segmentations: [] 
-            });
-        }
-
-        logger.info(`${serviceLocation}: Successfully fetched ${result.projectsegmentationmasks.length} segmentation mask(s) for project ID ${projectId}.`);
-        // The frontend will receive an array of IProjectSegmentationMaskDocument objects
-        return res.status(200).json({ segmentations: result.projectsegmentationmasks });
-
-    } catch (error) {
-        LogError(error as Error, serviceLocation, `Unexpected error fetching segmentation masks for project ${projectId}`);
-        return res.status(500).json({ message: "An unexpected error occurred while fetching segmentation masks." });
-    }
-});
-
-// Route to start MANUAL inference for a specific project and image with a bounding box
-router.post("/start-manual-segmentation/:projectId",
-    isAuth,
-    injectGpuAuthToken,
-    async (req: Request, res: Response) => {
-        const { projectId } = req.params;
-        // Extract image_name, bbox, segmentation_source, segmentationName, and segmentationDescription
-        const { image_name, bbox, segmentation_source, segmentationName, segmentationDescription } = req.body; 
-
-        logger.info(`${serviceLocation}: Received start MANUAL inference request for project ${projectId}, image ${image_name} by user ${req.user?.username} with id ${req.user?._id}`);
-
-        // Validate inputs
-        if (!image_name || typeof image_name !== 'string') {
-            logger.warn(`${serviceLocation}: Manual segmentation request for project ${projectId} is missing or has invalid 'image_name'.`);
-            return res.status(400).json({ message: "Missing or invalid 'image_name' in request body." });
-        }
-        if (!bbox || !Array.isArray(bbox) || bbox.length !== 4 || !bbox.every(coord => typeof coord === 'number')) {
-            logger.warn(`${serviceLocation}: Manual segmentation request for project ${projectId}, image ${image_name} has invalid 'bbox'.`);
-            return res.status(400).json({ message: "Invalid 'bbox' in request body. Expected an array of 4 numbers." });
-        }
-
-        // Validate segmentation_source
-        if (segmentation_source && (segmentation_source !== 'ai_inference' && segmentation_source !== 'manual_inference')) {
-            logger.warn(`${serviceLocation}: Manual segmentation request for project ${projectId} has invalid 'segmentation_source'. Must be 'ai_inference' or 'manual_inference'. Received: ${segmentation_source}`);
-            return res.status(400).json({ message: "Invalid 'segmentation_source'. Must be 'ai_inference' or 'manual_inference'." });
-        }
-        // Ensure segmentation_source is provided if it's a manual inference that needs distinction
-        if (!segmentation_source) {
-            logger.warn(`${serviceLocation}: Manual segmentation request for project ${projectId} is missing 'segmentation_source'. It must be 'ai_inference' or 'manual_inference'.`);
-            return res.status(400).json({ message: "Missing 'segmentation_source'. It must be 'ai_inference' or 'manual_inference'." });
-        }
-
-        // Validate segmentationName and segmentationDescription if needed (e.g., length)
-        if (segmentationName && typeof segmentationName !== 'string') {
-            logger.warn(`${serviceLocation}: Manual segmentation request for project ${projectId} has invalid 'segmentationName'.`);
-            return res.status(400).json({ message: "Invalid 'segmentationName'. Must be a string." });
-        }
-        if (segmentationDescription && typeof segmentationDescription !== 'string') {
-            logger.warn(`${serviceLocation}: Manual segmentation request for project ${projectId} has invalid 'segmentationDescription'.`);
-            return res.status(400).json({ message: "Invalid 'segmentationDescription'. Must be a string." });
-        }
-    
-        try {
-            const manualInput = { 
-                image_name, 
-                bbox, 
-                segmentation_source,
-                segmentationName,      // Pass to service
-                segmentationDescription // Pass to service
+// Interface for the expected GPU response for direct manual segmentation
+interface GpuManualPredictionResponseData {
+    uuid?: string; // GPU's internal request/job ID
+    status?: string;
+    result?: {
+        [imageName: string]: {
+            boxes: Array<{
+                bbox: number[];
+                confidence?: number;
+                class_id?: number;
+                class_name?: string; // Expected to be "manual"
+            }>;
+            masks: {
+                [className: string]: string; // Expecting a key like "manual" with RLE string
             };
-            const result = await startManualInference(projectId, req.user as any, res.locals.gpuAuthToken, manualInput);
-            
-            if (result.success) {
-                res.status(200).json({ message: result.message, uuid: result.uuid }); // Return the UUID to the client
-            } else {
-                res.status(500).json({ message: result.message });
-            }
-        } catch (error: unknown) {
-            LogError(error as Error, serviceLocation, `Error starting manual inference for project ${projectId}, image ${image_name}`);
-            res.status(500).json({ message: "An unexpected error occurred while starting manual inference." });
-        }
-    });
-
-router.get("/user-check-jobs", isAuth, async (req: Request, res: Response) => {
-    const userId = (req.user as any)?._id;
-    
-    logger.info(`${serviceLocation}: Fetching all jobs for user ${req.user?.username}`);
-    
-    try {
-        // Find all jobs for this user
-        const jobs = await jobModel.find({ 
-            userid: userId
-        }).sort({ createdAt: -1 }).limit(20); // Increased limit to see more jobs
-        
-        // Get queue information
-        const pendingJobs = await jobModel.find({
-            status: JobStatus.PENDING
-        }).sort({ createdAt: 1 }); // Sort by oldest first to determine queue position
-        
-        // Get active job count
-        const activeJobCount = await jobModel.countDocuments({
-            userid: userId,
-            status: { $in: [JobStatus.PENDING, JobStatus.IN_PROGRESS] }
-        });
-        
-        return res.status(200).json({
-            success: true,
-            activeJobCount,
-            totalJobs: jobs.length,
-            jobs: jobs.map(job => {
-                // Calculate queue position for pending jobs
-                let queuePosition = null;
-                if (job.status === JobStatus.PENDING) {
-                    queuePosition = pendingJobs.findIndex(j => j.uuid === job.uuid) + 1;
-                }
-                
-                return {
-                    jobId: job.uuid,
-                    projectId: job.projectid,
-                    status: job.status,
-                    queuePosition: queuePosition
-                };
-            })
-        });
-    } catch (error: any) {
-        LogError(error as Error, serviceLocation, `Error fetching jobs for user ${userId}`);
-        return res.status(500).json({ 
-            success: false, 
-            message: "An error occurred while fetching jobs" 
-        });
-    }
-});
-
-// Add this new endpoint for admin access to all jobs
-router.get("/admin-check-all-jobs-status", isAuthAndAdmin, async (req: Request, res: Response) => {
-    logger.info(`${serviceLocation}: Admin ${req.user?.username} requesting all system jobs`);
-    
-    try {
-        // Get counts by status
-        const pendingCount = await jobModel.countDocuments({ status: JobStatus.PENDING });
-        const processingCount = await jobModel.countDocuments({ status: JobStatus.IN_PROGRESS });
-        const completedCount = await jobModel.countDocuments({ status: JobStatus.COMPLETED });
-        const failedCount = await jobModel.countDocuments({ status: JobStatus.FAILED });
-        
-        // Get latest jobs with pagination
-        const page = parseInt(req.query.page as string) || 1;
-        const limit = parseInt(req.query.limit as string) || 50;
-        const skip = (page - 1) * limit;
-        
-        // Get jobs with user information
-        const jobs = await jobModel.find()
-            .sort({ createdAt: -1 })
-            .skip(skip)
-            .limit(limit);
-        
-        // Get user information for these jobs
-        const userIds = [...new Set(jobs.map(job => job.userid))];
-        const users = await userModel.find({ _id: { $in: userIds } })
-            .select('_id username');
-        
-        // Create a map for quick user lookups
-        const userMap: { [key: string]: string } = {};
-        users.forEach(user => {
-            userMap[String(user._id)] = user.username;
-        });
-        
-        return res.status(200).json({
-            success: true,
-            stats: {
-                total: pendingCount + processingCount + completedCount + failedCount,
-                pending: pendingCount,
-                processing: processingCount,
-                completed: completedCount,
-                failed: failedCount
-            },
-            pagination: {
-                page,
-                limit,
-                totalPages: Math.ceil((pendingCount + processingCount + completedCount + failedCount) / limit)
-            },
-            jobs: jobs.map(job => ({
-                jobId: job.uuid,
-                projectId: job.projectid,
-                userId: job.userid,
-                username: userMap[job.userid] || 'Unknown',
-                status: job.status,
-                message: job.message || ""
-            }))
-        });
-    } catch (error: any) {
-        LogError(error as Error, serviceLocation, `Admin error fetching all jobs: ${error.message}`);
-        return res.status(500).json({ 
-            success: false, 
-            message: "An error occurred while fetching all jobs" 
-        });
-    }
-});
-
-router.patch("/save-ai-segmentation", isAuthAndNotGuest, async (req: Request, res: Response) => {
-  try {
-      // segmentationMaskId will now come from form-data, not JSON body
-      const { segmentationMaskId } = req.body;
-      const userId = (req.user)?._id;
-      const uploadedFile = req.file; // The uploaded JPEG file
-
-      // Validate request
-      if (!userId) {
-        return res.status(401).json({
-          success: false,
-          message: "Unauthorized. User ID not found."
-        });
-      }
-
-      if (!segmentationMaskId) {
-        return res.status(400).json({
-          success: false,
-          message: "Missing segmentationMaskId."
-        });
-      }
-
-      if (!uploadedFile) {
-        return res.status(400).json({
-          success: false,
-          message: "Missing segmentationImage file."
-        });
-      }
-
-      // Validate file type (optional but recommended)
-      if (uploadedFile.mimetype !== 'image/jpeg') {
-        return res.status(400).json({
-          success: false,
-          message: "Invalid file type. Only JPEG images are allowed."
-        });
-      }
-
-      // First get the segmentation mask to find its project ID
-      const maskResult = await readProjectSegmentationMask(segmentationMaskId);
-
-      if (!maskResult.success || !maskResult.projectsegmentationmask) {
-        return res.status(404).json({
-          success: false,
-          message: maskResult.message || "Segmentation mask not found (for associating project)"
-        });
-      }
-
-      const projectId = maskResult.projectsegmentationmask.projectid;
-
-      // Update segmentation mask to saved status in the database
-      const segmentationDbUpdateResult = await updateProjectSegmentationMask(
-        segmentationMaskId,
-        { isSaved: true } // You might want to store the S3 key of the JPEG here too
-      );
-
-      if (!segmentationDbUpdateResult.success || !segmentationDbUpdateResult.projectsegmentationmask) {
-        return res.status(400).json({
-          success: false,
-          message: segmentationDbUpdateResult.message || "Failed to update segmentation mask status in database"
-        });
-      }
-
-      // Save the uploaded JPEG to S3
-      let s3ImageUrl = '';
-      try {
-        // Define a new S3 key structure for images
-        const s3Key = `seg_mask/${projectId}/${segmentationMaskId}-${Date.now()}.jpeg`;
-        if (!process.env.S3_BUCKET_NAME) {
-          logger.error(`${serviceLocation}: S3_BUCKET_NAME environment variable is not set. Cannot upload image.`);
-          // Decide if this is a critical error
-        } else {
-          await uploadSegMaskToS3(
-            process.env.S3_BUCKET_NAME,
-            s3Key,
-            uploadedFile.buffer, // Pass the file buffer from multer
-            uploadedFile.mimetype // Pass the correct content type
-          );
-          s3ImageUrl = `s3://${process.env.S3_BUCKET_NAME}/${s3Key}`; // Store or return this URL
-          logger.info(`${serviceLocation}: Successfully uploaded segmentation JPEG ${s3Key} for project ${projectId} to S3.`);
-        }
-      } catch (s3Error) {
-        LogError(s3Error as Error, serviceLocation, `Failed to upload segmentation JPEG for mask ${segmentationMaskId} to S3.`);
-        // Decide if S3 upload failure should be a critical error for the client
-      }
-
-      // Check if project is already saved before updating it
-      const projectResult = await readProject(projectId, userId);
-
-      if (!projectResult.success || !projectResult.projects || projectResult.projects.length === 0) {
-        logger.warn(`${serviceLocation}: Could not find project ${projectId} to check save status, but segmentation mask ${segmentationMaskId} was saved (DB and S3 JPEG upload attempted).`);
-      } else {
-        const project = projectResult.projects[0];
-        if (!project.isSaved) {
-          const updateProjectResult = await updateProject(projectId, { isSaved: true });
-          if (!updateProjectResult.success) {
-            logger.warn(`${serviceLocation}: Failed to update project ${projectId} save status.`);
-          } else {
-            logger.info(`${serviceLocation}: Project ${projectId} save status updated to true.`);
-          }
-        } else {
-          logger.info(`${serviceLocation}: Project ${projectId} already saved.`);
-        }
-      }
-
-      logger.info(`${serviceLocation}: User ${userId} saved segmentation JPEG for mask ${segmentationMaskId}. DB status updated. S3 upload attempted.`);
-
-      return res.status(200).json({
-        success: true,
-        message: "Segmentation JPEG saved successfully. Database updated and S3 upload initiated.",
-        s3ImageUrl: s3ImageUrl, // Return the S3 URL of the image
-        segmentation: segmentationDbUpdateResult.projectsegmentationmask
-      });
-
-    } catch (error) {
-      // ... (existing error handling) ...
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      LogError(
-        error instanceof Error ? error : new Error(errorMessage),
-        serviceLocation,
-        `Error saving segmentation JPEG: ${req.body?.segmentationMaskId}`
-      );
-      return res.status(500).json({
-        success: false,
-        message: "An unexpected error occurred while saving the segmentation JPEG."
-      });
-    }
-  }
-);
-
-// Route to save a user-uploaded preview JPEG AND update RLE for a MANUAL segmentation mask
-router.patch("/save-manual-segmentation", isAuthAndNotGuest, async (req: Request, res: Response) => {
-  try {
-    const { 
-        segmentationMaskId, 
-        frameIndex: frameIndexStr, // Will be string from form-data
-        sliceIndex: sliceIndexStr, // Will be string from form-data
-        componentClass, 
-        rleString 
-    } = req.body; 
-    const userId = (req.user)?._id;
-    const uploadedFile = req.file; // The uploaded JPEG file
-
-    logger.info(`${serviceLocation}: Received request to save manual segmentation (preview & RLE) for mask ID ${segmentationMaskId} by user ${userId}. File: ${uploadedFile?.originalname}. Slice: F${frameIndexStr}S${sliceIndexStr}, Class: ${componentClass}`);
-
-    // === Validate request ===
-    if (!userId) {
-      logger.warn(`${serviceLocation}: Unauthorized attempt to save manual segmentation. User ID not found.`);
-      return res.status(401).json({ success: false, message: "Unauthorized. User ID not found." });
-    }
-    if (!segmentationMaskId) {
-      logger.warn(`${serviceLocation}: Missing segmentationMaskId for saving manual segmentation.`);
-      return res.status(400).json({ success: false, message: "Missing segmentationMaskId." });
-    }
-    if (!uploadedFile) {
-      logger.warn(`${serviceLocation}: Missing segmentationImage file for manual segmentation mask ${segmentationMaskId}.`);
-      return res.status(400).json({ success: false, message: "Missing segmentationImage file." });
-    }
-    if (uploadedFile.mimetype !== 'image/jpeg') {
-      logger.warn(`${serviceLocation}: Invalid file type for manual segmentation mask ${segmentationMaskId}. Expected JPEG, got ${uploadedFile.mimetype}.`);
-      return res.status(400).json({ success: false, message: "Invalid file type. Only JPEG images are allowed." });
-    }
-
-    // Validate RLE update parameters
-    if (frameIndexStr === undefined || sliceIndexStr === undefined || !componentClass || !rleString) {
-        logger.warn(`${serviceLocation}: Missing RLE update parameters for mask ${segmentationMaskId}. Required: frameIndex, sliceIndex, componentClass, rleString.`);
-        return res.status(400).json({ success: false, message: "Missing RLE update parameters (frameIndex, sliceIndex, componentClass, rleString)." });
-    }
-    const frameIndex = parseInt(frameIndexStr, 10);
-    const sliceIndex = parseInt(sliceIndexStr, 10);
-    if (isNaN(frameIndex) || isNaN(sliceIndex) || frameIndex < 0 || sliceIndex < 0) {
-        logger.warn(`${serviceLocation}: Invalid frameIndex or sliceIndex for mask ${segmentationMaskId}. Received F:${frameIndexStr}, S:${sliceIndexStr}`);
-        return res.status(400).json({ success: false, message: "Invalid frameIndex or sliceIndex. Must be non-negative numbers." });
-    }
-    // Ensure componentClass is a valid enum value
-    if (!Object.values(ComponentBoundingBoxesClass).includes(componentClass as ComponentBoundingBoxesClass)) {
-        logger.warn(`${serviceLocation}: Invalid componentClass '${componentClass}' for mask ${segmentationMaskId}.`);
-        return res.status(400).json({ success: false, message: `Invalid componentClass. Must be one of: ${Object.values(ComponentBoundingBoxesClass).join(', ')}` });
-    }
-    if (typeof rleString !== 'string' || rleString.trim() === "") { // Also check if rleString is empty after trimming
-        logger.warn(`${serviceLocation}: Invalid rleString for mask ${segmentationMaskId}. Must be a non-empty string.`);
-        return res.status(400).json({ success: false, message: "rleString must be a non-empty string." });
-    }
-
-    // 1. Get the segmentation mask to find its project ID and verify it's a manual segmentation
-    logger.debug(`${serviceLocation}: Reading segmentation mask ${segmentationMaskId} to verify type and get project ID.`);
-    const maskResult = await readProjectSegmentationMask(segmentationMaskId);
-
-    if (!maskResult.success || !maskResult.projectsegmentationmask) {
-      logger.warn(`${serviceLocation}: Segmentation mask ${segmentationMaskId} not found for saving manual preview/RLE. Message: ${maskResult.message}`);
-      return res.status(404).json({
-        success: false,
-        message: maskResult.message || "Segmentation mask not found."
-      });
-    }
-
-    // Ensure this is indeed a manual segmentation mask (isMedSAMOutput should be false)
-    if (maskResult.projectsegmentationmask.isMedSAMOutput) {
-      logger.warn(`${serviceLocation}: Attempt to save RLE/preview for AI segmentation mask ${segmentationMaskId} via manual route. User: ${userId}`);
-      return res.status(400).json({
-        success: false,
-        message: "This endpoint is for saving manual segmentations. The provided mask ID corresponds to an AI-generated segmentation."
-      });
-    }
-
-    const projectId = maskResult.projectsegmentationmask.projectid;
-    logger.info(`${serviceLocation}: Segmentation mask ${segmentationMaskId} (manual) belongs to project ${projectId}. Proceeding with RLE update and preview save.`);
-
-    // 2. Prepare update payload for RLE and isSaved status
-    let rleActuallyModified = false; // Flag to track if RLE was indeed changed or added
-    const updatedFrames = maskResult.projectsegmentationmask.frames.map(f => {
-        if (f.frameindex === frameIndex) {
-            let frameModified = false;
-            const updatedSlices = f.slices.map(s => {
-                if (s.sliceindex === sliceIndex) {
-                    let sliceModified = false;
-                    let componentFoundAndUpdated = false;
-                    let currentSegmentationMasks = s.segmentationmasks ? [...s.segmentationmasks] : [];
-
-                    currentSegmentationMasks = currentSegmentationMasks.map(sm => {
-                        if (sm.class === componentClass) {
-                            componentFoundAndUpdated = true;
-                            if (sm.segmentationmaskcontents !== rleString) {
-                                sliceModified = true;
-                                frameModified = true;
-                                rleActuallyModified = true;
-                                return { ...sm, segmentationmaskcontents: rleString };
-                            }
-                        }
-                        return sm;
-                    });
-
-                    if (!componentFoundAndUpdated) {
-                        currentSegmentationMasks.push({ class: componentClass as ComponentBoundingBoxesClass, segmentationmaskcontents: rleString });
-                        sliceModified = true;
-                        frameModified = true;
-                        rleActuallyModified = true;
-                    }
-                    return sliceModified ? { ...s, segmentationmasks: currentSegmentationMasks } : s;
-                }
-                return s;
-            });
-            return frameModified ? { ...f, slices: updatedSlices } : f;
-        }
-        return f;
-    });
-
-    if (!rleActuallyModified) {
-        logger.info(`${serviceLocation}: RLE for mask ${segmentationMaskId}, F${frameIndex}S${sliceIndex}, Class ${componentClass} was not modified or added (already up-to-date or target not found for update). Proceeding with save status and preview.`);
-        // If the RLE didn't change, you might only want to update isSaved if it's not already true.
-        // However, for simplicity, we'll update both.
-    }
-    
-    const updatePayload: any = { // Use 'any' for flexibility or define a more specific update type
-        isSaved: true,
+        };
     };
-    if (rleActuallyModified) { // Only include frames in payload if they were actually changed
-        updatePayload.frames = updatedFrames;
+    error?: string | null;
+}
+
+const sendInferenceRequestToCloudGpu = async (inferenceData: any, gpuAuthToken: string): Promise<{ success: boolean; jobId?: string; error?: string }> => {
+    if (!cloudGpuBaseUrl) {
+        logger.info(`${serviceLocation}: Currently configured Cloud GPU URL: ${cloudGpuBaseUrl}`);
+        logger.error(`${serviceLocation}: GPU_SERVER_URL, GPU_SERVER_PORT and GPU_SERVER_SSL is not set in environment variables.`);
+        return { success: false, error: "Cloud GPU URL not configured." };
     }
 
+    // For debugging: Log the token being used. Mask or remove in production.
+    logger.debug(`${serviceLocation}: Attempting to send inference request. Token (first 10 chars): ${gpuAuthToken ? gpuAuthToken.substring(0, 10) + "..." : "undefined"}`);
 
-    logger.debug(`${serviceLocation}: Updating manual segmentation mask ${segmentationMaskId} with RLE (if changed) and isSaved: true.`);
-    const segmentationDbUpdateResult = await updateProjectSegmentationMask(
-      segmentationMaskId,
-      updatePayload 
-    );
-
-    if (!segmentationDbUpdateResult.success || !segmentationDbUpdateResult.projectsegmentationmask) {
-      logger.error(`${serviceLocation}: Failed to update manual segmentation mask ${segmentationMaskId} in database. Message: ${segmentationDbUpdateResult.message}`);
-      return res.status(400).json({
-        success: false,
-        message: segmentationDbUpdateResult.message || "Failed to update segmentation mask in database."
-      });
+    if (!gpuAuthToken) {
+        logger.error(`${serviceLocation}: gpuAuthToken is missing. Cannot send inference request to Cloud GPU.`);
+        return { success: false, error: "Authentication token for Cloud GPU is missing." };
     }
-    logger.info(`${serviceLocation}: Successfully updated manual segmentation mask ${segmentationMaskId} (RLE & status) in DB.`);
 
-    // 3. Save the uploaded JPEG to S3
-    let s3ImageUrl = '';
+    const inferenceEndpoint = `${cloudGpuBaseUrl}/inference/v2/medsam-inference`; // Adjust the endpoint as needed
+
     try {
-      const s3Key = `seg_mask_manual/${projectId}/${segmentationMaskId}-${Date.now()}.jpeg`;
-      if (!process.env.S3_BUCKET_NAME) {
-        logger.error(`${serviceLocation}: S3_BUCKET_NAME environment variable is not set. Cannot upload manual segmentation image for mask ${segmentationMaskId}.`);
-      } else {
-        logger.debug(`${serviceLocation}: Uploading manual segmentation preview ${uploadedFile.originalname} to S3 key ${s3Key} for mask ${segmentationMaskId}.`);
-        await uploadSegMaskToS3(
-          process.env.S3_BUCKET_NAME,
-          s3Key,
-          uploadedFile.buffer,
-          uploadedFile.mimetype
-        );
-        s3ImageUrl = `s3://${process.env.S3_BUCKET_NAME}/${s3Key}`;
-        logger.info(`${serviceLocation}: Successfully uploaded manual segmentation JPEG ${s3Key} for mask ${segmentationMaskId} to S3. URL: ${s3ImageUrl}`);
-      }
-    } catch (s3Error) {
-      LogError(s3Error as Error, serviceLocation, `Failed to upload manual segmentation JPEG for mask ${segmentationMaskId} to S3.`);
-      // S3 upload failure is not critical for the client response here, but logged
-    }
+        const response = await axios.post(inferenceEndpoint, inferenceData, {
+            headers: {
+                Authorization: `Bearer ${gpuAuthToken}`,
+                'Content-Type': 'application/json',
+            },
+            timeout: 120000, // e.g., 2 minutes, adjust as needed
+        });
 
-    // 4. Check if the parent project is already saved before updating it
-    logger.debug(`${serviceLocation}: Checking save status of parent project ${projectId} for manual segmentation mask ${segmentationMaskId}.`);
-    const projectResult = await readProject(projectId, userId.toString()); // Ensure userId is string
+        // **** THIS IS WHERE YOU LOG THE GPU SERVER'S RESPONSE DATA ****
+        // The existing logger.info call here should already be doing this.
+        // We log the full response.data object.
+        logger.info(`${serviceLocation}: Successfully received response from Cloud GPU for UUID ${inferenceData.uuid}. Status: ${response.status}, Full Response Data:`, response.data);
 
-    if (!projectResult.success || !projectResult.projects || projectResult.projects.length === 0) {
-      logger.warn(`${serviceLocation}: Could not find project ${projectId} to check/update save status after saving manual segmentation mask ${segmentationMaskId}.`);
-    } else {
-      const project = projectResult.projects[0];
-      if (!project.isSaved) {
-        logger.info(`${serviceLocation}: Parent project ${projectId} is not saved. Updating its status to saved.`);
-        const updateProjectResult = await updateProject(projectId, { isSaved: true });
-        if (!updateProjectResult.success) {
-          logger.warn(`${serviceLocation}: Failed to update project ${projectId} save status after manual segmentation save. Message: ${updateProjectResult.message}`);
-        } else {
-          logger.info(`${serviceLocation}: Parent project ${projectId} save status successfully updated to true.`);
+        // Attempt to extract a job ID from common fields
+        // Adjust these fields (job_id, jobId, uuid) based on what your GPU server actually returns
+        interface InferenceResponse {
+            job_id?: string;
+            jobId?: string;
+            uuid?: string;
+            [key: string]: any; // Allow additional properties if needed
         }
-      } else {
-        logger.info(`${serviceLocation}: Parent project ${projectId} was already saved.`);
-      }
+
+        const responseData = response.data as InferenceResponse;
+        const returnedJobId = responseData.job_id || responseData.jobId || responseData.uuid;
+
+        if (response.status === 202 && response.data) { // Or other success statuses like 200, 201
+            if (returnedJobId) {
+                logger.info(`${serviceLocation}: GPU Job ID identified: ${returnedJobId} for local UUID ${inferenceData.uuid}.`);
+                return { success: true, jobId: returnedJobId };
+            } else {
+                logger.warn(`${serviceLocation}: GPU request successful (Status ${response.status}) for UUID ${inferenceData.uuid}, but no clear Job ID found in response. Response data logged above.`);
+                // Decide if this is still a success for your workflow.
+                // You might still return success and use your internal UUID if the GPU doesn't provide one.
+                return { success: true, jobId: inferenceData.uuid }; // Fallback to internal UUID if no external one
+            }
+        } else {
+            // Handle cases where status might be 2xx but data is not as expected, or status is not 202
+            logger.error(`${serviceLocation}: Unexpected successful response from Cloud GPU for UUID ${inferenceData.uuid}. Status: ${response.status}, Data:`, response.data);
+            return { success: false, error: `Cloud GPU responded with status ${response.status} but data was unexpected: ${JSON.stringify(response.data)}` };
+        }
+    } catch (error: any) {
+        logger.error(`${serviceLocation}: Error sending inference request to ${inferenceEndpoint}: ${error.message}`, { error });
+        let errorMessage = `Error communicating with Cloud GPU: ${error.message}`;
+        if (error.response?.status) {
+            errorMessage += ` (Status: ${error.response.status})`;
+        }
+        return { success: false, error: errorMessage };
+    }
+};
+
+export const startInference = async (projectId: string, user?: IUserSafe, gpuAuthToken?: string): Promise<{ success: boolean; message: string; uuid?: string }> => {
+    logger.info(`${serviceLocation}: Received start inference request for project ${projectId} by user ${user?.username} with id ${user?._id}`);
+
+    if (!gpuAuthToken) {
+        logger.error(`${serviceLocation}: GPU authentication token is missing for project ${projectId}. Cannot start inference.`);
+        return { success: false, message: "GPU authentication token is missing. Cannot start inference." };
     }
 
-    logger.info(`${serviceLocation}: User ${userId} successfully processed save request for manual segmentation (RLE & preview) for mask ${segmentationMaskId}. DB status updated. S3 upload attempted. Image URL: ${s3ImageUrl}`);
-    return res.status(200).json({
-      success: true,
-      message: "Manual segmentation (RLE & preview) saved successfully. Database updated and S3 upload initiated.",
-      s3ImageUrl: s3ImageUrl,
-      segmentation: segmentationDbUpdateResult.projectsegmentationmask // Return the fully updated mask
-    });
+    const callback_url = process.env.CALLBACK_URL;
+    if (!callback_url) {
+        logger.error(`${serviceLocation}: CALLBACK_URL is not set in environment variables. Cannot start inference for project ${projectId}.`);
+        return { success: false, message: "Callback URL not configured for inference." };
+    }
 
-  } catch (error) {
-    const segmentationMaskIdBody = req.body?.segmentationMaskId || "unknown"; // Renamed to avoid conflict in catch block
-    const errorMessage = error instanceof Error ? error.message : String(error);
-    LogError(
-      error instanceof Error ? error : new Error(errorMessage),
-      serviceLocation,
-      `Error saving manual segmentation (RLE & preview) for mask ID: ${segmentationMaskIdBody}`
-    );
-    return res.status(500).json({
-      success: false,
-      message: "An unexpected error occurred while saving the manual segmentation."
-    });
-  }
-});
+    const s3BucketName = process.env.AWS_BUCKET_NAME;
+    if (!s3BucketName) {
+        logger.error(`${serviceLocation}: AWS_BUCKET_NAME is not set in environment variables. Cannot start inference for project ${projectId}.`);
+        return { success: false, message: "S3 bucket configuration is missing." };
+    }
+
+    try {
+        const projectResult: ProjectCrudResult = await readProject(projectId);
+        if (!projectResult.success || !projectResult.projects || projectResult.projects.length === 0) {
+            logger.warn(`${serviceLocation}: Project with ID ${projectId} not found or error reading project.`);
+            return { success: false, message: `Project with ID ${projectId} not found.` };
+        }
+
+        const projectData = projectResult.projects[0]; // Access the first (and likely only) project in the array
+
+        // Use extractedfolderpath which should be the S3 URL of the .tar file
+        const s3HttpsUrlForTar = projectData.extractedfolderpath;
+        if (!s3HttpsUrlForTar) {
+            logger.error(`${serviceLocation}: Project ${projectId} does not have an extractedfolderpath (URL for the .tar file).`);
+            return { success: false, message: "Project TAR file URL is missing." };
+        }
+
+        let objectKeyForTar: string;
+        try {
+            const parsedUrl = new URL(s3HttpsUrlForTar);
+            objectKeyForTar = parsedUrl.pathname;
+            if (objectKeyForTar.startsWith('/')) {
+                objectKeyForTar = objectKeyForTar.substring(1); // Remove leading slash
+            }
+            // This parsing assumes virtual-hosted style S3 URLs (bucket.s3.region...)
+            // If your S3 URLs are path-style (s3.region.amazonaws.com/bucket/key),
+            // and the bucket name is part of the pathname, you might need to adjust.
+            // However, uploadToS3 in uploadmiddleware.ts likely generates virtual-hosted URLs.
+        } catch (e: any) {
+            logger.error(`${serviceLocation}: Invalid S3 URL format in project.extractedfolderpath: ${s3HttpsUrlForTar}`, e);
+            return { success: false, message: `Invalid project TAR file URL format: ${e.message}` };
+        }
+
+        if (!objectKeyForTar) {
+            logger.error(`${serviceLocation}: Could not extract S3 object key from TAR file URL: ${s3HttpsUrlForTar}`);
+            return { success: false, message: "Failed to determine S3 object key for TAR file." };
+        }
+
+        // Generate presigned URL for the .tar file
+        const dataUrlForGpu = await generatePresignedGetUrl(s3BucketName, objectKeyForTar);
+
+        if (!dataUrlForGpu) {
+            logger.error(`${serviceLocation}: Failed to generate presigned S3 URL for project ${projectId}, TAR S3 Key: ${objectKeyForTar}`);
+            return { success: false, message: "Failed to prepare TAR file URL for inference." };
+        }
+
+        const jobUuid = uuidv4();
+
+        // CRITICAL: Ensure this payload matches exactly what your GPU server expects
+        const inferenceData = {
+            uuid: jobUuid,
+            callback_url: callback_url,
+            url: dataUrlForGpu, // This is now the presigned URL
+        };
+
+        // The logger in sendInferenceRequestToCloudGpu will log the full payload.
+        // You can add a summary log here if preferred:
+        logger.info(`${serviceLocation}: Prepared inference data for project ${projectId}, UUID ${jobUuid}. TAR S3 Key: ${objectKeyForTar}. Callback URL being sent: ${inferenceData.callback_url}`);
+
+        const inferenceResult = await sendInferenceRequestToCloudGpu(inferenceData, gpuAuthToken);
+
+        if (inferenceResult.success && inferenceResult.jobId) { // Check for jobId from GPU
+            logger.info(`${serviceLocation}: Inference request sent successfully for project ${projectId}. GPU Job ID: ${inferenceResult.jobId}, Local UUID: ${jobUuid}.`);
+
+            const jobData: IJob = {
+                userid: user?._id?.toString() || 'unknown',
+                projectid: projectId,
+                uuid: jobUuid, // Our internal UUID
+                status: JobStatus.PENDING, // Or IN_PROGRESS if GPU confirms immediate start
+                segmentationSource: segmentationSource.AI_INFERENCE
+            };
+            const jobCreationResult = await createJob(jobData);
+
+            if (jobCreationResult.success) {
+                return { success: true, message: `Inference job accepted. UUID: ${jobUuid}`, uuid: jobUuid };
+            } else {
+                logger.error(`${serviceLocation}: Failed to create job record for ${jobUuid}: ${jobCreationResult.message || 'Unknown error'}`);
+                // Still a success in terms of sending to GPU, but local tracking failed.
+                return { success: true, message: `Inference accepted by GPU (Job ID: ${inferenceResult.jobId}), but failed to track job locally. UUID: ${jobUuid}`, uuid: jobUuid };
+            }
+        } else if (inferenceResult.success) { // Success but no jobId (should be handled by sendInferenceRequestToCloudGpu logic)
+            logger.warn(`${serviceLocation}: Inference request reported success for project ${projectId} but no definite Job ID was returned from GPU. Local UUID: ${jobUuid}`);
+            // Decide how to handle this - maybe still create a local job with PENDING status
+            return { success: true, message: `Inference request sent for project ${projectId}, but no Job ID was clearly identified from GPU. UUID: ${jobUuid}`, uuid: jobUuid };
+        } else {
+            logger.error(`${serviceLocation}: Failed to send inference request for project ${projectId}: ${inferenceResult.error}`);
+            return { success: false, message: `Failed to start inference: ${inferenceResult.error}` };
+        }
+
+    } catch (error: any) {
+        logger.error(`${serviceLocation}: Critical error starting inference for project ${projectId}:`, error);
+        return { success: false, message: `Error starting inference: ${error.message}` };
+    }
+};
+
+const getDirectGpuManualPrediction = async (
+    inferenceData: {
+        uuid: string; 
+        callback_url: string; 
+        url: string;          
+        image_name: string;   
+        bbox: number[];       
+    },
+    gpuAuthToken: string
+): Promise<{ 
+    success: boolean; 
+    data?: { 
+        imageNameFromGpu: string; 
+        rleString: string; 
+        bboxFromGpu: number[]; 
+        confidenceFromGpu?: number; 
+    }; 
+    error?: string 
+}> => {
+    const serviceLocationDirectGpu = `${serviceLocation}_DirectGpuManualPrediction`;
+    const inferenceEndpoint = `${cloudGpuBaseUrl}/inference/v2/medsam-inference-manual`; 
+
+    logger.info(`${serviceLocationDirectGpu}: Sending direct manual prediction request to ${inferenceEndpoint} for image ${inferenceData.image_name}, internal UUID ${inferenceData.uuid}`);
+    logger.debug(`${serviceLocationDirectGpu}: Payload for GPU:`, inferenceData);
+
+    try {
+        const response = await axios.post<GpuManualPredictionResponseData>(inferenceEndpoint, inferenceData, {
+            headers: {
+                'Authorization': `Bearer ${gpuAuthToken}`,
+                'Content-Type': 'application/json',
+            },
+            timeout: 60000, 
+        });
+
+        logger.debug(`${serviceLocationDirectGpu}: Received response from Cloud GPU. Status: ${response.status}, Data:`, response.data);
+
+        if (response.status === 200 && response.data && response.data.result) {
+            const resultKeys = Object.keys(response.data.result);
+            if (resultKeys.length === 0) {
+                logger.error(`${serviceLocationDirectGpu}: GPU response successful but 'result' object is empty.`);
+                return { success: false, error: "GPU returned no result data." };
+            }
+            const imageNameFromGpu = resultKeys[0]; 
+            const imageData = response.data.result[imageNameFromGpu];
+
+            if (!imageData || !imageData.masks || !imageData.boxes || imageData.boxes.length === 0) {
+                logger.error(`${serviceLocationDirectGpu}: GPU response for image ${imageNameFromGpu} is missing masks or boxes.`);
+                return { success: false, error: "GPU response missing critical segmentation data." };
+            }
+            
+            const rleString = imageData.masks["manual"]; 
+            const firstBox = imageData.boxes[0];
+            const bboxFromGpu = firstBox.bbox;
+            const confidenceFromGpu = firstBox.confidence; 
+
+            if (!rleString) {
+                logger.error(`${serviceLocationDirectGpu}: RLE string for 'manual' class not found in GPU response for image ${imageNameFromGpu}. Masks available: ${Object.keys(imageData.masks).join(', ')}`);
+                return { success: false, error: "RLE string for 'manual' class not found in GPU response." };
+            }
+            if (!bboxFromGpu || bboxFromGpu.length !== 4) {
+                logger.error(`${serviceLocationDirectGpu}: Bounding box not found or invalid in GPU response for image ${imageNameFromGpu}.`);
+                return { success: false, error: "Bounding box not found or invalid in GPU response." };
+            }
+
+            logger.info(`${serviceLocationDirectGpu}: Successfully processed direct prediction for image ${imageNameFromGpu}.`);
+            return { success: true, data: { imageNameFromGpu, rleString, bboxFromGpu, confidenceFromGpu } };
+
+        } else {
+            const gpuError = response.data?.error || `Cloud GPU responded with status ${response.status}.`;
+            logger.error(`${serviceLocationDirectGpu}: Error from Cloud GPU: ${gpuError}`, response.data);
+            return { success: false, error: `Cloud GPU error: ${gpuError}` };
+        }
+    } catch (error: any) {
+        logger.error(`${serviceLocationDirectGpu}: Error sending direct prediction request to ${inferenceEndpoint}: ${error.message}`, { errorDetail: error });
+        let errorMessage = `Error communicating with Cloud GPU: ${error.message}`;
+        if (error.response && error.response.status) { 
+            errorMessage += ` (Status: ${error.response.status})`;
+        }
+        return { success: false, error: errorMessage };
+    }
+};
+
+// Helper to parse frame/slice from image name (can be moved to a util file if used elsewhere)
+const parseImageNameIndicesForService = (imageName: string): { frameIndex: number | null, sliceIndex: number | null } => {
+    const nameWithoutExtension = imageName.substring(0, imageName.lastIndexOf('.')) || imageName;
+    const parts = nameWithoutExtension.split('_');
+    if (parts.length >= 2) {
+        const sliceIndex = parseInt(parts[parts.length - 1], 10);
+        const frameIndex = parseInt(parts[parts.length - 2], 10);
+        if (!isNaN(sliceIndex) && !isNaN(frameIndex)) {
+            return { frameIndex, sliceIndex };
+        }
+    }
+    logger.warn(`${serviceLocation}: Could not parse frame/slice indices from image name in service: ${imageName}`);
+    return { frameIndex: null, sliceIndex: null };
+};
+
+export const startManualInference = async (
+    projectId: string,
+    user: IUserSafe | undefined,
+    gpuAuthToken: string,
+    manualInput: ManualSegmentationInput
+): Promise<{ 
+    success: boolean; 
+    message?: string; 
+    segmentationData?: Partial<IProjectSegmentationMask>; 
+    error?: string 
+}> => {
+    const serviceLocationManual = `${serviceLocation}_StartManualInferenceDirect`;
+    logger.info(`${serviceLocationManual}: Received direct manual inference request for project ${projectId}, image ${manualInput.image_name} by user ${user?.username}, class: ${manualInput.segmentationName}`);
+
+    if (!gpuAuthToken) {
+        logger.error(`${serviceLocationManual}: GPU authentication token is missing for project ${projectId}.`);
+        return { success: false, error: "GPU authentication token is missing." };
+    }
+
+    const callback_url = process.env.GPU_CALLBACK_URL || process.env.CALLBACK_URL || "http://localhost/callback";
+    
+    const s3BucketName = process.env.S3_BUCKET_NAME || process.env.AWS_S3_BUCKET_NAME;
+    if (!s3BucketName) {
+        logger.error(`${serviceLocationManual}: S3_BUCKET_NAME (or AWS_S3_BUCKET_NAME) is not set.`);
+        return { success: false, error: "S3 bucket configuration is missing." };
+    }
+
+    try {
+        const projectResult: ProjectCrudResult = await readProject(projectId);
+        if (!projectResult.success || !projectResult.projects || projectResult.projects.length === 0) {
+            logger.warn(`${serviceLocationManual}: Project ${projectId} not found.`);
+            return { success: false, error: `Project with ID ${projectId} not found.` };
+        }
+        const projectData = projectResult.projects[0];
+        const s3HttpsUrlForTar = projectData.extractedfolderpath;
+
+        if (!s3HttpsUrlForTar) {
+            logger.error(`${serviceLocationManual}: Project ${projectId} missing extractedfolderpath (TAR S3 URL).`);
+            return { success: false, error: "Project TAR file S3 URL is missing." };
+        }
+        
+        let objectKeyForTar: string;
+        try {
+            const parsedUrl = new URL(s3HttpsUrlForTar);
+            objectKeyForTar = parsedUrl.pathname.startsWith('/') ? parsedUrl.pathname.substring(1) : parsedUrl.pathname;
+        } catch (e: any) {
+            logger.error(`${serviceLocationManual}: Invalid S3 URL format in extractedfolderpath for project ${projectId}: ${s3HttpsUrlForTar}. Error: ${e.message}`);
+            return { success: false, error: "Invalid project TAR file S3 URL format." };
+        }
+
+        const dataUrlForGpu = await generatePresignedGetUrl(s3BucketName, objectKeyForTar, 3600);
+        if (!dataUrlForGpu) {
+            logger.error(`${serviceLocationManual}: Failed to generate presigned URL for TAR ${objectKeyForTar}.`);
+            return { success: false, error: "Failed to generate presigned URL for image data." };
+        }
+
+        const internalUuid = uuidv4();
+        const inferencePayload = {
+            uuid: internalUuid,
+            callback_url: callback_url,
+            url: dataUrlForGpu,
+            image_name: manualInput.image_name,
+            bbox: manualInput.bbox,
+        };
+
+        const predictionResult = await getDirectGpuManualPrediction(inferencePayload, gpuAuthToken);
+
+        if (predictionResult.success && predictionResult.data) {
+            const { imageNameFromGpu, rleString, bboxFromGpu, confidenceFromGpu } = predictionResult.data;
+            const { frameIndex, sliceIndex } = parseImageNameIndicesForService(imageNameFromGpu);
+
+            if (frameIndex === null || sliceIndex === null) {
+                logger.error(`${serviceLocationManual}: Could not determine frame/slice index from GPU image name: ${imageNameFromGpu}`);
+                return { success: false, error: "Could not parse frame/slice index from image name." };
+            }
+
+            // Ensure frontendClassName is a valid ComponentBoundingBoxesClass value
+            const frontendClassName = manualInput.segmentationName as ComponentBoundingBoxesClass;
+            if (!Object.values(ComponentBoundingBoxesClass).includes(frontendClassName)) {
+                logger.error(`${serviceLocationManual}: Invalid segmentationName '${manualInput.segmentationName}' provided for manual inference.`);
+                return { success: false, error: `Invalid class name: ${manualInput.segmentationName}.` };
+            }
+            
+            // Construct the component bounding box object (type inferred)
+            const componentBoundingBox = { // REMOVED : IComponentBoundingBox type annotation
+                class: frontendClassName,
+                confidence: confidenceFromGpu ?? 1.0, 
+                x_min: bboxFromGpu[0],
+                y_min: bboxFromGpu[1],
+                x_max: bboxFromGpu[2],
+                y_max: bboxFromGpu[3],
+            };
+
+            // Construct the segmentation mask object (type inferred)
+            const segmentationMask = { // REMOVED : ISegmentationMask type annotation
+                class: frontendClassName,
+                segmentationmaskcontents: rleString,
+            };
+
+            // Construct the slice object (type inferred)
+            const sliceData = { // REMOVED : ISlice type annotation
+                sliceindex: sliceIndex,
+                componentboundingboxes: [componentBoundingBox],
+                segmentationmasks: [segmentationMask],
+            };
+
+            // Construct the frame object (type inferred)
+            const frameData = { // REMOVED : IFrame type annotation
+                frameindex: frameIndex,
+                frameinferred: true, 
+                slices: [sliceData],
+            };
+            
+            const segmentationForFrontend: Partial<IProjectSegmentationMask> = {
+                projectid: projectId,
+                name: manualInput.segmentationName ? `Manual - ${manualInput.segmentationName}` : `Manual Seg - ${imageNameFromGpu}`,
+                description: manualInput.segmentationDescription || `Manual segmentation for ${imageNameFromGpu} (Class: ${frontendClassName})`,
+                isSaved: false, 
+                segmentationmaskRLE: true,
+                isMedSAMOutput: false, 
+                frames: [frameData],
+            };
+
+            logger.info(`${serviceLocationManual}: Successfully prepared direct manual prediction data for project ${projectId}, image ${imageNameFromGpu}.`);
+            return { 
+                success: true, 
+                message: "Manual segmentation processed.", 
+                segmentationData: segmentationForFrontend
+            };
+        } else {
+            logger.error(`${serviceLocationManual}: Failed to get direct manual prediction for project ${projectId}, image ${manualInput.image_name}. Error: ${predictionResult.error}`);
+            return { success: false, error: predictionResult.error || "Failed to process manual segmentation on Cloud GPU." };
+        }
+
+    } catch (error: any) {
+        logger.error(`${serviceLocationManual}: Critical error in startManualInference for project ${projectId}:`, error);
+        return { success: false, error: `Error starting manual inference: ${error.message}` };
+    }
+};
 
 export default router;
+
+// export const startManualInference = async (
+//     projectId: string,
+//     user: IUserSafe | undefined,
+//     gpuAuthToken: string,
+//     manualInput: ManualSegmentationInput
+// ): Promise<{ success: boolean; message: string; uuid?: string }> => {
+//     const serviceLocationManual = `${serviceLocation}/startManualInference`;
+//     logger.info(`${serviceLocationManual}: Starting manual inference for project ${projectId}, image ${manualInput.image_name} by user ${user?.username}`);
+
+//     if (!gpuAuthToken) {
+//         logger.error(`${serviceLocationManual}: GPU authentication token is missing for project ${projectId}.`);
+//         return { success: false, message: "GPU authentication token is required." };
+//     }
+
+//     const callback_url = process.env.CALLBACK_URL; 
+//     if (!callback_url) {
+//         logger.error(`${serviceLocationManual}: CALLBACK_URL is not set in environment variables for project ${projectId}.`);
+//         return { success: false, message: "Callback URL for GPU server is not configured." };
+//     }
+
+//     const s3BucketName = process.env.AWS_BUCKET_NAME || process.env.S3_BUCKET_NAME; // Consistent with startInference, with a fallback
+//     if (!s3BucketName) {
+//         logger.error(`${serviceLocationManual}: AWS_BUCKET_NAME or S3_BUCKET_NAME environment variable is not set for project ${projectId}.`);
+//         return { success: false, message: "S3 bucket name not configured." };
+//     }
+
+//     try {
+//         const projectResult: ProjectCrudResult = await readProject(projectId);
+//         // Consistent with startInference: check projects array
+//         if (!projectResult.success || !projectResult.projects || projectResult.projects.length === 0) {
+//             logger.warn(`${serviceLocationManual}: Project with ID ${projectId} not found or error reading project.`);
+//             return { success: false, message: projectResult.message || `Project with ID ${projectId} not found.` };
+//         }
+
+//         const projectData = projectResult.projects[0];
+
+//         // Use extractedfolderpath, consistent with startInference
+//         const s3HttpsUrlForTar = projectData.extractedfolderpath;
+//         if (!s3HttpsUrlForTar) {
+//             logger.error(`${serviceLocationManual}: Project ${projectId} does not have an extractedfolderpath (URL for the .tar file).`);
+//             return { success: false, message: "Project TAR file URL is missing." };
+//         }
+
+//         let objectKeyForTar: string;
+//         try {
+//             const parsedUrl = new URL(s3HttpsUrlForTar);
+//             objectKeyForTar = parsedUrl.pathname;
+//             if (objectKeyForTar.startsWith('/')) {
+//                 objectKeyForTar = objectKeyForTar.substring(1); // Remove leading slash
+//             }
+//         } catch (e: any) {
+//             logger.error(`${serviceLocationManual}: Invalid S3 URL format in project.extractedfolderpath for project ${projectId}: ${s3HttpsUrlForTar}`, e);
+//             return { success: false, message: `Invalid project TAR file URL format: ${e.message}` };
+//         }
+
+//         if (!objectKeyForTar) {
+//             logger.error(`${serviceLocationManual}: Could not extract S3 object key from TAR file URL for project ${projectId}: ${s3HttpsUrlForTar}`);
+//             return { success: false, message: "Failed to determine S3 object key for TAR file." };
+//         }
+
+//         const dataUrlForGpu = await generatePresignedGetUrl(s3BucketName, objectKeyForTar);
+//         if (!dataUrlForGpu) {
+//             logger.error(`${serviceLocationManual}: Failed to generate presigned S3 URL for project ${projectId}, TAR S3 Key: ${objectKeyForTar}`);
+//             return { success: false, message: "Failed to prepare TAR file URL for inference." };
+//         }
+
+//         const jobUuid = uuidv4();
+        
+//         const inferenceData = {
+//             uuid: jobUuid,
+//             callback_url: callback_url, // Using the specific GPU_CALLBACK_URL
+//             url: dataUrlForGpu,
+//             image_name: manualInput.image_name,
+//             bbox: manualInput.bbox,
+//         };
+
+//         logger.info(`${serviceLocationManual}: Prepared manual inference data for project ${projectId}, UUID ${jobUuid}. Image: ${manualInput.image_name}, BBox: [${manualInput.bbox.join(', ')}]. TAR S3 Key: ${objectKeyForTar}. Callback URL: ${inferenceData.callback_url}`);
+
+//         const inferenceResult = await sendInferenceRequestToCloudGpu(inferenceData, gpuAuthToken);
+
+//         if (inferenceResult.success && inferenceResult.jobId) {
+//             logger.info(`${serviceLocationManual}: Manual inference request sent successfully for project ${projectId}. GPU Job ID: ${inferenceResult.jobId}, Local UUID: ${jobUuid}.`);
+
+//             const jobData: IJob = {
+//                 userid: user?._id?.toString() || 'unknown',
+//                 projectid: projectId,
+//                 uuid: jobUuid, // Our internal UUID
+//                 status: JobStatus.PENDING,
+//                 segmentationName: manualInput.segmentationName, // Store the name
+//                 segmentationDescription: manualInput.segmentationDescription, // Store the description
+//                 segmentationSource: segmentationSource.MANUAL_INFERENCE // Indicate this is a manual inference
+//             };
+//             const jobCreationResult = await createJob(jobData);
+//             if (!jobCreationResult.success) {
+//                 logger.error(`${serviceLocationManual}: Failed to create job entry in database for project ${projectId}, UUID ${jobUuid}: ${jobCreationResult.message}`);
+//                 // Still return success as GPU request was made, but log the local tracking failure
+//                 return { success: true, message: `Manual inference accepted by GPU (Job ID: ${inferenceResult.jobId}), but failed to track job locally. UUID: ${jobUuid}`, uuid: jobUuid };
+//             }
+//             return { success: true, message: "Manual inference started successfully.", uuid: jobUuid };
+//         } else if (inferenceResult.success) { // Success but no definite jobId from GPU
+//              logger.warn(`${serviceLocationManual}: Manual inference request reported success for project ${projectId} but no definite Job ID was returned from GPU. Local UUID: ${jobUuid}. Using local UUID as Job ID.`);
+//             // Create job with local UUID if GPU doesn't return one but call was successful
+//             const jobData: IJob = {
+//                 userid: user?._id?.toString() || 'unknown',
+//                 projectid: projectId,
+//                 uuid: jobUuid,
+//                 status: JobStatus.PENDING,
+//                 segmentationName: manualInput.segmentationName, // Store the name
+//                 segmentationDescription: manualInput.segmentationDescription, // Store the description
+//             };
+//             await createJob(jobData); // Attempt to create job, log if fails but proceed
+//             return { success: true, message: `Manual inference request sent for project ${projectId}, but no Job ID was clearly identified from GPU. Using local UUID: ${jobUuid}`, uuid: jobUuid };
+//         } else {
+//             logger.error(`${serviceLocationManual}: Failed to send manual inference request to Cloud GPU for project ${projectId}. Error: ${inferenceResult.error}`);
+//             return { success: false, message: inferenceResult.error || "Failed to start manual inference on Cloud GPU." };
+//         }
+//     } catch (error: any) {
+//         logger.error(`${serviceLocationManual}: Critical error starting manual inference for project ${projectId}:`, error);
+//         return { success: false, message: `Error starting manual inference: ${error.message}` };
+//     }
+// };
