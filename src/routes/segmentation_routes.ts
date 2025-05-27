@@ -79,41 +79,59 @@ router.post("/start-manual-segmentation/:projectId",
     isAuth,
     injectGpuAuthToken,
     async (req: Request, res: Response) => {
-        const { projectId } = req.params;
-        // Extract image_name, bbox, segmentation_source, segmentationName, and segmentationDescription
-        const { image_name, bbox, segmentation_source, segmentationName, segmentationDescription } = req.body; 
+        const { projectId: projectIdFromParams } = req.params; // projectId from URL
+        // Extract from body, including the new projectIdFromBody
+        const { 
+            projectId: projectIdFromBody, // projectId from request body
+            image_name, 
+            bbox, 
+            segmentation_source, 
+            segmentationName, 
+            segmentationDescription 
+        } = req.body; 
 
-        logger.info(`${serviceLocation}: Received start MANUAL inference request for project ${projectId}, image ${image_name} by user ${req.user?.username} with id ${req.user?._id}`);
+        // Log if projectId is provided in body and if it matches params
+        if (projectIdFromBody) {
+            logger.info(`${serviceLocation}: projectId was also provided in the request body: ${projectIdFromBody} for URL projectId: ${projectIdFromParams}`);
+            if (projectIdFromBody !== projectIdFromParams) {
+                logger.warn(`${serviceLocation}: projectId in URL params (${projectIdFromParams}) and body (${projectIdFromBody}) do not match. Using projectId from URL params for the operation.`);
+                // Optionally, you could return an error if they absolutely must match:
+                // return res.status(400).json({ success: false, message: "Project ID in URL and body do not match." });
+            }
+        }
 
-        // Validate inputs
+        // Use the projectId from the URL parameters as the definitive one for the operation
+        const effectiveProjectId = projectIdFromParams; 
+
+        logger.info(`${serviceLocation}: Received start MANUAL inference request for project ${effectiveProjectId}, image ${image_name} by user ${req.user?.username} with id ${req.user?._id}`);
+
+        // Validate inputs (image_name, bbox, etc.)
         if (!image_name || typeof image_name !== 'string') {
-            logger.warn(`${serviceLocation}: Manual segmentation request for project ${projectId} is missing or has invalid 'image_name'.`);
-            return res.status(400).json({ message: "Missing or invalid 'image_name' in request body." });
+            logger.warn(`${serviceLocation}: Manual segmentation request for project ${effectiveProjectId} is missing or has invalid 'image_name'.`);
+            return res.status(400).json({ success: false, message: "Missing or invalid 'image_name' in request body." });
         }
         if (!bbox || !Array.isArray(bbox) || bbox.length !== 4 || !bbox.every(coord => typeof coord === 'number')) {
-            logger.warn(`${serviceLocation}: Manual segmentation request for project ${projectId}, image ${image_name} has invalid 'bbox'.`);
-            return res.status(400).json({ message: "Invalid 'bbox' in request body. Expected an array of 4 numbers." });
+            logger.warn(`${serviceLocation}: Manual segmentation request for project ${effectiveProjectId}, image ${image_name} has invalid 'bbox'.`);
+            return res.status(400).json({ success: false, message: "Invalid 'bbox' in request body. Expected an array of 4 numbers." });
         }
 
         // Validate segmentation_source
         if (segmentation_source && (segmentation_source !== 'ai_inference' && segmentation_source !== 'manual_inference')) {
-            logger.warn(`${serviceLocation}: Manual segmentation request for project ${projectId} has invalid 'segmentation_source'. Must be 'ai_inference' or 'manual_inference'. Received: ${segmentation_source}`);
-            return res.status(400).json({ message: "Invalid 'segmentation_source'. Must be 'ai_inference' or 'manual_inference'." });
+            logger.warn(`${serviceLocation}: Manual segmentation request for project ${effectiveProjectId} has invalid 'segmentation_source'. Must be 'ai_inference' or 'manual_inference'. Received: ${segmentation_source}`);
+            return res.status(400).json({ success: false, message: "Invalid 'segmentation_source'. Must be 'ai_inference' or 'manual_inference'." });
         }
-        // Ensure segmentation_source is provided if it's a manual inference that needs distinction
         if (!segmentation_source) {
-            logger.warn(`${serviceLocation}: Manual segmentation request for project ${projectId} is missing 'segmentation_source'. It must be 'ai_inference' or 'manual_inference'.`);
-            return res.status(400).json({ message: "Missing 'segmentation_source'. It must be 'ai_inference' or 'manual_inference'." });
+            logger.warn(`${serviceLocation}: Manual segmentation request for project ${effectiveProjectId} is missing 'segmentation_source'. It must be 'ai_inference' or 'manual_inference'.`);
+            return res.status(400).json({ success: false, message: "Missing 'segmentation_source'. It must be 'ai_inference' or 'manual_inference'." });
         }
 
-        // Validate segmentationName and segmentationDescription if needed (e.g., length)
         if (segmentationName && typeof segmentationName !== 'string') {
-            logger.warn(`${serviceLocation}: Manual segmentation request for project ${projectId} has invalid 'segmentationName'.`);
-            return res.status(400).json({ message: "Invalid 'segmentationName'. Must be a string." });
+            logger.warn(`${serviceLocation}: Manual segmentation request for project ${effectiveProjectId} has invalid 'segmentationName'.`);
+            return res.status(400).json({ success: false, message: "Invalid 'segmentationName'. Must be a string." });
         }
         if (segmentationDescription && typeof segmentationDescription !== 'string') {
-            logger.warn(`${serviceLocation}: Manual segmentation request for project ${projectId} has invalid 'segmentationDescription'.`);
-            return res.status(400).json({ message: "Invalid 'segmentationDescription'. Must be a string." });
+            logger.warn(`${serviceLocation}: Manual segmentation request for project ${effectiveProjectId} has invalid 'segmentationDescription'.`);
+            return res.status(400).json({ success: false, message: "Invalid 'segmentationDescription'. Must be a string." });
         }
     
         try {
@@ -121,18 +139,20 @@ router.post("/start-manual-segmentation/:projectId",
                 image_name, 
                 bbox, 
                 segmentation_source,
-                segmentationName,      // Pass to service
-                segmentationDescription // Pass to service
+                segmentationName,
+                segmentationDescription
             };
-            const result = await startManualInference(projectId, req.user as any, res.locals.gpuAuthToken, manualInput);
+            // Call startManualInference with effectiveProjectId from params
+            const result = await startManualInference(effectiveProjectId, req.user as any, res.locals.gpuAuthToken, manualInput);
             
             if (result.success) {
                 res.status(200).json({ message: result.message, uuid: result.uuid }); // Return the UUID to the client
             } else {
-                res.status(500).json({ message: result.message });
+                // Use result.message if available, otherwise a generic error
+                res.status(500).json({ message: result.message || "Failed to start manual inference." });
             }
         } catch (error: unknown) {
-            LogError(error as Error, serviceLocation, `Error starting manual inference for project ${projectId}, image ${image_name}`);
+            LogError(error as Error, serviceLocation, `Error starting manual inference for project ${effectiveProjectId}, image ${image_name}`);
             res.status(500).json({ message: "An unexpected error occurred while starting manual inference." });
         }
     });
