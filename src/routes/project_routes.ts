@@ -8,9 +8,10 @@ import { saveFileAndPushToS3 } from "../services/project_handler";
 import { isAuth, isAuthAndNotGuest, isAuthAndAdmin } from "../services/passportjs";
 import { readProject, updateProject, readUser } from "../services/database";
 import { FileType } from "../types/database_types"; // Import FileType enum
-import { extractS3KeyFromUrl } from "../services/s3_handler"; // Import S3 URL utility
+import { extractS3KeyFromUrl, deleteFromS3 } from "../services/s3_handler"; // Import S3 URL utility
 import { generatePresignedGetUrl } from "../utils/s3_presigned_url"; // Import S3 presigned URL utility
 import { userModel } from "../services/database"; // Import UserModel
+import { deleteProject } from "../services/database"; // Import deleteProject function
 
 import logger from "../services/logger"; // Import Winston Logger
 import LogError from "../utils/error_logger"; // Import error logging utility
@@ -366,6 +367,163 @@ router.get("/get-project-presigned-url", isAuth, async (req: Request, res: Respo
     } catch (error: any) {
         logger.error(`${serviceLocation}: Error generating presigned URL: ${error.message}`, error);
         return res.status(500).json({ success: false, message: "Server error generating presigned URL" });
+    }
+});
+router.delete("/user-delete-project/:projectId", isAuthAndNotGuest, async (req: Request, res: Response) => {
+    const { projectId } = req.params;
+    const userId = req.user?._id;
+
+    logger.info(`${serviceLocation}: Received request to delete project ID ${projectId} by user ${userId}`); // CORRECTED
+
+    if (!projectId) {
+        return res.status(400).json({ success: false, message: "Project ID is required." });
+    }
+    if (!userId) {
+        // This should ideally be caught by isAuthAndNotGuest, but as a safeguard:
+        return res.status(401).json({ success: false, message: "Unauthorized. User ID not found." });
+    }
+
+    try {
+        // Read the project to verify ownership and get S3 paths
+        const projectResult = await readProject(projectId, userId.toString());
+
+        if (!projectResult.success || !projectResult.projects || projectResult.projects.length === 0) {
+            logger.warn(`${serviceLocation}: Project ${projectId} not found or user ${userId} does not have access. Message: ${projectResult.message}`); // CORRECTED
+            return res.status(404).json({
+                success: false,
+                message: projectResult.message || "Project not found or access denied."
+            });
+        }
+        const projectToDelete = projectResult.projects[0];
+
+        // Delete associated files from S3
+        const s3BucketName = process.env.AWS_BUCKET_NAME;
+        if (!s3BucketName) {
+            logger.error(`${serviceLocation}: S3_BUCKET_NAME is not configured. Cannot delete S3 files for project ${projectId}.`); // CORRECTED
+            // Decide if you want to proceed with DB deletion or halt. For now, halting.
+            return res.status(500).json({ success: false, message: "Server configuration error: S3 bucket not set." });
+        }
+
+        const s3KeysToDelete: string[] = [];
+        if (projectToDelete.originalfilepath) {
+            const key = extractS3KeyFromUrl(projectToDelete.originalfilepath);
+            if (key) s3KeysToDelete.push(key);
+        }
+        if (projectToDelete.extractedfolderpath) { // This might be a TAR file of JPEGs
+            const key = extractS3KeyFromUrl(projectToDelete.extractedfolderpath);
+            if (key) s3KeysToDelete.push(key);
+        }
+
+        for (const s3Key of s3KeysToDelete) {
+            try {
+                logger.info(`${serviceLocation}: Deleting S3 object: s3://${s3BucketName}/${s3Key} for project ${projectId}`); // CORRECTED
+                await deleteFromS3(s3Key); // Pass only the S3 key as required
+            } catch (s3Error) {
+                LogError(s3Error as Error, serviceLocation, `Failed to delete S3 object ${s3Key} for project ${projectId}. Continuing with DB deletion.`); // CORRECTED
+                // Decide if an S3 deletion failure should halt the process.
+            }
+        }
+
+        // Delete the project from the database (this will cascade delete segmentation masks)
+        const deleteDbResult = await deleteProject(projectId);
+
+        if (!deleteDbResult.success) {
+            logger.error(`${serviceLocation}: Failed to delete project ${projectId} from database. Message: ${deleteDbResult.message}`); // CORRECTED
+            return res.status(500).json({
+                success: false,
+                message: deleteDbResult.message || "Failed to delete project from database."
+            });
+        }
+
+        logger.info(`${serviceLocation}: Successfully deleted project ${projectId} and its associated data for user ${userId}.`); // CORRECTED
+        return res.status(200).json({
+            success: true,
+            message: "Project and associated data deleted successfully."
+        });
+
+    } catch (error) {
+        LogError(error as Error, serviceLocation, `Error deleting project ${projectId}`); // CORRECTED
+        return res.status(500).json({
+            success: false,
+            message: "An unexpected error occurred while deleting the project."
+        });
+    }
+});
+
+router.delete("/admin-delete-project/:projectId", isAuthAndAdmin, async (req: Request, res: Response) => {
+    const { projectId } = req.params;
+    const adminUserId = req.user?._id; // For logging who performed the action
+
+    logger.info(`${serviceLocation}: ADMIN ${adminUserId} initiated request to delete project ID ${projectId}`); // CORRECTED
+
+    if (!projectId) {
+        // This check is technically redundant due to path parameter, but good practice
+        return res.status(400).json({ success: false, message: "Project ID is required." });
+    }
+
+    try {
+        // Read the project to get S3 paths (no ownership check needed for admin)
+        // The readProject function can be called with only projectId for admin scenarios
+        const projectResult = await readProject(projectId); 
+
+        if (!projectResult.success || !projectResult.projects || projectResult.projects.length === 0) {
+            logger.warn(`${serviceLocation}: Admin ${adminUserId} attempted to delete non-existent project ${projectId}. Message: ${projectResult.message}`); // CORRECTED
+            return res.status(404).json({
+                success: false,
+                message: projectResult.message || `Project ${projectId} not found.` // CORRECTED
+            });
+        }
+        const projectToDelete = projectResult.projects[0];
+
+        // Delete associated files from S3
+        const s3BucketName = process.env.AWS_BUCKET_NAME;
+        if (!s3BucketName) {
+            logger.error(`${serviceLocation}: S3_BUCKET_NAME is not configured. Admin ${adminUserId} cannot delete S3 files for project ${projectId}.`); // CORRECTED
+            return res.status(500).json({ success: false, message: "Server configuration error: S3 bucket not set." });
+        }
+
+        const s3KeysToDelete: string[] = [];
+        if (projectToDelete.originalfilepath) {
+            const key = extractS3KeyFromUrl(projectToDelete.originalfilepath);
+            if (key) s3KeysToDelete.push(key);
+        }
+        if (projectToDelete.extractedfolderpath) { // This might be a TAR file of JPEGs
+            const key = extractS3KeyFromUrl(projectToDelete.extractedfolderpath);
+            if (key) s3KeysToDelete.push(key);
+        }
+
+        for (const s3Key of s3KeysToDelete) {
+            try {
+                logger.info(`${serviceLocation}: Admin ${adminUserId} deleting S3 object: s3://${s3BucketName}/${s3Key} for project ${projectId}`); // CORRECTED
+                await deleteFromS3(s3Key); // deleteFromS3 expects only the key
+            } catch (s3Error) {
+                LogError(s3Error as Error, serviceLocation, `Admin ${adminUserId} failed to delete S3 object ${s3Key} for project ${projectId}. Continuing with DB deletion.`); // CORRECTED
+            }
+        }
+
+        // Delete the project from the database (this will cascade delete segmentation masks)
+        const deleteDbResult = await deleteProject(projectId);
+
+        if (!deleteDbResult.success) {
+            logger.error(`${serviceLocation}: Admin ${adminUserId} failed to delete project ${projectId} from database. Message: ${deleteDbResult.message}`); // CORRECTED
+            return res.status(500).json({
+                success: false,
+                message: deleteDbResult.message || `Failed to delete project ${projectId} from database.` // CORRECTED
+            });
+        }
+
+        logger.info(`${serviceLocation}: Admin ${adminUserId} successfully deleted project ${projectId} and its associated data.`); // CORRECTED
+        return res.status(200).json({
+            success: true,
+            message: `Project ${projectId} and associated data deleted successfully by admin.` // CORRECTED
+        });
+
+    } catch (error) {
+        LogError(error as Error, serviceLocation, `Admin ${adminUserId} encountered error deleting project ${projectId}`); // CORRECTED
+        return res.status(500).json({
+            success: false,
+            message: "An unexpected error occurred while admin was deleting the project."
+        });
     }
 });
 
