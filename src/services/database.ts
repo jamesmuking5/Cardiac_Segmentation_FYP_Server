@@ -649,7 +649,7 @@ const projectModel = model<IProject, Model<IProject>>("Project", projectSchema);
 // Create segmentation mask content schema for use in project segmentation mask schema (Nest Depth: 3)
 const projectSegmentationMaskSliceContentSchema = new Schema({
   class: { type: String, required: true, enum: Object.values(ComponentBoundingBoxesClass) }, // Class of the bounding box (rv, myo, lvc)
-  segmentationmaskcontents: { type: String, required: true }, // Segmentation mask content (e.g., S3 bucket URL)
+  segmentationmaskcontents: { type: String, required: false }, // Segmentation mask content. Changed required to false.
 }, { _id: false }); // Disable automatic creation of an _id field for this subdocument
 
 // Create bounding box schema for use in project segmentation mask schema's slice schema (Nest Depth: 3)
@@ -1092,6 +1092,7 @@ const deleteProject = async (projectid: string): Promise<ProjectCrudResult> => {
 /* Project Segmentation Mask section */
 
 /**
+ * CODE CHANGED - JSDOCS MAY NOT BE ACCURATE
  * Creates a new project segmentation mask record in the database.
  * Validates the provided data, including checking for the existence of the referenced project ID,
  * ensuring string inputs are not empty, and numeric inputs (indices, coordinates) are non-negative.
@@ -1111,21 +1112,17 @@ const createProjectSegmentationMask = async (
   const operation = CRUDOperation.CREATE;
   const psm = projectsegmentationmask;
   try {
-    // Validate the project ID 
     const projectid = projectsegmentationmask.projectid;
     const projectidexists = await projectModel.exists({ _id: projectid });
     if (!projectidexists) {
       logger.warn(`Database: Project ID ${projectid} does not exist.`);
       return { success: false, operation, message: `Project ID ${projectid} does not exist.` };
     }
-    // Validate the contents
-    // Check if same name exists
     const projectsegmasknameexists = await projectSegmentationMaskModel.exists({ name: psm.name, projectid: psm.projectid })
     if (projectsegmasknameexists) {
       logger.warn(`Database: Invalid input parameters for project segmentation mask creation: Segmentation mask name ${psm.name} already exists for this project.`);
       return { success: false, operation, message: `Invalid input parameters for project segmentation mask creation: Segmentation mask name ${psm.name} already exists for this project.` };
     }
-    // Validate empty strings 
     const stringInputs = [
       psm.name,
     ]
@@ -1134,94 +1131,68 @@ const createProjectSegmentationMask = async (
       logger.warn(`Database: Invalid input parameters for project segmentation mask creation: ${emptyStringInputs.join(", ")}`);
       return { success: false, operation, message: `Invalid input parameters for project segmentation mask creation: ${emptyStringInputs.join(", ")}` };
     }
-    // Validate numeric inputs
     const numericInputs = [
       ...psm.frames.flatMap(frame => frame.slices.map(slices => slices.sliceindex)),
       ...psm.frames.flatMap(frame => frame.frameindex),
-      ...psm.frames.flatMap(frame => frame.slices.map(slices => slices.componentboundingboxes?.map(box => box.x_min) || [])),
-      ...psm.frames.flatMap(frame => frame.slices.map(slices => slices.componentboundingboxes?.map(box => box.y_min) || [])),
-      ...psm.frames.flatMap(frame => frame.slices.map(slices => slices.componentboundingboxes?.map(box => box.x_max) || [])),
-      ...psm.frames.flatMap(frame => frame.slices.map(slices => slices.componentboundingboxes?.map(box => box.y_max) || [])),
-    ];
+      ...psm.frames.flatMap(frame => frame.slices.flatMap(slices => slices.componentboundingboxes?.map(box => box.x_min) || [])),
+      ...psm.frames.flatMap(frame => frame.slices.flatMap(slices => slices.componentboundingboxes?.map(box => box.y_min) || [])),
+      ...psm.frames.flatMap(frame => frame.slices.flatMap(slices => slices.componentboundingboxes?.map(box => box.x_max) || [])),
+      ...psm.frames.flatMap(frame => frame.slices.flatMap(slices => slices.componentboundingboxes?.map(box => box.y_max) || [])),
+    ].flat();
     const negativeNumericInputs = numericInputs.filter(input => typeof input === 'number' && input < 0);
     if (negativeNumericInputs.length > 0) {
       logger.warn(`Database: Invalid numeric input parameters for project segmentation mask creation: ${negativeNumericInputs.join(", ")}`);
       return { success: false, operation, message: `Invalid numeric input parameters for project segmentation mask creation.` };
     }
-    // Validate that bounding boxes's x_max >= x_min and y_max >= y_min
     const invalidBoundingBoxes = psm.frames.flatMap(frame => frame.slices.flatMap(slices => slices.componentboundingboxes?.filter(box => box.x_max < box.x_min || box.y_max < box.y_min) || []));
     if (invalidBoundingBoxes.length > 0) {
       const invalidBoundingBoxesResult = invalidBoundingBoxes.map(box => `(${box.x_min}, ${box.y_min}) to (${box.x_max}, ${box.y_max})`).join(", ");
       logger.warn(`Database: Invalid bounding box coordinates for project segmentation mask creation: ${invalidBoundingBoxesResult}`);
       return { success: false, operation, message: `Invalid bounding box coordinates for project segmentation mask creation: ${invalidBoundingBoxesResult}.` };
     }
-    // Validate that frames array is populated
-    if (!psm.frames || !Array.isArray(psm.frames) || psm.frames.length === 0) {
-      logger.warn(`Database: Invalid input parameters for project segmentation mask creation: frames array must be populated with at least one frame.`);
-      return { success: false, operation, message: `Invalid input parameters for project segmentation mask creation: frames array must be populated with at least one frame.` };
-    }
-    // Validate that frames array is populated
     if (!psm.frames || !Array.isArray(psm.frames) || psm.frames.length === 0) {
       logger.warn(`Database: Invalid input parameters for project segmentation mask creation: frames array must be populated with at least one frame.`);
       return { success: false, operation, message: `Invalid input parameters for project segmentation mask creation: frames array must be populated with at least one frame.` };
     }
 
-    // Validate that each slice has a segmentation mask with its contents populated
     for (const frame of psm.frames) {
-      if (frame.slices && Array.isArray(frame.slices)) { // Ensure slices array exists for the frame
-        for (const slice of frame.slices) {
-          if (slice.segmentationmasks && Array.isArray(slice.segmentationmasks) && slice.segmentationmasks.length > 0) {
-            const emptyContentMasks = slice.segmentationmasks.filter(
-              maskEntry => !maskEntry.segmentationmaskcontents || typeof maskEntry.segmentationmaskcontents !== 'string' // Removed: || maskEntry.segmentationmaskcontents.trim() === ''
-            );
-            if (emptyContentMasks.length > 0) {
-              const offendingLocation = `frame ${frame.frameindex}, slice ${slice.sliceindex}`;
-              let messageDetail = "segmentationmaskcontents must be a non-empty string";
-              if (emptyContentMasks.some(m => !m.segmentationmaskcontents)) {
-                 messageDetail = "segmentationmaskcontents is missing";
-              } else if (emptyContentMasks.some(m => typeof m.segmentationmaskcontents !== 'string')) {
-                 messageDetail = "segmentationmaskcontents must be a string";
-              }
-              logger.warn(`Database: Invalid input parameters for project segmentation mask creation: ${messageDetail} for provided segmentation masks in ${offendingLocation}.`);
-              return { 
-                success: false, 
-                operation, 
-                message: `Invalid input parameters for project segmentation mask creation: ${messageDetail} for provided segmentation masks in ${offendingLocation}.` 
-              };
+      if (!frame.slices || !Array.isArray(frame.slices) || frame.slices.length === 0) {
+        // ... return error ...
+      }
+      for (const slice of frame.slices) {
+        if (slice.segmentationmasks && Array.isArray(slice.segmentationmasks)) {
+          for (const maskEntry of slice.segmentationmasks) {
+            // This validation ensures it's a string if present, and not null/undefined. Allows "".
+            if (maskEntry.segmentationmaskcontents === null ||
+                maskEntry.segmentationmaskcontents === undefined ||
+                typeof maskEntry.segmentationmaskcontents !== 'string') {
+                const offendingLocation = `frame ${frame.frameindex}, slice ${slice.sliceindex}, class ${maskEntry.class}`;
+                const messageDetail = `segmentationmaskcontents must be a non-null string. Received: ${maskEntry.segmentationmaskcontents}`;
+                logger.warn(`Database: Invalid input for project segmentation mask creation: ${messageDetail} in ${offendingLocation}.`);
+                return { 
+                    success: false, 
+                    operation, 
+                    message: `Invalid input for project segmentation mask creation: ${messageDetail} in ${offendingLocation}.` 
+                };
             }
           }
         }
       }
     }
 
-    // Validate that each frame has a slices array that is populated
-    const framesWithEmptySlices = psm.frames.filter(frame =>
-      !frame.slices || !Array.isArray(frame.slices) || frame.slices.length === 0
-    );
-
-    if (framesWithEmptySlices.length > 0) {
-      const frameindexesWithEmptySlices = framesWithEmptySlices.map(frame => frame.frameindex).join(", ");
-      logger.warn(`Database: Invalid input parameters for project segmentation mask creation: frames with indexes [${frameindexesWithEmptySlices}] have empty slices arrays.`);
-      return { success: false, operation, message: `Invalid input parameters for project segmentation mask creation: each frame must have at least one slice.` };
-    }
-
-    // Create new project segmentation mask instance
     const newProjectSegmentationMask = new projectSegmentationMaskModel(psm);
-
-    // Save the new project segmentation mask to the database
     const result = await newProjectSegmentationMask.save();
     if (!result) {
       logger.warn(`Database: Error creating project segmentation mask.`);
       return { success: false, operation, message: "Error creating project segmentation mask." };
     }
     logger.info(`Database: Project segmentation mask ${result._id} created successfully.`);
-    return { success: true, operation, projectsegmentationmask: result }; // Return the created project segmentation mask
+    return { success: true, operation, projectsegmentationmask: result };
   } catch (error: unknown) {
     LogError(error as Error, serviceLocation, `Error creating project segmentation mask, ${error}`);
     return { success: false, operation, message: "Error creating project segmentation mask." };
   }
 }
-
 /**
  * Reads all segmentation masks associated with a specific project ID.
  * Validates the existence of the project ID before querying the database.
@@ -1262,6 +1233,7 @@ const readProjectSegmentationMask = async (
 }
 
 /**
+ * CODE CHANGED - JSDOCS MAY NOT BE ACCURATE
  * Updates an existing project segmentation mask in the database.
  * Validates the existence of the mask ID and the project ID before applying updates.
  * Checks for uniqueness of the name and validates the contents of the mask.
@@ -1284,54 +1256,46 @@ const updateProjectSegmentationMask = async (
 ): Promise<ProjectSegmentationMaskCrudResult> => {
   const operation = CRUDOperation.UPDATE;
   try {
-    // Find the segmentation mask by ID
     const mask = await projectSegmentationMaskModel.findById(maskid);
     if (!mask) {
       logger.warn(`Database: Project segmentation mask ${maskid} not found.`);
       return { success: false, operation, message: `Project segmentation mask ${maskid} not found.` };
     }
 
-    // Validate updates based on what's being changed
-
-    // 1. If updating name, check for uniqueness
     if (maskupdates.name && maskupdates.name !== mask.name) {
       const nameExists = await projectSegmentationMaskModel.exists({
         projectid: mask.projectid,
         name: maskupdates.name,
         _id: { $ne: maskid }
       });
-
       if (nameExists) {
         return { success: false, operation, message: `Segmentation mask name '${maskupdates.name}' already exists for this project.` };
       }
-
-      // Set the name property directly
       mask.name = maskupdates.name;
     }
 
-    // 2. Update description if provided
     if (maskupdates.description !== undefined) {
       mask.description = maskupdates.description;
     }
 
-    // 3. Update saved status if provided
     if (maskupdates.isSaved !== undefined) {
       mask.isSaved = maskupdates.isSaved;
     }
 
-    // 4. Update MedSAM output status if provided
     if (maskupdates.isMedSAMOutput !== undefined) {
       mask.isMedSAMOutput = maskupdates.isMedSAMOutput;
     }
 
-    // 5. Handle frames update - requires special validation
+    if (maskupdates.segmentationmaskRLE !== undefined) {
+      mask.segmentationmaskRLE = maskupdates.segmentationmaskRLE;
+    }
+
+
     if (maskupdates.frames) {
-      // Validate frames exist and are not empty
       if (!Array.isArray(maskupdates.frames) || maskupdates.frames.length === 0) {
         return { success: false, operation, message: "Frames array must contain at least one frame." };
       }
 
-      // Validate each frame has a valid index
       const invalidFrameIndices = maskupdates.frames.filter(frame =>
         frame.frameindex === undefined || typeof frame.frameindex !== 'number' || frame.frameindex < 0
       );
@@ -1340,34 +1304,43 @@ const updateProjectSegmentationMask = async (
         return { success: false, operation, message: `Invalid frame indices: [${indices}]. Frame index must be a non-negative number.` };
       }
 
-      // Validate each frame has slices
       const framesWithEmptySlices = maskupdates.frames.filter(frame =>
         !frame.slices || !Array.isArray(frame.slices) || frame.slices.length === 0
       );
-
       if (framesWithEmptySlices.length > 0) {
         const indices = framesWithEmptySlices.map(f => f.frameindex).join(", ");
         return { success: false, operation, message: `Frames with indices [${indices}] must have at least one slice.` };
       }
 
-      // Validate bounding boxes
-      const invalidBoundingBoxes = maskupdates.frames.flatMap(frame =>
-        frame.slices.flatMap(slice =>
-          slice.componentboundingboxes?.filter(box =>
-            box.x_max < box.x_min || box.y_max < box.y_min
-          ) || []
-        )
-      );
-
-      if (invalidBoundingBoxes.length > 0) {
-        return { success: false, operation, message: "Invalid bounding box coordinates: max values must be greater than or equal to min values." };
+      for (const frame of maskupdates.frames) {
+        for (const slice of frame.slices) {
+          const invalidBoundingBoxes = slice.componentboundingboxes?.filter(box => box.x_max < box.x_min || box.y_max < box.y_min) || [];
+          if (invalidBoundingBoxes.length > 0) {
+            const invalidBoundingBoxesResult = invalidBoundingBoxes.map(box => `(${box.x_min}, ${box.y_min}) to (${box.x_max}, ${box.y_max})`).join(", ");
+            logger.warn(`Database: Invalid bounding box coordinates for project segmentation mask update: ${invalidBoundingBoxesResult}`);
+            return { success: false, operation, message: `Invalid bounding box coordinates for project segmentation mask update: ${invalidBoundingBoxesResult}.` };
+          }
+          if (slice.segmentationmasks && Array.isArray(slice.segmentationmasks)) {
+            for (const maskEntry of slice.segmentationmasks) {
+              if (maskEntry.segmentationmaskcontents === null ||
+                maskEntry.segmentationmaskcontents === undefined ||
+                typeof maskEntry.segmentationmaskcontents !== 'string') {
+                const offendingLocation = `frame ${frame.frameindex}, slice ${slice.sliceindex}, class ${maskEntry.class}`; // Define offendingLocation and messageDetail here
+                const messageDetail = `segmentationmaskcontents must be a non-null string. Received: ${maskEntry.segmentationmaskcontents}`; // Define messageDetail here
+                logger.warn(`Database: Invalid input for project segmentation mask update: ${messageDetail} in ${offendingLocation}.`);
+                return {
+                  success: false,
+                  operation,
+                  message: `Invalid input for project segmentation mask update: ${messageDetail} in ${offendingLocation}.`
+                };
+              }
+            }
+          }
+        }
       }
-
-      // Update the entire frames array if all validations pass
-      mask.frames = maskupdates.frames;
+      mask.frames = maskupdates.frames as mongoose.Types.DocumentArray<IProjectSegmentationMaskDocument['frames'][0]>;
     }
 
-    // Save the updated document
     await mask.save();
 
     logger.info(`Database: Project segmentation mask ${maskid} updated successfully.`);
@@ -1406,17 +1379,17 @@ const jobSchema = new mongoose.Schema({
   projectid: { type: String, required: true },
   uuid: { type: String, required: true, unique: true }, // Unique identifier for the job
   status: { type: String, required: true, enum: Object.values(JobStatus) },
-  result: { 
+  result: {
     type: mongoose.Schema.Types.Mixed, // Changed to Mixed type
-    required: false 
-  }, 
+    required: false
+  },
   message: { type: String, required: false }, // Message related to the job
   segmentationName: { type: String, required: false }, // Optional user-defined name
   segmentationDescription: { type: String, required: false }, // Optional user-defined description
   segmentationSouce: { type: String, required: false, enum: Object.values(segmentationSource) }, // Optional source of the segmentation
 }, { timestamps: true });
 const jobModel = mongoose.model<IJobDocument>('Job', jobSchema);
- 
+
 // Job CRUD functions
 const createJob = async (job: IJob): Promise<JobCrudResult> => {
   const operation = CRUDOperation.CREATE;

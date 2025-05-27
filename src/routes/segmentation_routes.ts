@@ -2,7 +2,16 @@ import { Request, Response, Router } from "express";
 import logger from "../services/logger";
 import { startInference } from "../services/inference";
 import { injectGpuAuthToken } from "../middleware/gpuauthmiddleware";
-import { readProjectSegmentationMask, updateProjectSegmentationMask, updateProject, readProject, jobModel, userModel, JobStatus } from "../services/database";
+import {
+    readProjectSegmentationMask,
+    updateProjectSegmentationMask,
+    updateProject,
+    readProject,
+    jobModel,
+    userModel,
+    JobStatus,
+    createProjectSegmentationMask
+} from "../services/database";
 import { isAuth, isAuthAndAdmin, isAuthAndNotGuest } from "../services/passportjs";
 import LogError from "../utils/error_logger";
 import { ComponentBoundingBoxesClass, IProjectSegmentationMask, IProjectDocument } from "../types/database_types";
@@ -18,7 +27,6 @@ import { extractS3KeyFromUrl, downloadFromS3, uploadToS3, uploadMaskToS3 } from 
 const router = Router();
 const serviceLocation = "SegmentationRoutes";
 
-// Define an interface for the expected GPU server response
 interface GpuManualInferenceResponse {
     uuid: string;
     status: string;
@@ -36,11 +44,9 @@ interface GpuManualInferenceResponse {
         };
     };
     error?: string | null;
-    message?: string; // Some APIs might use 'message' for errors in the body
+    message?: string;
 }
 
-
-// Route to start inference for a specific project (Unchanged)
 router.post("/start-segmentation/:projectId",
     isAuth,
     injectGpuAuthToken,
@@ -62,7 +68,6 @@ router.post("/start-segmentation/:projectId",
         }
     });
 
-// Route to get segmentation results for a project (Unchanged)
 router.get("/segmentation-results/:projectId", isAuth, async (req: Request, res: Response) => {
     const { projectId } = req.params;
 
@@ -96,7 +101,6 @@ router.get("/segmentation-results/:projectId", isAuth, async (req: Request, res:
     }
 });
 
-// NEW Route to start MANUAL segmentation (Corrected Axios Error Handling)
 router.post("/start-manual-segmentation/:projectId",
     isAuth,
     injectGpuAuthToken,
@@ -166,12 +170,12 @@ router.post("/start-manual-segmentation/:projectId",
             logger.info(`${serviceLocation}: Sending request to GPU server ${gpuServerUrl} for image ${image_name} with UUID ${gpuRequestId}.`);
             const gpuServerPayload = { url: presignedUrl, uuid: gpuRequestId, image_name: image_name, bbox: bbox };
 
-            const gpuResponse = await axios.post<GpuManualInferenceResponse>(gpuServerUrl, gpuServerPayload, { 
+            const gpuResponse = await axios.post<GpuManualInferenceResponse>(gpuServerUrl, gpuServerPayload, {
                 headers: {
                     'Authorization': `Bearer ${res.locals.gpuAuthToken}`,
                     'Content-Type': 'application/json',
                 },
-                timeout: 60000 
+                timeout: 60000
             });
 
             logger.info(`${serviceLocation}: Received response from GPU server for UUID ${gpuResponse.data.uuid}, status ${gpuResponse.data.status}.`);
@@ -200,7 +204,7 @@ router.post("/start-manual-segmentation/:projectId",
                         sliceIndex = 0; frameIndex = 0;
                     }
                 } else {
-                     logger.warn(`${serviceLocation}: image_name ${image_name} format not parsable for frame/slice. Defaulting to 0,0.`);
+                    logger.warn(`${serviceLocation}: image_name ${image_name} format not parsable for frame/slice. Defaulting to 0,0.`);
                 }
             } catch (parseError) {
                 logger.warn(`${serviceLocation}: Error parsing frame/slice from ${image_name}. Defaulting to 0,0. Error: ${parseError}`);
@@ -248,11 +252,9 @@ router.post("/start-manual-segmentation/:projectId",
             LogError(error instanceof Error ? error : new Error(String(error)), serviceLocation, `Error in new start-manual-segmentation for project ${projectId}, image ${image_name}`);
             let errorMessage = "An unexpected error occurred while processing manual segmentation.";
 
-            if (axios.isAxiosError(error)) { // This is the standard type guard
-                // Inside this block, TypeScript knows 'error' is an AxiosError
+            if (axios.isAxiosError(error)) {
                 if (error.response) {
-                    // Access data from error.response.data, which might be GpuManualInferenceResponse or another error structure
-                    const responseData = error.response.data as Partial<GpuManualInferenceResponse>; // Cast to allow optional fields
+                    const responseData = error.response.data as Partial<GpuManualInferenceResponse>;
                     errorMessage = responseData?.error || responseData?.message || error.message || "Error from GPU server.";
                     logger.error(
                         `${serviceLocation}: Axios error - ${errorMessage}, ` +
@@ -260,11 +262,9 @@ router.post("/start-manual-segmentation/:projectId",
                         `Response Data: ${JSON.stringify(error.response.data)}`
                     );
                 } else if (error.request) {
-                    // The request was made but no response was received
                     errorMessage = `No response received from GPU server: ${error.message}`;
                     logger.error(`${serviceLocation}: Axios error - ${errorMessage} (no response). Request details might be in error.config.`);
                 } else {
-                    // Something happened in setting up the request that triggered an Error
                     errorMessage = `Error setting up request to GPU server: ${error.message}`;
                     logger.error(`${serviceLocation}: Axios error - ${errorMessage} (request setup).`);
                 }
@@ -278,9 +278,6 @@ router.post("/start-manual-segmentation/:projectId",
         }
     });
 
-// (The rest of your routes: /user-check-jobs, /admin-check-all-jobs-status, /save-ai-segmentation, /save-manual-segmentation remain unchanged)
-// ...
-// Route to check user's jobs (Unchanged)
 router.get("/user-check-jobs", isAuth, async (req: Request, res: Response) => {
     const userId = (req.user as any)?._id;
     logger.info(`${serviceLocation}: Fetching all jobs for user ${req.user?.username}`);
@@ -317,7 +314,6 @@ router.get("/user-check-jobs", isAuth, async (req: Request, res: Response) => {
     }
 });
 
-// Route for admin access to all jobs (Unchanged)
 router.get("/admin-check-all-jobs-status", isAuthAndAdmin, async (req: Request, res: Response) => {
     logger.info(`${serviceLocation}: Admin ${req.user?.username} requesting all system jobs`);
     try {
@@ -367,330 +363,229 @@ router.get("/admin-check-all-jobs-status", isAuthAndAdmin, async (req: Request, 
     }
 });
 
-// Route to mark an AI segmentation mask as saved (Unchanged)
 router.patch("/save-ai-segmentation", isAuthAndNotGuest, async (req: Request, res: Response) => {
-  try {
-      const { segmentationMaskId } = req.body;
-      const userId = (req.user)?._id;
-      logger.info(`${serviceLocation}: Received request to mark AI segmentation mask ${segmentationMaskId} as saved by user ${userId}.`);
-      if (!userId) {
-        logger.warn(`${serviceLocation}: Unauthorized attempt to save AI segmentation. User ID not found.`);
-        return res.status(401).json({ success: false, message: "Unauthorized. User ID not found." });
-      }
-      if (!segmentationMaskId) {
-        logger.warn(`${serviceLocation}: Missing segmentationMaskId for saving AI segmentation.`);
-        return res.status(400).json({ success: false, message: "Missing segmentationMaskId." });
-      }
-      const maskResult = await readProjectSegmentationMask(segmentationMaskId);
-      if (!maskResult.success || !maskResult.projectsegmentationmask) {
-        logger.warn(`${serviceLocation}: AI Segmentation mask ${segmentationMaskId} not found. Message: ${maskResult.message}`);
-        return res.status(404).json({ success: false, message: maskResult.message || "Segmentation mask not found." });
-      }
-      const projectId = maskResult.projectsegmentationmask.projectid;
-      logger.debug(`${serviceLocation}: Updating AI segmentation mask ${segmentationMaskId} to isSaved: true.`);
-      const segmentationDbUpdateResult = await updateProjectSegmentationMask(segmentationMaskId, { isSaved: true });
-      if (!segmentationDbUpdateResult.success || !segmentationDbUpdateResult.projectsegmentationmask) {
-        logger.error(`${serviceLocation}: Failed to update AI segmentation mask ${segmentationMaskId} status in database. Message: ${segmentationDbUpdateResult.message}`);
-        return res.status(400).json({ success: false, message: segmentationDbUpdateResult.message || "Failed to update segmentation mask status in database." });
-      }
-      logger.info(`${serviceLocation}: Successfully updated AI segmentation mask ${segmentationMaskId} to isSaved: true in DB.`);
-      logger.debug(`${serviceLocation}: Checking save status of parent project ${projectId} for AI segmentation mask ${segmentationMaskId}.`);
-      const projectResult = await readProject(projectId, userId.toString());
-      if (!projectResult.success || !projectResult.projects || projectResult.projects.length === 0) {
-        logger.warn(`${serviceLocation}: Could not find project ${projectId} to check/update save status after saving AI segmentation mask ${segmentationMaskId}.`);
-      } else {
-        const project = projectResult.projects[0];
-        if (!project.isSaved) {
-          logger.info(`${serviceLocation}: Parent project ${projectId} is not saved. Updating its status to saved.`);
-          const updateProjectResult = await updateProject(projectId, { isSaved: true });
-          if (!updateProjectResult.success) {
-            logger.warn(`${serviceLocation}: Failed to update project ${projectId} save status. Message: ${updateProjectResult.message}`);
-          } else {
-            logger.info(`${serviceLocation}: Parent project ${projectId} save status successfully updated to true.`);
-          }
-        } else {
-          logger.info(`${serviceLocation}: Parent project ${projectId} was already saved.`);
-        }
-      }
-      logger.info(`${serviceLocation}: User ${userId} successfully marked AI segmentation mask ${segmentationMaskId} as saved. DB status updated.`);
-      return res.status(200).json({
-        success: true,
-        message: "AI Segmentation mask marked as saved successfully.",
-        segmentation: segmentationDbUpdateResult.projectsegmentationmask
-      });
-    } catch (error) {
-      const segmentationMaskIdBody = req.body?.segmentationMaskId || "unknown";
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      LogError(error instanceof Error ? error : new Error(errorMessage), serviceLocation, `Error marking AI segmentation mask as saved: ${segmentationMaskIdBody}`);
-      return res.status(500).json({ success: false, message: "An unexpected error occurred while saving the AI segmentation." });
-    }
-  }
-);
-
-// Route to update RLE for a MANUAL segmentation mask and mark as saved (Unchanged)
-router.patch("/save-manual-segmentation", isAuthAndNotGuest, async (req: Request, res: Response) => {
-  try {
-    const { segmentationMaskId, frameIndex: frameIndexStr, sliceIndex: sliceIndexStr, componentClass, rleString } = req.body;
-    const userId = (req.user)?._id;
-    logger.info(`${serviceLocation}: Received request to save manual segmentation (RLE update) for mask ID ${segmentationMaskId} by user ${userId}. Slice: F${frameIndexStr}S${sliceIndexStr}, Class: ${componentClass}`);
-    if (!userId) {
-      logger.warn(`${serviceLocation}: Unauthorized attempt to save manual segmentation. User ID not found.`);
-      return res.status(401).json({ success: false, message: "Unauthorized. User ID not found." });
-    }
-    if (!segmentationMaskId) {
-      logger.warn(`${serviceLocation}: Missing segmentationMaskId for saving manual segmentation.`);
-      return res.status(400).json({ success: false, message: "Missing segmentationMaskId." });
-    }
-    if (frameIndexStr === undefined || sliceIndexStr === undefined || !componentClass || !rleString) {
-        logger.warn(`${serviceLocation}: Missing RLE update parameters for mask ${segmentationMaskId}. Required: frameIndex, sliceIndex, componentClass, rleString.`);
-        return res.status(400).json({ success: false, message: "Missing RLE update parameters (frameIndex, sliceIndex, componentClass, rleString)." });
-    }
-    const frameIndex = parseInt(frameIndexStr, 10);
-    const sliceIndex = parseInt(sliceIndexStr, 10);
-    if (isNaN(frameIndex) || isNaN(sliceIndex) || frameIndex < 0 || sliceIndex < 0) {
-        logger.warn(`${serviceLocation}: Invalid frameIndex or sliceIndex for mask ${segmentationMaskId}. Received F:${frameIndexStr}, S:${sliceIndexStr}`);
-        return res.status(400).json({ success: false, message: "Invalid frameIndex or sliceIndex. Must be non-negative numbers." });
-    }
-    if (!Object.values(ComponentBoundingBoxesClass).includes(componentClass as ComponentBoundingBoxesClass)) {
-        logger.warn(`${serviceLocation}: Invalid componentClass '${componentClass}' for mask ${segmentationMaskId}.`);
-        return res.status(400).json({ success: false, message: `Invalid componentClass. Must be one of: ${Object.values(ComponentBoundingBoxesClass).join(', ')}` });
-    }
-    if (typeof rleString !== 'string' || rleString.trim() === "") {
-        logger.warn(`${serviceLocation}: Invalid rleString for mask ${segmentationMaskId}. Must be a non-empty string.`);
-        return res.status(400).json({ success: false, message: "rleString must be a non-empty string." });
-    }
-    logger.debug(`${serviceLocation}: Reading segmentation mask ${segmentationMaskId} to verify type and get project ID.`);
-    const maskResult = await readProjectSegmentationMask(segmentationMaskId);
-    if (!maskResult.success || !maskResult.projectsegmentationmask) {
-      logger.warn(`${serviceLocation}: Segmentation mask ${segmentationMaskId} not found for saving manual RLE. Message: ${maskResult.message}`);
-      return res.status(404).json({ success: false, message: maskResult.message || "Segmentation mask not found." });
-    }
-    if (maskResult.projectsegmentationmask.isMedSAMOutput) {
-      logger.warn(`${serviceLocation}: Attempt to save RLE for AI segmentation mask ${segmentationMaskId} via manual route. User: ${userId}`);
-      return res.status(400).json({ success: false, message: "This endpoint is for saving manual segmentations. The provided mask ID corresponds to an AI-generated segmentation." });
-    }
-    const projectId = maskResult.projectsegmentationmask.projectid;
-    logger.info(`${serviceLocation}: Segmentation mask ${segmentationMaskId} (manual) belongs to project ${projectId}. Proceeding with RLE update.`);
-    let rleActuallyModified = false;
-    const updatedFrames = maskResult.projectsegmentationmask.frames.map(f => {
-        if (f.frameindex === frameIndex) {
-            let frameModified = false;
-            const updatedSlices = f.slices.map(s => {
-                if (s.sliceindex === sliceIndex) {
-                    let sliceModified = false;
-                    let componentFoundAndUpdated = false;
-                    let currentSegmentationMasks = s.segmentationmasks ? [...s.segmentationmasks] : [];
-                    currentSegmentationMasks = currentSegmentationMasks.map(sm => {
-                        if (sm.class === componentClass) {
-                            componentFoundAndUpdated = true;
-                            if (sm.segmentationmaskcontents !== rleString) {
-                                sliceModified = true; frameModified = true; rleActuallyModified = true;
-                                return { ...sm, segmentationmaskcontents: rleString };
-                            }
-                        }
-                        return sm;
-                    });
-                    if (!componentFoundAndUpdated) {
-                        currentSegmentationMasks.push({ class: componentClass as ComponentBoundingBoxesClass, segmentationmaskcontents: rleString });
-                        sliceModified = true; frameModified = true; rleActuallyModified = true;
-                    }
-                    return sliceModified ? { ...s, segmentationmasks: currentSegmentationMasks } : s;
-                }
-                return s;
-            });
-            return frameModified ? { ...f, slices: updatedSlices } : f;
-        }
-        return f;
-    });
-    if (!rleActuallyModified) {
-        logger.info(`${serviceLocation}: RLE for mask ${segmentationMaskId}, F${frameIndex}S${sliceIndex}, Class ${componentClass} was not modified or added. Proceeding with save status update.`);
-    }
-    const updatePayload: any = { isSaved: true };
-    if (rleActuallyModified) { updatePayload.frames = updatedFrames; }
-    logger.debug(`${serviceLocation}: Updating manual segmentation mask ${segmentationMaskId} with RLE (if changed) and isSaved: true.`);
-    const segmentationDbUpdateResult = await updateProjectSegmentationMask(segmentationMaskId, updatePayload);
-    if (!segmentationDbUpdateResult.success || !segmentationDbUpdateResult.projectsegmentationmask) {
-      logger.error(`${serviceLocation}: Failed to update manual segmentation mask ${segmentationMaskId} in database. Message: ${segmentationDbUpdateResult.message}`);
-      return res.status(400).json({ success: false, message: segmentationDbUpdateResult.message || "Failed to update segmentation mask in database." });
-    }
-    logger.info(`${serviceLocation}: Successfully updated manual segmentation mask ${segmentationMaskId} (RLE & status) in DB.`);
-    logger.debug(`${serviceLocation}: Checking save status of parent project ${projectId} for manual segmentation mask ${segmentationMaskId}.`);
-    const projectResult = await readProject(projectId, userId.toString());
-    if (!projectResult.success || !projectResult.projects || projectResult.projects.length === 0) {
-      logger.warn(`${serviceLocation}: Could not find project ${projectId} to check/update save status after saving manual segmentation mask ${segmentationMaskId}.`);
-    } else {
-      const project = projectResult.projects[0];
-      if (!project.isSaved) {
-        logger.info(`${serviceLocation}: Parent project ${projectId} is not saved. Updating its status to saved.`);
-        const updateProjectResult = await updateProject(projectId, { isSaved: true });
-        if (!updateProjectResult.success) {
-          logger.warn(`${serviceLocation}: Failed to update project ${projectId} save status after manual segmentation save. Message: ${updateProjectResult.message}`);
-        } else {
-          logger.info(`${serviceLocation}: Parent project ${projectId} save status successfully updated to true.`);
-        }
-      } else {
-        logger.info(`${serviceLocation}: Parent project ${projectId} was already saved.`);
-      }
-    }
-    logger.info(`${serviceLocation}: User ${userId} successfully processed save request for manual segmentation (RLE update) for mask ${segmentationMaskId}. DB status updated.`);
-    return res.status(200).json({
-      success: true,
-      message: "Manual segmentation RLE updated and saved successfully.",
-      segmentation: segmentationDbUpdateResult.projectsegmentationmask
-    });
-  } catch (error) {
-    const segmentationMaskIdBody = req.body?.segmentationMaskId || "unknown";
-    const errorMessage = error instanceof Error ? error.message : String(error);
-    LogError(error instanceof Error ? error : new Error(errorMessage), serviceLocation, `Error saving manual segmentation (RLE update) for mask ID: ${segmentationMaskIdBody}`);
-    return res.status(500).json({ success: false, message: "An unexpected error occurred while saving the manual segmentation." });
-  }
-});
-
-// Route to export project data as a NIfTI segmentation mask
-router.get("/export-project-data/:projectId", isAuth, async (req: Request, res: Response) => {
-    const { projectId } = req.params;
-    const userId = (req.user as any)?._id;
-    const serviceLocationExport = `${serviceLocation}/exportProjectDataNifti`;
-    const tempExportId = uuidv4();
-    const baseTempDir = path.join(__dirname, '..', '..', 'temp_exports', tempExportId);
-    const segmentationsJsonPath = path.join(baseTempDir, 'segmentations.json');
-    const tempOriginalNiftiPath = path.join(baseTempDir, `original_${tempExportId}.nii.gz`);
-    const localOutputSegmentationNiftiPath = path.join(baseTempDir, `segmentation_output_${tempExportId}.nii.gz`);
-
-    logger.info(`${serviceLocationExport}: Request to export NIfTI segmentation for project ${projectId} by user ${userId}. Temp ID: ${tempExportId}`);
-
-    if (!projectId) {
-        return res.status(400).json({ success: false, message: "Project ID is required." });
-    }
-
     try {
-        await fs.ensureDir(baseTempDir);
-
-        // 1. Read Project Details (including dimensions and original NIfTI path)
-        const projectResult = await readProject(projectId, userId);
+        const { segmentationMaskId } = req.body;
+        const userId = (req.user)?._id;
+        logger.info(`${serviceLocation}: Received request to mark AI segmentation mask ${segmentationMaskId} as saved by user ${userId}.`);
+        if (!userId) {
+            logger.warn(`${serviceLocation}: Unauthorized attempt to save AI segmentation. User ID not found.`);
+            return res.status(401).json({ success: false, message: "Unauthorized. User ID not found." });
+        }
+        if (!segmentationMaskId) {
+            logger.warn(`${serviceLocation}: Missing segmentationMaskId for saving AI segmentation.`);
+            return res.status(400).json({ success: false, message: "Missing segmentationMaskId." });
+        }
+        const maskResult = await readProjectSegmentationMask(segmentationMaskId);
+        if (!maskResult.success || !maskResult.projectsegmentationmask) {
+            logger.warn(`${serviceLocation}: AI Segmentation mask ${segmentationMaskId} not found. Message: ${maskResult.message}`);
+            return res.status(404).json({ success: false, message: maskResult.message || "Segmentation mask not found." });
+        }
+        const projectId = maskResult.projectsegmentationmask.projectid;
+        logger.debug(`${serviceLocation}: Updating AI segmentation mask ${segmentationMaskId} to isSaved: true.`);
+        const segmentationDbUpdateResult = await updateProjectSegmentationMask(segmentationMaskId, { isSaved: true });
+        if (!segmentationDbUpdateResult.success || !segmentationDbUpdateResult.projectsegmentationmask) {
+            logger.error(`${serviceLocation}: Failed to update AI segmentation mask ${segmentationMaskId} status in database. Message: ${segmentationDbUpdateResult.message}`);
+            return res.status(400).json({ success: false, message: segmentationDbUpdateResult.message || "Failed to update segmentation mask status in database." });
+        }
+        logger.info(`${serviceLocation}: Successfully updated AI segmentation mask ${segmentationMaskId} to isSaved: true in DB.`);
+        logger.debug(`${serviceLocation}: Checking save status of parent project ${projectId} for AI segmentation mask ${segmentationMaskId}.`);
+        const projectResult = await readProject(projectId, userId.toString());
         if (!projectResult.success || !projectResult.projects || projectResult.projects.length === 0) {
-            logger.warn(`${serviceLocationExport}: Project ${projectId} not found or user ${userId} does not have access. Message: ${projectResult.message}`);
-            return res.status(404).json({ success: false, message: projectResult.message || "Project not found or access denied." });
-        }
-        const project: IProjectDocument = projectResult.projects[0]; // IProject should be imported
-
-        if (!project.dimensions || project.dimensions.width == null || project.dimensions.height == null) {
-            logger.error(`${serviceLocationExport}: Project ${projectId} is missing critical dimension data (width/height). Cannot proceed with NIfTI export.`);
-            return res.status(500).json({ success: false, message: "Project is missing critical dimension data." });
-        }
-        const planeHeightForRLE = project.dimensions.height; 
-        const planeWidthForRLE = project.dimensions.width;   
-
-
-        // 2. Download Original NIfTI file (needed for header/affine by Python script)
-        const s3BucketName = process.env.AWS_BUCKET_NAME;
-        if (!project.originalfilepath || !s3BucketName) {
-            logger.error(`${serviceLocationExport}: Original NIfTI file path (project.originalfilepath) or S3 bucket name is missing for project ${projectId}.`);
-            return res.status(500).json({ success: false, message: "Configuration error: Missing original NIfTI path or S3 bucket." });
-        }
-        const originalNiftiS3Key = extractS3KeyFromUrl(project.originalfilepath);
-        if (!originalNiftiS3Key) {
-            logger.error(`${serviceLocationExport}: Could not extract S3 key from originalfilepath: ${project.originalfilepath}`);
-            return res.status(500).json({ success: false, message: "Configuration error: Invalid original NIfTI S3 URL." });
-        }
-        logger.info(`${serviceLocationExport}: Downloading original NIfTI ${originalNiftiS3Key} to ${tempOriginalNiftiPath}`);
-        await downloadFromS3(s3BucketName, originalNiftiS3Key, tempOriginalNiftiPath);
-
-        // 3. Read All Segmentation Masks and create segmentations.json
-        const segmentationMasksResult = await readProjectSegmentationMask(projectId);
-        let segmentationsToProcess: IProjectSegmentationMask[] = []; 
-        if (segmentationMasksResult.success && segmentationMasksResult.projectsegmentationmasks && segmentationMasksResult.projectsegmentationmasks.length > 0) {
-            segmentationsToProcess = [segmentationMasksResult.projectsegmentationmasks[0]];
+            logger.warn(`${serviceLocation}: Could not find project ${projectId} to check/update save status after saving AI segmentation mask ${segmentationMaskId}.`);
         } else {
-            logger.warn(`${serviceLocationExport}: No segmentation data found for project ${projectId}. Export will result in an empty NIfTI (matching original geometry).`);
-        }
-        await fs.writeJson(segmentationsJsonPath, segmentationsToProcess, { spaces: 2 });
-        logger.info(`${serviceLocationExport}: Created segmentations.json for project ${projectId} at ${segmentationsJsonPath}`);
-
-        // 4. Call Python script to create the segmentation NIfTI
-        const pythonScriptPath = path.join(__dirname, '..', '..', 'src', 'python', 'create_nifti_from_segmentations.py');
-        const pythonCommand = `python "${pythonScriptPath}" "${segmentationsJsonPath}" "${tempOriginalNiftiPath}" "${localOutputSegmentationNiftiPath}" "${planeHeightForRLE}" "${planeWidthForRLE}"`;
-
-        logger.info(`${serviceLocationExport}: Executing Python script: ${pythonCommand}`);
-        await new Promise<void>((resolve, reject) => {
-            exec(pythonCommand, { maxBuffer: 1024 * 1024 * 20 }, (error, stdout, stderr) => { 
-                if (error) {
-                    logger.error(`${serviceLocationExport}: Python script error for project ${projectId}: ${stderr || error.message}`);
-                    return reject(new Error(`NIfTI creation failed: ${stderr || error.message}`));
+            const project = projectResult.projects[0];
+            if (!project.isSaved) {
+                logger.info(`${serviceLocation}: Parent project ${projectId} is not saved. Updating its status to saved.`);
+                const updateProjectResult = await updateProject(projectId, { isSaved: true });
+                if (!updateProjectResult.success) {
+                    logger.warn(`${serviceLocation}: Failed to update project ${projectId} save status. Message: ${updateProjectResult.message}`);
+                } else {
+                    logger.info(`${serviceLocation}: Parent project ${projectId} save status successfully updated to true.`);
                 }
-                logger.info(`${serviceLocationExport}: Python script stdout for project ${projectId}: ${stdout}`);
-                if (stderr) logger.warn(`${serviceLocationExport}: Python script stderr for project ${projectId}: ${stderr}`);
-                
-                const niftiPathMatch = stdout.match(/NIFTI_FILE_PATH:(.*)/);
-                if (!niftiPathMatch || !niftiPathMatch[1] || !fs.existsSync(niftiPathMatch[1].trim())) {
-                     return reject(new Error(`Output NIfTI path not found in Python script output or file does not exist. Output: ${stdout}`));
-                }
-                resolve();
-            });
-        });
-
-        // 5. Upload the generated segmentation NIfTI to S3
-        let baseExportName = project.name.replace(/[^a-zA-Z0-9_.-]+/g, '_');
-        if (project.originalfilename) {
-            const originalName = project.originalfilename;
-            let base = path.basename(originalName, path.extname(originalName)); 
-            if (originalName.toLowerCase().endsWith(".nii.gz")) { 
-                base = path.basename(originalName, ".nii.gz");
+            } else {
+                logger.info(`${serviceLocation}: Parent project ${projectId} was already saved.`);
             }
-            baseExportName = base.replace(/[^a-zA-Z0-9_.-]+/g, '_'); 
         }
-        const suggestedNiftiFilename = `${baseExportName}_segmentation.nii.gz`;
-        logger.info(`${serviceLocationExport}: Suggested filename for export NIfTI: ${suggestedNiftiFilename}`);
-
-        const exportNiftiFileStream = fs.createReadStream(localOutputSegmentationNiftiPath);
-        // This call expects uploadMaskToS3 to take 6 arguments
-        const exportS3Url = await uploadMaskToS3(
-            exportNiftiFileStream, // 1. fileStream
-            userId || 'system',    // 2. userId
-            tempExportId,          // 3. fileId
-            '.nii.gz',             // 4. fileExtension
-            `project_segmentations_nifti/${projectId}/`, // 5. s3KeyPrefix
-            suggestedNiftiFilename // 6. suggestedFilename 
-        );
-
-        if (!exportS3Url) {
-            throw new Error("Failed to upload segmentation NIfTI to S3 or get S3 URL.");
-        }
-
-        // 6. Generate Presigned URL for the uploaded NIfTI
-        const finalS3Key = extractS3KeyFromUrl(exportS3Url);
-        if (!finalS3Key) {
-            throw new Error(`Could not extract S3 key from the uploaded export URL: ${exportS3Url}`);
-        }
-        const presignedExportUrl = await generatePresignedGetUrl(s3BucketName!, finalS3Key, 3600); 
-
-        if (!presignedExportUrl) {
-            throw new Error("Failed to generate presigned URL for the segmentation NIfTI.");
-        }
-
-        logger.info(`${serviceLocationExport}: Successfully prepared NIfTI segmentation for project ${projectId}. Presigned URL: ${presignedExportUrl}`);
+        logger.info(`${serviceLocation}: User ${userId} successfully marked AI segmentation mask ${segmentationMaskId} as saved. DB status updated.`);
         return res.status(200).json({
             success: true,
-            message: "NIfTI segmentation exported successfully.",
-            projectId: project._id,
-            projectName: project.name,
-            exportPackageUrl: presignedExportUrl,
-            exportPackageUrlExpiresAt: Date.now() + (3600 * 1000),
-            exportContentType: "application/gzip" 
+            message: "AI Segmentation mask marked as saved successfully.",
+            segmentation: segmentationDbUpdateResult.projectsegmentationmask
         });
-
     } catch (error) {
-        LogError(error as Error, serviceLocationExport, `Error exporting NIfTI segmentation for project ${projectId}`);
-        return res.status(500).json({
-            success: false,
-            message: "An unexpected error occurred while exporting NIfTI segmentation."
-        });
-    } finally {
-        if (await fs.pathExists(baseTempDir)) {
-            logger.info(`${serviceLocationExport}: Cleaning up temporary export directory ${baseTempDir} for project ${projectId}`);
-            await fs.remove(baseTempDir);
+        const segmentationMaskIdBody = req.body?.segmentationMaskId || "unknown";
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        LogError(error instanceof Error ? error : new Error(errorMessage), serviceLocation, `Error marking AI segmentation mask as saved: ${segmentationMaskIdBody}`);
+        return res.status(500).json({ success: false, message: "An unexpected error occurred while saving the AI segmentation." });
+    }
+}
+);
+
+function mergeFramesData(
+    existingFrames: IProjectSegmentationMaskDocument['frames'] | undefined,
+    requestedFramesPayload: IProjectSegmentationMaskDocument['frames']
+): IProjectSegmentationMaskDocument['frames'] {
+    const baseFrames = existingFrames ? JSON.parse(JSON.stringify(existingFrames)) : [];
+    const framesMap = new Map<number, IProjectSegmentationMaskDocument['frames'][0]>();
+
+    for (const frame of baseFrames) {
+        framesMap.set(frame.frameindex, frame);
+    }
+
+    for (const reqFrame of requestedFramesPayload) {
+        let dbFrame = framesMap.get(reqFrame.frameindex);
+
+        if (!dbFrame) {
+            framesMap.set(reqFrame.frameindex, JSON.parse(JSON.stringify(reqFrame)));
+            continue;
+        }
+
+        if (reqFrame.frameinferred !== undefined) {
+            dbFrame.frameinferred = reqFrame.frameinferred;
+        }
+
+        if (reqFrame.slices !== undefined) {
+            const slicesMap = new Map<number, IProjectSegmentationMaskDocument['frames'][0]['slices'][0]>();
+            const currentSlicesOfDbFrame = Array.isArray(dbFrame.slices) ? dbFrame.slices : [];
+            for (const slice of currentSlicesOfDbFrame) {
+                slicesMap.set(slice.sliceindex, slice);
+            }
+
+            for (const reqSlice of reqFrame.slices) {
+                let dbSlice = slicesMap.get(reqSlice.sliceindex);
+                if (dbSlice) {
+                    if (reqSlice.componentboundingboxes !== undefined) {
+                        dbSlice.componentboundingboxes = JSON.parse(JSON.stringify(reqSlice.componentboundingboxes));
+                    }
+                    if (reqSlice.segmentationmasks !== undefined) {
+                        dbSlice.segmentationmasks = JSON.parse(JSON.stringify(reqSlice.segmentationmasks));
+                    }
+                } else {
+                    slicesMap.set(reqSlice.sliceindex, JSON.parse(JSON.stringify(reqSlice)));
+                }
+            }
+            dbFrame.slices = Array.from(slicesMap.values()).sort((a, b) => a.sliceindex - b.sliceindex);
         }
     }
-});
+    return Array.from(framesMap.values()).sort((a, b) => a.frameindex - b.frameindex);
+}
+
+router.put("/save-manual-segmentation/:projectId",
+    isAuthAndNotGuest,
+    async (req: Request, res: Response) => {
+        const { projectId } = req.params;
+        const userId = (req.user as any)?._id;
+        const { name, description, frames: framesFromBody } = req.body as {
+            name?: string;
+            description?: string;
+            frames?: IProjectSegmentationMask['frames'];
+        };
+
+        logger.info(`${serviceLocation}: Received request to update manual segmentation for project ${projectId} by user ${userId}`);
+
+        if (!userId) {
+            logger.warn(`${serviceLocation}: Unauthorized attempt to save manual segmentation for project ${projectId}. User not found.`);
+            return res.status(401).json({ success: false, message: "Unauthorized. User not identified." });
+        }
+
+        if (!projectId) {
+            logger.warn(`${serviceLocation}: Project ID is required to update manual segmentation.`);
+            return res.status(400).json({ success: false, message: "Project ID is required." });
+        }
+
+        if (name === undefined && description === undefined && framesFromBody === undefined) {
+            logger.warn(`${serviceLocation}: Missing or empty segmentation data in request body for project ${projectId}.`);
+            return res.status(400).json({ success: false, message: "No updatable segmentation data provided in request body." });
+        }
+
+        try {
+            const masksResult = await readProjectSegmentationMask(projectId);
+
+            if (!masksResult.success || !masksResult.projectsegmentationmasks) {
+                if (masksResult.message?.includes("does not exist")) {
+                    logger.warn(`${serviceLocation}: Project ${projectId} not found when attempting to update manual segmentation.`);
+                    return res.status(404).json({ success: false, message: `Project ${projectId} not found.` });
+                }
+                logger.error(`${serviceLocation}: Error reading segmentation masks for project ${projectId}: ${masksResult.message}`);
+                return res.status(500).json({ success: false, message: masksResult.message || "Error finding segmentation masks." });
+            }
+
+            const editableMask = masksResult.projectsegmentationmasks.find(mask => !mask.isMedSAMOutput) as IProjectSegmentationMaskDocument | undefined;
+
+            if (!editableMask || !editableMask._id) {
+                logger.warn(`${serviceLocation}: No editable (isMedSAMOutput: false) segmentation mask found for project ${projectId}.`);
+                return res.status(404).json({ success: false, message: "No editable segmentation mask found for this project." });
+            }
+
+            logger.info(`${serviceLocation}: Found editable segmentation mask with ID ${editableMask._id} for project ${projectId}.`);
+
+            const updatePayload: Partial<IProjectSegmentationMaskDocument> = {
+                isSaved: true,
+            };
+
+            if (name !== undefined) {
+                updatePayload.name = name;
+            } else {
+                updatePayload.name = editableMask.name;
+            }
+
+            if (description !== undefined) {
+                updatePayload.description = description;
+            } else {
+                updatePayload.description = editableMask.description;
+            }
+
+            if (framesFromBody !== undefined) {
+                if (Array.isArray(framesFromBody)) {
+                    updatePayload.frames = mergeFramesData(editableMask.frames, framesFromBody);
+                } else {
+                    logger.warn(`${serviceLocation}: 'frames' provided in body but is not an array for project ${projectId}. Preserving existing frames.`);
+                    updatePayload.frames = editableMask.frames;
+                }
+            } else {
+                updatePayload.frames = editableMask.frames;
+            }
+
+            const segmentationDbUpdateResult = await updateProjectSegmentationMask(editableMask._id.toString(), updatePayload);
+
+            if (!segmentationDbUpdateResult.success || !segmentationDbUpdateResult.projectsegmentationmask) {
+                logger.error(`${serviceLocation}: Failed to update manual segmentation mask ${editableMask._id} in database. Message: ${segmentationDbUpdateResult.message}`);
+                return res.status(500).json({ success: false, message: segmentationDbUpdateResult.message || "Failed to update segmentation mask." });
+            }
+
+            logger.info(`${serviceLocation}: Successfully updated manual segmentation mask ${editableMask._id} for project ${projectId}.`);
+
+            const projectResult = await readProject(projectId, userId.toString());
+            if (projectResult.success && projectResult.projects && projectResult.projects.length > 0) {
+                const project = projectResult.projects[0];
+                if (!project.isSaved) {
+                    logger.info(`${serviceLocation}: Parent project ${projectId} is not saved. Updating its status to saved.`);
+                    const updateProjectResult = await updateProject(projectId, { isSaved: true });
+                    if (!updateProjectResult.success) {
+                        logger.warn(`${serviceLocation}: Failed to update project ${projectId} save status. Message: ${updateProjectResult.message}`);
+                    } else {
+                        logger.info(`${serviceLocation}: Parent project ${projectId} save status successfully updated to true.`);
+                    }
+                } else {
+                    logger.info(`${serviceLocation}: Parent project ${projectId} was already saved.`);
+                }
+            } else {
+                logger.warn(`${serviceLocation}: Could not find project ${projectId} to check/update save status after updating manual segmentation.`);
+            }
+
+            return res.status(200).json({
+                success: true,
+                message: "Manual segmentation updated and saved successfully.",
+                segmentation: segmentationDbUpdateResult.projectsegmentationmask
+            });
+
+        } catch (error: unknown) {
+            LogError(error instanceof Error ? error : new Error(String(error)), serviceLocation, `Error updating manual segmentation for project ${projectId}`);
+            if (!res.headersSent) {
+                res.status(500).json({ success: false, message: "An unexpected error occurred while updating manual segmentation." });
+            }
+        }
+    });
 
 export default router;
