@@ -210,7 +210,6 @@ export const startInference = async (projectId: string, user?: IUserSafe, gpuAut
     }
 };
 
-
 // This function is for direct synchronous GPU prediction if needed, not used by the job-based startManualInference below.
 const getDirectGpuManualPrediction = async (
     inferenceData: {
