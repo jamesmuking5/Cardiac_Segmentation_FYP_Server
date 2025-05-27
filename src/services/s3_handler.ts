@@ -1,11 +1,12 @@
 // File: src/services/s3_handler.ts
 // Description: This module handles AWS S3 interactions, including uploading files, deleting objects, and extracting S3 keys from URLs.
 
-import { S3Client, PutObjectCommand, PutObjectCommandInput, DeleteObjectCommand } from "@aws-sdk/client-s3";
+import { S3Client, PutObjectCommand, PutObjectCommandInput, DeleteObjectCommand, GetObjectCommand, GetObjectCommandOutput } from "@aws-sdk/client-s3";
 import { projectModel } from "../services/database";
 import logger from "./logger"; // Import your logger
 import { ReadStream } from "fs";
 import fs from "fs";
+import { Readable } from "stream"; 
 
 const serviceLocation = "S3Handler";
 
@@ -247,3 +248,124 @@ export async function uploadSegMaskToS3(
     throw error;
   }
 }
+
+export const downloadFromS3 = async (bucketName: string, key: string, downloadPath: string): Promise<void> => {
+    if (!s3Client) {
+        logger.error(`${serviceLocation}: AWS S3 client is not configured. Cannot download from S3.`);
+        throw new Error("AWS S3 client is not configured.");
+    }
+    const getObjectParams = {
+        Bucket: bucketName,
+        Key: key,
+    };
+    try {
+        const command = new GetObjectCommand(getObjectParams);
+        const data: GetObjectCommandOutput = await s3Client.send(command);
+
+        if (data.Body instanceof Readable) {
+            // Explicitly type bodyStream as Readable after the instanceof check.
+            // This helps TypeScript understand it's a Node.js stream with pipe/on methods.
+            const bodyStream: Readable = data.Body;
+            const fileStream = fs.createWriteStream(downloadPath);
+
+            await new Promise<void>((resolve, reject) => {
+                // Handle errors from the S3 body stream
+                bodyStream.on("error", (err) => {
+                    logger.error(`S3Handler: Error from S3 body stream for key ${key}:`, err);
+                    // Attempt to destroy the file stream to prevent leaks or partial files
+                    if (!fileStream.destroyed) {
+                        // Pass the error to destroy to signal the cause
+                        fileStream.destroy(err instanceof Error ? err : new Error(String(err)));
+                    }
+                    reject(err);
+                });
+
+                // Handle errors on the file write stream
+                fileStream.on("error", (err) => {
+                    logger.error(`S3Handler: Error writing to file stream for ${downloadPath}:`, err);
+                    // The source stream (bodyStream) might still be flowing.
+                    // Node's pipe automatically handles unpiping on error/finish of the destination.
+                    reject(err);
+                });
+
+                fileStream.on("finish", () => {
+                    resolve();
+                });
+
+                bodyStream.pipe(fileStream);
+            });
+            logger.info(`S3Handler: File ${key} downloaded successfully to ${downloadPath}.`);
+        } else if (data.Body) {
+            // data.Body exists but is not a Node.js Readable stream
+            // (e.g., it might be a ReadableStream or Blob in a browser-like environment, though unlikely here)
+            const bodyType = Object.prototype.toString.call(data.Body);
+            logger.error(`S3Handler: S3 object body for ${key} is not a Node.js Readable stream. Actual type/class: ${bodyType}`);
+            throw new Error("S3 object body is not a Node.js Readable stream.");
+        } else {
+            throw new Error(`S3 object body is undefined for key ${key}.`);
+        }
+    } catch (error) {
+        logger.error(`S3Handler: Error downloading file ${key} from S3: ${error}`);
+        throw error;
+    }
+};
+export const uploadMaskToS3 = async (
+    fileStream: fs.ReadStream | Readable, // 1
+    userId: string,                       // 2
+    fileId: string,                       // 3
+    fileExtension: string,                // 4
+    s3KeyPrefix: string,                  // 5
+    suggestedFilename?: string            // 6 (optional)
+): Promise<string> => {
+    if (!s3Client) {
+        logger.error(`${serviceLocation}: AWS S3 client is not configured. Cannot upload mask to S3.`);
+        throw new Error("AWS S3 client is not configured.");
+    }
+    const bucketName = process.env.AWS_BUCKET_NAME; // This comes from your .env file
+    if (!bucketName) {
+        throw new Error("AWS_BUCKET_NAME environment variable is not set.");
+    }
+
+    // Define the S3 key prefix internally
+    const internalS3KeyPrefix = "seg_mask/"; 
+    // If you wanted to include userId: const internalS3KeyPrefix = `seg_mask/${userId}/`;
+
+    // Construct the full S3 key using the internal prefix
+    const s3Key = `${internalS3KeyPrefix}${fileId}${fileExtension}`;
+
+    const putObjectParams: PutObjectCommandInput = {
+        Bucket: bucketName,
+        Key: s3Key, 
+        Body: fileStream,
+        ContentType: fileExtension === '.tar.gz' ? 'application/gzip' 
+                     : (fileExtension === '.tar' ? 'application/x-tar' 
+                     : (fileExtension === '.nii.gz' ? 'application/gzip' 
+                     : 'application/octet-stream')),
+    };
+
+    if (suggestedFilename) {
+        const encodedFilename = encodeURIComponent(suggestedFilename).replace(/'/g, "%27");
+        putObjectParams.ContentDisposition = `attachment; filename*=UTF-8''${encodedFilename}`;
+    }
+    
+    try {
+        const command = new PutObjectCommand(putObjectParams);
+        await s3Client.send(command);
+        
+        const region = process.env.AWS_REGION || 'ap-southeast-1'; // AWS_REGION from .env
+        let fileUrl;
+        if (region === "us-east-1") {
+          fileUrl = `https://${bucketName}.s3.amazonaws.com/${s3Key}`;
+        } else {
+          fileUrl = `https://${bucketName}.s3.${region}.amazonaws.com/${s3Key}`;
+        }
+        logger.info(`S3Handler: File uploaded successfully to S3: ${fileUrl}`);
+        return fileUrl;
+    } catch (error) {
+        logger.error(`S3Handler: Error uploading file to S3 key ${s3Key}: ${error}`);
+        if (fileStream instanceof Readable && !fileStream.destroyed) {
+            fileStream.destroy();
+        }
+        throw error;
+    }
+};
