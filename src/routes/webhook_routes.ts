@@ -423,7 +423,7 @@ router.post("/gpu-callback", async (req: Request, res: Response) => {
 
                     // Now create the editable manual mask
                     const manualSegmentationSet: IProjectSegmentationMask = {
-                        _id: uuidv4(), // Generate a new unique ID for the manual mask
+                        // _id: uuidv4(), // REMOVE THIS LINE - Let Mongoose generate the ObjectId
                         projectid: projectId,
                         name: `Manual Edit - ${currentJob.segmentationName || `Job ${gpuJobId.substring(0, 8)}`}`,
                         description: `Editable manual segmentation, based on AI output from job ${gpuJobId}`,
