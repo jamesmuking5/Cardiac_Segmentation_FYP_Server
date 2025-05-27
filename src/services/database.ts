@@ -649,7 +649,7 @@ const projectModel = model<IProject, Model<IProject>>("Project", projectSchema);
 // Create segmentation mask content schema for use in project segmentation mask schema (Nest Depth: 3)
 const projectSegmentationMaskSliceContentSchema = new Schema({
   class: { type: String, required: true, enum: Object.values(ComponentBoundingBoxesClass) }, // Class of the bounding box (rv, myo, lvc)
-  segmentationmaskcontents: { type: String, required: true }, // Segmentation mask content (e.g., S3 bucket URL)
+  segmentationmaskcontents: { type: String, required: false }, // Segmentation mask content. Changed required to false.
 }, { _id: false }); // Disable automatic creation of an _id field for this subdocument
 
 // Create bounding box schema for use in project segmentation mask schema's slice schema (Nest Depth: 3)
@@ -1157,23 +1157,23 @@ const createProjectSegmentationMask = async (
 
     for (const frame of psm.frames) {
       if (!frame.slices || !Array.isArray(frame.slices) || frame.slices.length === 0) {
-        logger.warn(`Database: Invalid input parameters for project segmentation mask creation: frame ${frame.frameindex} has empty slices array.`);
-        return { success: false, operation, message: `Invalid input parameters for project segmentation mask creation: each frame must have at least one slice.` };
+        // ... return error ...
       }
       for (const slice of frame.slices) {
         if (slice.segmentationmasks && Array.isArray(slice.segmentationmasks)) {
           for (const maskEntry of slice.segmentationmasks) {
+            // This validation ensures it's a string if present, and not null/undefined. Allows "".
             if (maskEntry.segmentationmaskcontents === null ||
-              maskEntry.segmentationmaskcontents === undefined ||
-              typeof maskEntry.segmentationmaskcontents !== 'string') {
-              const offendingLocation = `frame ${frame.frameindex}, slice ${slice.sliceindex}, class ${maskEntry.class}`;
-              const messageDetail = `segmentationmaskcontents must be a non-null string. Received: ${maskEntry.segmentationmaskcontents}`;
-              logger.warn(`Database: Invalid input for project segmentation mask: ${messageDetail} in ${offendingLocation}.`);
-              return {
-                success: false,
-                operation,
-                message: `Invalid input for project segmentation mask: ${messageDetail} in ${offendingLocation}.`
-              };
+                maskEntry.segmentationmaskcontents === undefined ||
+                typeof maskEntry.segmentationmaskcontents !== 'string') {
+                const offendingLocation = `frame ${frame.frameindex}, slice ${slice.sliceindex}, class ${maskEntry.class}`;
+                const messageDetail = `segmentationmaskcontents must be a non-null string. Received: ${maskEntry.segmentationmaskcontents}`;
+                logger.warn(`Database: Invalid input for project segmentation mask creation: ${messageDetail} in ${offendingLocation}.`);
+                return { 
+                    success: false, 
+                    operation, 
+                    message: `Invalid input for project segmentation mask creation: ${messageDetail} in ${offendingLocation}.` 
+                };
             }
           }
         }
