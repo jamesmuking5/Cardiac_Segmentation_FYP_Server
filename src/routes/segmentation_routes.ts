@@ -2,7 +2,7 @@ import { Request, Response, Router } from "express";
 import logger from "../services/logger";
 import { startInference } from "../services/inference";
 import { injectGpuAuthToken } from "../middleware/gpuauthmiddleware";
-import { readProjectSegmentationMask, updateProjectSegmentationMask, updateProject, readProject, jobModel, userModel, JobStatus } from "../services/database";
+import { readProjectSegmentationMask, updateProjectSegmentationMask, updateProject, readProject, jobModel, userModel, JobStatus} from "../services/database";
 import { isAuth, isAuthAndAdmin, isAuthAndNotGuest } from "../services/passportjs";
 import LogError from "../utils/error_logger";
 import { ComponentBoundingBoxesClass, IProjectSegmentationMask } from "../types/database_types";
@@ -424,123 +424,129 @@ router.patch("/save-ai-segmentation", isAuthAndNotGuest, async (req: Request, re
   }
 );
 
-// Route to update RLE for a MANUAL segmentation mask and mark as saved (Unchanged)
-router.patch("/save-manual-segmentation", isAuthAndNotGuest, async (req: Request, res: Response) => {
-  try {
-    const { segmentationMaskId, frameIndex: frameIndexStr, sliceIndex: sliceIndexStr, componentClass, rleString } = req.body;
-    const userId = (req.user)?._id;
-    logger.info(`${serviceLocation}: Received request to save manual segmentation (RLE update) for mask ID ${segmentationMaskId} by user ${userId}. Slice: F${frameIndexStr}S${sliceIndexStr}, Class: ${componentClass}`);
-    if (!userId) {
-      logger.warn(`${serviceLocation}: Unauthorized attempt to save manual segmentation. User ID not found.`);
-      return res.status(401).json({ success: false, message: "Unauthorized. User ID not found." });
-    }
-    if (!segmentationMaskId) {
-      logger.warn(`${serviceLocation}: Missing segmentationMaskId for saving manual segmentation.`);
-      return res.status(400).json({ success: false, message: "Missing segmentationMaskId." });
-    }
-    if (frameIndexStr === undefined || sliceIndexStr === undefined || !componentClass || !rleString) {
-        logger.warn(`${serviceLocation}: Missing RLE update parameters for mask ${segmentationMaskId}. Required: frameIndex, sliceIndex, componentClass, rleString.`);
-        return res.status(400).json({ success: false, message: "Missing RLE update parameters (frameIndex, sliceIndex, componentClass, rleString)." });
-    }
-    const frameIndex = parseInt(frameIndexStr, 10);
-    const sliceIndex = parseInt(sliceIndexStr, 10);
-    if (isNaN(frameIndex) || isNaN(sliceIndex) || frameIndex < 0 || sliceIndex < 0) {
-        logger.warn(`${serviceLocation}: Invalid frameIndex or sliceIndex for mask ${segmentationMaskId}. Received F:${frameIndexStr}, S:${sliceIndexStr}`);
-        return res.status(400).json({ success: false, message: "Invalid frameIndex or sliceIndex. Must be non-negative numbers." });
-    }
-    if (!Object.values(ComponentBoundingBoxesClass).includes(componentClass as ComponentBoundingBoxesClass)) {
-        logger.warn(`${serviceLocation}: Invalid componentClass '${componentClass}' for mask ${segmentationMaskId}.`);
-        return res.status(400).json({ success: false, message: `Invalid componentClass. Must be one of: ${Object.values(ComponentBoundingBoxesClass).join(', ')}` });
-    }
-    if (typeof rleString !== 'string' || rleString.trim() === "") {
-        logger.warn(`${serviceLocation}: Invalid rleString for mask ${segmentationMaskId}. Must be a non-empty string.`);
-        return res.status(400).json({ success: false, message: "rleString must be a non-empty string." });
-    }
-    logger.debug(`${serviceLocation}: Reading segmentation mask ${segmentationMaskId} to verify type and get project ID.`);
-    const maskResult = await readProjectSegmentationMask(segmentationMaskId);
-    if (!maskResult.success || !maskResult.projectsegmentationmask) {
-      logger.warn(`${serviceLocation}: Segmentation mask ${segmentationMaskId} not found for saving manual RLE. Message: ${maskResult.message}`);
-      return res.status(404).json({ success: false, message: maskResult.message || "Segmentation mask not found." });
-    }
-    if (maskResult.projectsegmentationmask.isMedSAMOutput) {
-      logger.warn(`${serviceLocation}: Attempt to save RLE for AI segmentation mask ${segmentationMaskId} via manual route. User: ${userId}`);
-      return res.status(400).json({ success: false, message: "This endpoint is for saving manual segmentations. The provided mask ID corresponds to an AI-generated segmentation." });
-    }
-    const projectId = maskResult.projectsegmentationmask.projectid;
-    logger.info(`${serviceLocation}: Segmentation mask ${segmentationMaskId} (manual) belongs to project ${projectId}. Proceeding with RLE update.`);
-    let rleActuallyModified = false;
-    const updatedFrames = maskResult.projectsegmentationmask.frames.map(f => {
-        if (f.frameindex === frameIndex) {
-            let frameModified = false;
-            const updatedSlices = f.slices.map(s => {
-                if (s.sliceindex === sliceIndex) {
-                    let sliceModified = false;
-                    let componentFoundAndUpdated = false;
-                    let currentSegmentationMasks = s.segmentationmasks ? [...s.segmentationmasks] : [];
-                    currentSegmentationMasks = currentSegmentationMasks.map(sm => {
-                        if (sm.class === componentClass) {
-                            componentFoundAndUpdated = true;
-                            if (sm.segmentationmaskcontents !== rleString) {
-                                sliceModified = true; frameModified = true; rleActuallyModified = true;
-                                return { ...sm, segmentationmaskcontents: rleString };
-                            }
-                        }
-                        return sm;
-                    });
-                    if (!componentFoundAndUpdated) {
-                        currentSegmentationMasks.push({ class: componentClass as ComponentBoundingBoxesClass, segmentationmaskcontents: rleString });
-                        sliceModified = true; frameModified = true; rleActuallyModified = true;
-                    }
-                    return sliceModified ? { ...s, segmentationmasks: currentSegmentationMasks } : s;
+// Route to update an entire MANUAL segmentation mask by project ID
+router.put("/save-manual-segmentation/:projectId",
+    isAuthAndNotGuest,
+    async (req: Request, res: Response) => {
+        const { projectId } = req.params;
+        const userId = (req.user as any)?._id;
+        // Explicitly type the request body to what you expect (e.g., relevant fields from IProjectSegmentationMask)
+        // For instance, if you only expect 'name', 'description', and 'frames' from the client for this update:
+        const { name, description, frames } = req.body as {
+            name?: string;
+            description?: string;
+            frames?: IProjectSegmentationMask['frames']; // Use the type from IProjectSegmentationMask
+            // Add any other fields you expect and allow from the client
+        };
+
+        logger.info(`${serviceLocation}: Received request to update manual segmentation for project ${projectId} by user ${userId}`);
+
+        if (!userId) {
+            logger.warn(`${serviceLocation}: Unauthorized attempt to save manual segmentation for project ${projectId}. User not found.`);
+            return res.status(401).json({ success: false, message: "Unauthorized. User not identified." });
+        }
+
+        if (!projectId) {
+            logger.warn(`${serviceLocation}: Project ID is required to update manual segmentation.`);
+            return res.status(400).json({ success: false, message: "Project ID is required." });
+        }
+
+        // Basic validation for the presence of some updatable data
+        if (!name && !description && !frames) {
+            logger.warn(`${serviceLocation}: Missing or empty segmentation data in request body for project ${projectId}.`);
+            return res.status(400).json({ success: false, message: "No updatable segmentation data provided in request body." });
+        }
+
+        try {
+            // 1. Read all segmentation masks for the project
+            const masksResult = await readProjectSegmentationMask(projectId);
+
+            if (!masksResult.success || !masksResult.projectsegmentationmasks) {
+                if (masksResult.message?.includes("does not exist")) {
+                     logger.warn(`${serviceLocation}: Project ${projectId} not found when attempting to update manual segmentation.`);
+                    return res.status(404).json({ success: false, message: `Project ${projectId} not found.` });
                 }
-                return s;
+                logger.error(`${serviceLocation}: Error reading segmentation masks for project ${projectId}: ${masksResult.message}`);
+                return res.status(500).json({ success: false, message: masksResult.message || "Error finding segmentation masks." });
+            }
+
+            // 2. Find the editable mask (isMedSAMOutput: false)
+            const editableMask = masksResult.projectsegmentationmasks.find(mask => !mask.isMedSAMOutput);
+
+            if (!editableMask || !editableMask._id) {
+                logger.warn(`${serviceLocation}: No editable (isMedSAMOutput: false) segmentation mask found for project ${projectId}.`);
+                return res.status(404).json({ success: false, message: "No editable segmentation mask found for this project." });
+            }
+
+            logger.info(`${serviceLocation}: Found editable segmentation mask with ID ${editableMask._id} for project ${projectId}.`);
+
+            // 3. Prepare the update payload securely
+            const updatePayload: Partial<IProjectSegmentationMask> = {
+                // Fields directly from the existing mask (cannot be changed by this request)
+                projectid: editableMask.projectid, // Always use the existing projectid
+                isMedSAMOutput: false,             // Always enforce false
+                segmentationmaskRLE: editableMask.segmentationmaskRLE, // Preserve existing value
+
+                // Fields that can be updated from the request
+                isSaved: true, // Always mark as saved on update
+            };
+
+            // Conditionally add fields from request body if they are provided
+            if (name !== undefined) {
+                updatePayload.name = name;
+            }
+            if (description !== undefined) {
+                updatePayload.description = description;
+            }
+            if (frames !== undefined) {
+                // Add validation for frames structure if necessary
+                updatePayload.frames = frames;
+            }
+            // Any other allowed fields from req.body can be added here similarly.
+
+            // The _id of the document to update is editableMask._id, not from payload.
+
+            // 4. Update the editable mask
+            const segmentationDbUpdateResult = await updateProjectSegmentationMask(editableMask._id.toString(), updatePayload);
+
+            if (!segmentationDbUpdateResult.success || !segmentationDbUpdateResult.projectsegmentationmask) {
+                logger.error(`${serviceLocation}: Failed to update manual segmentation mask ${editableMask._id} in database. Message: ${segmentationDbUpdateResult.message}`);
+                return res.status(500).json({ success: false, message: segmentationDbUpdateResult.message || "Failed to update segmentation mask." });
+            }
+
+            logger.info(`${serviceLocation}: Successfully updated manual segmentation mask ${editableMask._id} for project ${projectId}.`);
+
+            // 5. Update the parent project's isSaved status
+            const projectResult = await readProject(projectId, userId.toString());
+            if (projectResult.success && projectResult.projects && projectResult.projects.length > 0) {
+                const project = projectResult.projects[0];
+                if (!project.isSaved) {
+                    logger.info(`${serviceLocation}: Parent project ${projectId} is not saved. Updating its status to saved.`);
+                    const updateProjectResult = await updateProject(projectId, { isSaved: true });
+                    if (!updateProjectResult.success) {
+                        logger.warn(`${serviceLocation}: Failed to update project ${projectId} save status. Message: ${updateProjectResult.message}`);
+                    } else {
+                        logger.info(`${serviceLocation}: Parent project ${projectId} save status successfully updated to true.`);
+                    }
+                } else {
+                    logger.info(`${serviceLocation}: Parent project ${projectId} was already saved.`);
+                }
+            } else {
+                logger.warn(`${serviceLocation}: Could not find project ${projectId} to check/update save status after updating manual segmentation.`);
+            }
+
+            return res.status(200).json({
+                success: true,
+                message: "Manual segmentation updated and saved successfully.",
+                segmentation: segmentationDbUpdateResult.projectsegmentationmask
             });
-            return frameModified ? { ...f, slices: updatedSlices } : f;
+
+        } catch (error: unknown) {
+            LogError(error instanceof Error ? error : new Error(String(error)), serviceLocation, `Error updating manual segmentation for project ${projectId}`);
+            if (!res.headersSent) {
+                res.status(500).json({ success: false, message: "An unexpected error occurred while updating manual segmentation." });
+            }
         }
-        return f;
     });
-    if (!rleActuallyModified) {
-        logger.info(`${serviceLocation}: RLE for mask ${segmentationMaskId}, F${frameIndex}S${sliceIndex}, Class ${componentClass} was not modified or added. Proceeding with save status update.`);
-    }
-    const updatePayload: any = { isSaved: true };
-    if (rleActuallyModified) { updatePayload.frames = updatedFrames; }
-    logger.debug(`${serviceLocation}: Updating manual segmentation mask ${segmentationMaskId} with RLE (if changed) and isSaved: true.`);
-    const segmentationDbUpdateResult = await updateProjectSegmentationMask(segmentationMaskId, updatePayload);
-    if (!segmentationDbUpdateResult.success || !segmentationDbUpdateResult.projectsegmentationmask) {
-      logger.error(`${serviceLocation}: Failed to update manual segmentation mask ${segmentationMaskId} in database. Message: ${segmentationDbUpdateResult.message}`);
-      return res.status(400).json({ success: false, message: segmentationDbUpdateResult.message || "Failed to update segmentation mask in database." });
-    }
-    logger.info(`${serviceLocation}: Successfully updated manual segmentation mask ${segmentationMaskId} (RLE & status) in DB.`);
-    logger.debug(`${serviceLocation}: Checking save status of parent project ${projectId} for manual segmentation mask ${segmentationMaskId}.`);
-    const projectResult = await readProject(projectId, userId.toString());
-    if (!projectResult.success || !projectResult.projects || projectResult.projects.length === 0) {
-      logger.warn(`${serviceLocation}: Could not find project ${projectId} to check/update save status after saving manual segmentation mask ${segmentationMaskId}.`);
-    } else {
-      const project = projectResult.projects[0];
-      if (!project.isSaved) {
-        logger.info(`${serviceLocation}: Parent project ${projectId} is not saved. Updating its status to saved.`);
-        const updateProjectResult = await updateProject(projectId, { isSaved: true });
-        if (!updateProjectResult.success) {
-          logger.warn(`${serviceLocation}: Failed to update project ${projectId} save status after manual segmentation save. Message: ${updateProjectResult.message}`);
-        } else {
-          logger.info(`${serviceLocation}: Parent project ${projectId} save status successfully updated to true.`);
-        }
-      } else {
-        logger.info(`${serviceLocation}: Parent project ${projectId} was already saved.`);
-      }
-    }
-    logger.info(`${serviceLocation}: User ${userId} successfully processed save request for manual segmentation (RLE update) for mask ${segmentationMaskId}. DB status updated.`);
-    return res.status(200).json({
-      success: true,
-      message: "Manual segmentation RLE updated and saved successfully.",
-      segmentation: segmentationDbUpdateResult.projectsegmentationmask
-    });
-  } catch (error) {
-    const segmentationMaskIdBody = req.body?.segmentationMaskId || "unknown";
-    const errorMessage = error instanceof Error ? error.message : String(error);
-    LogError(error instanceof Error ? error : new Error(errorMessage), serviceLocation, `Error saving manual segmentation (RLE update) for mask ID: ${segmentationMaskIdBody}`);
-    return res.status(500).json({ success: false, message: "An unexpected error occurred while saving the manual segmentation." });
-  }
-});
 
 export default router;
