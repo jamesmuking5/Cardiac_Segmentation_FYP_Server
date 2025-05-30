@@ -50,6 +50,7 @@ RUN mkdir -p /app/dist/python
 # Copy the Python scripts
 COPY src/python/extract_metadata.py /app/dist/python/
 COPY src/python/convert_to_jpeg.py /app/dist/python/
+COPY src/python/create_nifti_from_segmentations.py /app/dist/python/
 
 # Install Python dependencies for your scripts in a virtual environment
 COPY src/python/requirements.txt /app/dist/python/
