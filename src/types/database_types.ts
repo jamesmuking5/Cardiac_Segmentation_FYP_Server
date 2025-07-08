@@ -73,7 +73,8 @@ export interface IUserDocument extends IUser, Document {
  */
 export enum FileType {
     NIFTI = "application/octet-stream", // .nii (standard MIME for NIfTI files)
-    NIFTI_GZ = "application/x-gzip", // .nii.gz (standard MIME for gzip-compressed NIfTI files)
+    NIFTI_GZ = "application/gzip", // .nii.gz (standard MIME for gzip-compressed NIfTI files)
+    NIFTI_GZ_2 = "application/x-gzip", // .nii.gz alternate variant
     DICOM = "application/dicom", // .dcm (standard MIME for DICOM files)
 }
 
