@@ -32,96 +32,161 @@ interface AxiosErrorLike {
 }
 
 function isAxiosErrorLike(error: any): error is AxiosErrorLike {
-  return error && typeof error === 'object' && 'isAxiosError' in error;
+  return error && typeof error === "object" && "isAxiosError" in error;
 }
 
 // Returns if Cloud GPU is available
-router.get("/gpu-status",
-    injectGpuAuthToken,
-    async (req: Request, res: Response): Promise<void> => {
-        // Make authenticated request to the GPU server
-        try {
-            const fullAddress = `${GPU_SERVER_ADDRESS}/status/gpu`;
-            logger.info(`${serviceLocation}: Checking GPU status at ${fullAddress}`);
-            
-            const response = await axios.get(fullAddress, {
-                headers: {
-                    Authorization: `Bearer ${res.locals.gpuAuthToken}`,
-                },
-                timeout: 10000, // Add a 10-second timeout
-            });
-            
-            if (response.status === 200) {
-                logger.info(`${serviceLocation}: GPU is available`);
-                logger.info(`Response from GPU server: ${response}`);
-                res.status(200).json({
-                    message: "GPU is available.",
-                    status: "online",
-                    details: response.data
-                });
-            } else {
-                logger.warn(`${serviceLocation}: GPU returned non-200 status: ${response.status}`);
-                res.status(response.status).json({
-                    message: `GPU returned status ${response.status}`,
-                    status: "degraded",
-                    details: response.data
-                });
-            }
+router.get(
+  "/gpu-status",
+  injectGpuAuthToken,
+  async (req: Request, res: Response): Promise<void> => {
+    // Make authenticated request to the GPU server
+    try {
+      const fullAddress = `${GPU_SERVER_ADDRESS}/status/gpu`;
+      logger.info(`${serviceLocation}: Checking GPU status at ${fullAddress}`);
+
+      const response = await axios.get(fullAddress, {
+        headers: {
+          Authorization: `Bearer ${res.locals.gpuAuthToken}`,
+        },
+        timeout: 10000, // Add a 10-second timeout
+      });
+
+      if (response.status === 200) {
+        logger.info(`${serviceLocation}: GPU is available`);
+        logger.info(`Response from GPU server: ${response}`);
+        res.status(200).json({
+          message: "GPU is available.",
+          status: "online",
+          details: response.data,
+        });
+      } else {
+        logger.warn(
+          `${serviceLocation}: GPU returned non-200 status: ${response.status}`
+        );
+        res.status(response.status).json({
+          message: `GPU returned status ${response.status}`,
+          status: "degraded",
+          details: response.data,
+        });
+      }
+    } catch (error: any) {
+      // Use 'any' as the error type to avoid TypeScript issues
+      // Detailed error handling
+      let errorMessage = "GPU is not available.";
+      let statusCode = 503;
+      let errorDetails: Record<string, any> = {};
+
+      if (isAxiosErrorLike(error)) {
+        // Handle specific axios errors
+        if (error.code === "ECONNREFUSED") {
+          errorMessage =
+            "Connection to GPU server refused. The server may be down.";
+          logger.error(
+            `${serviceLocation}: Connection refused to GPU server at ${GPU_SERVER_ADDRESS}`
+          );
+          errorDetails = {
+            code: "ECONNREFUSED",
+            serverAddress: GPU_SERVER_ADDRESS,
+          };
+        } else if (error.code === "ETIMEDOUT") {
+          errorMessage =
+            "Connection to GPU server timed out. The server may be overloaded.";
+          logger.error(`${serviceLocation}: Connection timeout to GPU server`);
+          errorDetails = { code: "ETIMEDOUT" };
+        } else if (error.response) {
+          // The server responded with a status code outside of 2xx
+          statusCode = error.response.status;
+          errorMessage = `GPU server returned error: ${error.response.status}`;
+          logger.error(
+            `${serviceLocation}: GPU server returned error status ${error.response.status}`
+          );
+          errorDetails = {
+            status: error.response.status,
+            data: error.response.data,
+          };
+        } else {
+          // Something else happened while setting up the request
+          errorMessage =
+            error.message || "Unknown error occurred connecting to GPU server";
+          logger.error(
+            `${serviceLocation}: Request setup error: ${error.message}`
+          );
+          errorDetails = { code: error.code };
         }
-        catch (error: any) { // Use 'any' as the error type to avoid TypeScript issues
-            // Detailed error handling
-            let errorMessage = "GPU is not available.";
-            let statusCode = 503;
-            let errorDetails: Record<string, any> = {};
-            
-            if (isAxiosErrorLike(error)) {
-                // Handle specific axios errors
-                if (error.code === 'ECONNREFUSED') {
-                    errorMessage = "Connection to GPU server refused. The server may be down.";
-                    logger.error(`${serviceLocation}: Connection refused to GPU server at ${GPU_SERVER_ADDRESS}`);
-                    errorDetails = { code: 'ECONNREFUSED', serverAddress: GPU_SERVER_ADDRESS };
-                } 
-                else if (error.code === 'ETIMEDOUT') {
-                    errorMessage = "Connection to GPU server timed out. The server may be overloaded.";
-                    logger.error(`${serviceLocation}: Connection timeout to GPU server`);
-                    errorDetails = { code: 'ETIMEDOUT' };
-                }
-                else if (error.response) {
-                    // The server responded with a status code outside of 2xx
-                    statusCode = error.response.status;
-                    errorMessage = `GPU server returned error: ${error.response.status}`;
-                    logger.error(`${serviceLocation}: GPU server returned error status ${error.response.status}`);
-                    errorDetails = { 
-                        status: error.response.status,
-                        data: error.response.data
-                    };
-                } 
-                else {
-                    // Something else happened while setting up the request
-                    errorMessage = error.message || "Unknown error occurred connecting to GPU server";
-                    logger.error(`${serviceLocation}: Request setup error: ${error.message}`);
-                    errorDetails = { code: error.code };
-                }
-            } else if (error instanceof Error) {
-                // For standard Error objects
-                errorMessage = error.message || "Unknown error";
-                logger.error(`${serviceLocation}: Standard error: ${errorMessage}`);
-                errorDetails = { name: error.name };
-            } else {
-                // For any other type of error
-                errorMessage = String(error);
-                logger.error(`${serviceLocation}: Non-standard error: ${errorMessage}`);
-            }
-            
-            // Use the consistent serviceLocation for error logging
-            LogError(error, serviceLocation, `Error while checking GPU status: ${errorMessage}`);
-            
-            res.status(statusCode).json({
-                message: errorMessage,
-                status: "offline",
-                details: errorDetails
-            });
-        }
-    });
+      } else if (error instanceof Error) {
+        // For standard Error objects
+        errorMessage = error.message || "Unknown error";
+        logger.error(`${serviceLocation}: Standard error: ${errorMessage}`);
+        errorDetails = { name: error.name };
+      } else {
+        // For any other type of error
+        errorMessage = String(error);
+        logger.error(`${serviceLocation}: Non-standard error: ${errorMessage}`);
+      }
+
+      // Use the consistent serviceLocation for error logging
+      LogError(
+        error,
+        serviceLocation,
+        `Error while checking GPU status: ${errorMessage}`
+      );
+
+      res.status(statusCode).json({
+        message: errorMessage,
+        status: "offline",
+        details: errorDetails,
+      });
+    }
+  }
+);
+
+// This route should fetch the System status (RAM, CPU) of the GPU server
+router.get(
+  "/gpu-system-status",
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const fullAddress = `${GPU_SERVER_ADDRESS}/status/server`;
+      logger.info(
+        `${serviceLocation}: Fetching GPU system status from ${fullAddress}`
+      );
+
+      const response = await axios.get(fullAddress, {
+        timeout: 10000, // Add a 10-second timeout
+      });
+
+      if (response.status === 200) {
+        logger.info(
+          `${serviceLocation}: GPU system status fetched successfully`
+        );
+        res.status(200).json({
+          message: "GPU system status fetched successfully.",
+          status: "online",
+          details: response.data,
+        });
+      } else {
+        logger.warn(
+          `${serviceLocation}: GPU system status returned non-200 status: ${response.status}`
+        );
+        res.status(response.status).json({
+          message: `GPU system status returned status ${response.status}`,
+          status: "degraded",
+          details: response.data,
+        });
+      }
+    } catch (error: any) {
+      LogError(
+        error,
+        serviceLocation,
+        "Error while fetching GPU system status"
+      );
+      res.status(503).json({
+        message: "Failed to fetch GPU system status.",
+        status: "offline",
+        details: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+);
 
 export default router;
