@@ -36,12 +36,12 @@ function isAxiosErrorLike(error: any): error is AxiosErrorLike {
 }
 
 // Returns if Cloud GPU is available
-router.get("/gpu-sample-image",
+router.get("/gpu-status",
     injectGpuAuthToken,
     async (req: Request, res: Response): Promise<void> => {
         // Make authenticated request to the GPU server
         try {
-            const fullAddress = `${GPU_SERVER_ADDRESS}/inference/sample`;
+            const fullAddress = `${GPU_SERVER_ADDRESS}/status/gpu`;
             logger.info(`${serviceLocation}: Checking GPU status at ${fullAddress}`);
             
             const response = await axios.get(fullAddress, {
@@ -53,9 +53,11 @@ router.get("/gpu-sample-image",
             
             if (response.status === 200) {
                 logger.info(`${serviceLocation}: GPU is available`);
+                logger.info(`Response from GPU server: ${response}`);
                 res.status(200).json({
                     message: "GPU is available.",
-                    status: "online"
+                    status: "online",
+                    details: response.data
                 });
             } else {
                 logger.warn(`${serviceLocation}: GPU returned non-200 status: ${response.status}`);
