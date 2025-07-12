@@ -66,7 +66,7 @@ const configureSessionHandling = () => {
   // Retrieve user from database using stored ID
   passport.deserializeUser(async (id: string, done) => {
     try {
-      const result = await readUser({_id: id});
+      const result = await readUser({ _id: id });
 
       if (!result.success) {
         logger.warn(`${serviceLocation}: Deserialization failed for user ID: ${id}`);
@@ -122,4 +122,14 @@ const isAuthAndNotGuest = (req: Request, res: Response, next: NextFunction): voi
   res.status(403).json({ message: "Forbidden. Admin or regular user access required." });
 };
 
-export { isAuth, isAuthAndAdmin, isAuthAndNotGuest };
+/**
+ * Middleware to check if the user is a Guest only
+ */
+const isAuthandGuest = (req: Request, res: Response, next: NextFunction): void => {
+  if (req.isAuthenticated() && req.user.role === UserRole.Guest) {
+    return next();
+  }
+  res.status(403).json({ message: "Forbidden. Only Guest role allowed." });
+}
+
+export { isAuth, isAuthAndAdmin, isAuthAndNotGuest, isAuthandGuest };
