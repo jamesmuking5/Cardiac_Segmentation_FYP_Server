@@ -12,11 +12,14 @@ import logger from "./logger"; // Assuming Winston logger instance
 import LogError from "../utils/error_logger"; // Assuming custom error logging utility
 import crypto from "crypto"; // Used for generating unique JWT IDs (jti claim)
 import axios from "axios"; // For making HTTP requests to the GPU server
+import { readGPUHost } from "./database";
 
 // get GPU address from environment variables
 const GPU_SERVER_URL = process.env.GPU_SERVER_URL || "localhost"; // Default to localhost if not set
 const GPU_SERVER_PORT = process.env.GPU_SERVER_PORT || 80; // Default to 443 if not set
 const GPU_SERVER_SSL = process.env.GPU_SERVER_SSL === "true" ? true : false; // Convert to boolean
+
+// Get GPU address from Database
 
 // Construct the full address
 const GPU_SERVER_ADDRESS = `${GPU_SERVER_SSL ? "https" : "http"}://${GPU_SERVER_URL}:${GPU_SERVER_PORT}`;
@@ -177,10 +180,10 @@ async function checkGpuStatusOnInitialization(): Promise<void> {
             logger.info(`${serviceLocation}: GPU server is reachable and operational.`);
         }
     }
-    catch(error:unknown){
+    catch (error: unknown) {
         logger.warn(`${serviceLocation}: GPU server is not reachable or operational.`, { error });
     }
-    
+
 }
 
 /**
