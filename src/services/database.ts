@@ -14,6 +14,7 @@ const serviceLocation = "Database"; // Service location for error logging
 import { IUser, IUserDocument, IUserSafe, UserRole, CRUDOperation, UserCrudResult, IProjectDocument, IProjectSegmentationMaskDocument, segmentationSource } from "../types/database_types"; // Import the user types
 import { FileType, FileDataType, ComponentBoundingBoxesClass, IProject, IProjectSegmentationMask, ProjectCrudResult, ProjectSegmentationMaskCrudResult } from "../types/database_types"; // Import the project types
 import { JobStatus, IJob, IJobDocument, JobCrudResult } from "../types/database_types"; // Import the job types
+import { IGPUHost, IGPUHostDocument, GPUHostCrudResult } from "../types/database_types"; // Import the GPU host types
 
 // Load environment variables from .env file
 try {
@@ -52,6 +53,7 @@ const connectToDatabase = async (): Promise<void> => {
       logger.info(`Database: Already connected to ${DB_NAME}. Skipping connect call.`);
     }
     await createAdminUser();
+    await seedGPUHost(); // Seed the GPU host configuration based on env vars
   } catch (error: unknown) {
     LogError(error as Error, serviceLocation, `Error connecting to MongoDB database: ${DB_NAME} at ${DB_URI}`)
     throw new Error(`Error connecting to MongoDB: ${error}`);
@@ -311,7 +313,7 @@ const readUser = async (
 
 /**
  * Updates an existing user's record in the database.
- * The user to update is identified by their current `username`.
+ * The user to update is identified by their current `userid`.
  * The `updates` object specifies which fields to change. At least one valid field must be provided for an update to occur.
  * If `password` is provided, it will be hashed before saving.
  * Checks for uniqueness conflicts if `username`, `email`, or `phone` are being changed, ensuring the new value isn't already used by *another* user.
@@ -1164,16 +1166,16 @@ const createProjectSegmentationMask = async (
           for (const maskEntry of slice.segmentationmasks) {
             // This validation ensures it's a string if present, and not null/undefined. Allows "".
             if (maskEntry.segmentationmaskcontents === null ||
-                maskEntry.segmentationmaskcontents === undefined ||
-                typeof maskEntry.segmentationmaskcontents !== 'string') {
-                const offendingLocation = `frame ${frame.frameindex}, slice ${slice.sliceindex}, class ${maskEntry.class}`;
-                const messageDetail = `segmentationmaskcontents must be a non-null string. Received: ${maskEntry.segmentationmaskcontents}`;
-                logger.warn(`Database: Invalid input for project segmentation mask creation: ${messageDetail} in ${offendingLocation}.`);
-                return { 
-                    success: false, 
-                    operation, 
-                    message: `Invalid input for project segmentation mask creation: ${messageDetail} in ${offendingLocation}.` 
-                };
+              maskEntry.segmentationmaskcontents === undefined ||
+              typeof maskEntry.segmentationmaskcontents !== 'string') {
+              const offendingLocation = `frame ${frame.frameindex}, slice ${slice.sliceindex}, class ${maskEntry.class}`;
+              const messageDetail = `segmentationmaskcontents must be a non-null string. Received: ${maskEntry.segmentationmaskcontents}`;
+              logger.warn(`Database: Invalid input for project segmentation mask creation: ${messageDetail} in ${offendingLocation}.`);
+              return {
+                success: false,
+                operation,
+                message: `Invalid input for project segmentation mask creation: ${messageDetail} in ${offendingLocation}.`
+              };
             }
           }
         }
@@ -1464,7 +1466,135 @@ const deleteJob = async (uuid: string): Promise<JobCrudResult> => {
   }
 }
 
+// Administrative Tools section
+// GPU section 
+/**
+ * The GPU should only have one entry
+ */
+const gpuHostSchema = new mongoose.Schema({
+  host: { type: String, required: true, unique: true },
+  port: { type: Number, required: true },
+  isHTTPS: { type: Boolean, required: true, default: false }, // Defaults to HTTP
+  gpuServerAuthJwtSecret: { type: String, required: true, default: "change-this" }, // JWT secret for GPU server authentication
+  serverIdForGpuServer: { type: String, required: true, default: "default-server-id" }, // Server ID for GPU server
+  gpuServerIdentity: { type: String, required: true, default: "default-gpu-server-identity" }, // Identity of the GPU server
+  jwtRefreshInterval: { type: Number, required: true, default: 8 * 60 * 1000 }, // JWT refresh interval in seconds
+  jwtLifetimeSeconds: { type: Number, required: true, default: 10 * 60 }, // JWT lifetime in seconds
+  description: { type: String, required: false, default: "No description added." },
+  setBy: { type: String, required: true }, // The id of the admin who changed the GPU host
+}, { timestamps: true });
+// Singleton enforcement method - Only allow a single entry when a save (create new) is attempted
+// Only triggers if this.isNew is true, meaning it's a new document being created
+gpuHostSchema.pre('save', async function (next) {
+  if (this.isNew) {
+    const existingCount = await mongoose.model<IGPUHostDocument>('GPUHost').countDocuments({});
+    if (existingCount > 0) {
+      throw new Error('Only one GPU host configuration is allowed. Update the existing one instead.');
+    }
+  }
+  next();
+});
+const gpuHostModel = mongoose.model<IGPUHostDocument>('GPUHost', gpuHostSchema);
+
+// Seeding the GPU host configuration
+// Should only have one GPU host entry in the database
+/**
+ * Seeds a new GPU host configuration entry into the database based on environment variables.
+ * If entry already exists, nothing happens.
+ * This overrides the previous implementation which was using hardcoded environment variables.
+ * @async
+ * @function seedGPUHost
+ * @returns {Promise<void>} A promise that resolves when the GPU host configuration is seeded successfully or if it already exists.
+ * @throws {Error} If the admin user is not found or if there is an error during the seeding process.
+ */
+const seedGPUHost = async (): Promise<void> => {
+  try {
+    const existingGPUHost = await gpuHostModel.findOne({});
+    if (existingGPUHost) {
+      logger.info(`Database: GPU host configuration already exists. No need to create a new one.`);
+      return; // GPU host already exists, no need to create a new one
+    }
+    // Get admin ID from User Model
+    const adminUser = await userModel.findOne({ role: UserRole.Admin, username: 'admin' });
+    if (!adminUser) {
+      logger.error(`Database: Admin user not found. Cannot create GPU host configuration.`);
+      throw new Error('Admin user not found. Cannot create GPU host configuration.');
+    }
+    // Create a new GPU host configuration with default values
+    const newGpuHostConfig: IGPUHost = {
+      host: process.env.GPU_SERVER_URL || 'localhost',
+      port: parseInt(process.env.GPU_SERVER_PORT || '8000', 10),
+      isHTTPS: process.env.GPU_SERVER_SSL === 'true',
+      gpuServerAuthJwtSecret: process.env.GPU_SERVER_AUTH_JWT_SECRET || 'change-this',
+      serverIdForGpuServer: process.env.GPU_SERVER_ID_FOR_GPU_SERVER || 'default-server-id',
+      gpuServerIdentity: process.env.GPU_SERVER_IDENTITY || 'default-gpu-server-identity',
+      jwtRefreshInterval: parseInt(process.env.GPU_SERVER_JWT_REFRESH_INTERVAL || '480000', 10), // Default to 8 minutes
+      jwtLifetimeSeconds: parseInt(process.env.GPU_SERVER_JWT_LIFETIME_SECONDS || '600', 10), // Default to 10 minutes
+      description: 'Default GPU host configuration - change environment variables if required.',
+      setBy: String(adminUser._id) // This should be the ID of the admin who created the GPU host
+    };
+    const newGPUHost = new gpuHostModel(newGpuHostConfig);
+    await newGPUHost.save();
+    logger.info(`${serviceLocation}: GPU host configuration created successfully.`);
+  }
+  catch (error: unknown) {
+    LogError(error as Error, serviceLocation, `Error creating GPU host configuration.`);
+  }
+}
+
+// createGPUHost and deleteGPUHost is omitted as GPU host should only have one entry in the database.
+
+// GPU Host CRUD Function
+// readGPUHost
+const readGPUHost = async (): Promise<GPUHostCrudResult> => {
+  try {
+    const gpuHost = await gpuHostModel.findOne({});
+    if (!gpuHost) {
+      logger.warn(`Database: No GPU host configuration found.`);
+      return { success: false, operation: CRUDOperation.READ, message: "No GPU host configuration found." };
+    }
+    logger.info(`Database: GPU host configuration read successfully.`);
+    return { success: true, operation: CRUDOperation.READ, gpuHost: gpuHost }; // Return the GPU host configuration
+
+  }
+  catch (error: unknown) {
+    LogError(error as Error, serviceLocation, `Error reading GPU host configuration.`);
+    return { success: false, operation: CRUDOperation.READ, message: "Unknown error while reading GPU host configuration." };
+  }
+}
+
+const updateGPUHost = async (updates: Partial<IGPUHost>): Promise<GPUHostCrudResult> => {
+  try {
+    const gpuHost = await gpuHostModel.findOne({});
+    if (!gpuHost) {
+      logger.warn(`Database: No GPU host configuration found.`);
+      return { success: false, operation: CRUDOperation.UPDATE, message: "No GPU host configuration found." };
+    }
+    // Update the GPU host configuration with the provided updates
+    if (updates.host) gpuHost.host = updates.host;
+    if (updates.port) gpuHost.port = updates.port;
+    if (updates.isHTTPS !== undefined) gpuHost.isHTTPS = updates.isHTTPS; // Update HTTPS status
+    if (updates.gpuServerAuthJwtSecret) gpuHost.gpuServerAuthJwtSecret = updates.gpuServerAuthJwtSecret; // Update JWT secret
+    if (updates.serverIdForGpuServer) gpuHost.serverIdForGpuServer = updates.serverIdForGpuServer; // Update server ID
+    if (updates.gpuServerIdentity) gpuHost.gpuServerIdentity = updates.gpuServerIdentity; // Update GPU server identity
+    if (updates.jwtRefreshInterval) gpuHost.jwtRefreshInterval = updates.jwtRefreshInterval; // Update JWT refresh interval
+    if (updates.jwtLifetimeSeconds) gpuHost.jwtLifetimeSeconds = updates.jwtLifetimeSeconds; // Update JWT lifetime
+    if (updates.description) gpuHost.description = updates.description; // Update description
+    if (updates.setBy) gpuHost.setBy = updates.setBy; // Update setBy field
+
+    await gpuHost.save();
+    logger.info(`Database: GPU host configuration updated successfully.`);
+    return { success: true, operation: CRUDOperation.UPDATE, gpuHost: gpuHost }; // Return the updated GPU host configuration
+  }
+  catch (error: unknown) {
+    LogError(error as Error, serviceLocation, `Error updating GPU host configuration.`);
+    return { success: false, operation: CRUDOperation.UPDATE, message: "Unknown error while updating GPU host configuration." };
+  }
+}
 
 // Using ES modules instead of CommonJS which is module.exports = {connectToDatabase, User};
 // ONLY unit tests should use userModel, fileModel directly, otherwise use the created functions to create users/files.
-export { connectToDatabase, userModel, createUser, readUser, updateUser, deleteUser, authenticateUser, UserRole, IUser, IUserSafe, UserCrudResult, CRUDOperation, IUserDocument, IProject, IProjectSegmentationMask, projectModel, projectSegmentationMaskModel, createProject, readProject, updateProject, deleteProject, createProjectSegmentationMask, readProjectSegmentationMask, updateProjectSegmentationMask, deleteProjectSegmentationMask, jobModel, createJob, readJob, updateJob, deleteJob, JobStatus, IJob, IJobDocument, IProjectSegmentationMaskDocument, ProjectSegmentationMaskCrudResult, ProjectCrudResult };
+export {
+  connectToDatabase, userModel, createUser, readUser, updateUser, deleteUser, authenticateUser, UserRole, IUser, IUserSafe, UserCrudResult, CRUDOperation, IUserDocument, IProject, IProjectSegmentationMask, projectModel, projectSegmentationMaskModel, createProject, readProject, updateProject, deleteProject, createProjectSegmentationMask, readProjectSegmentationMask, updateProjectSegmentationMask, deleteProjectSegmentationMask, jobModel, createJob, readJob, updateJob, deleteJob, JobStatus, IJob, IJobDocument, IProjectSegmentationMaskDocument, ProjectSegmentationMaskCrudResult, ProjectCrudResult,
+  readGPUHost, updateGPUHost, seedGPUHost, gpuHostModel, GPUHostCrudResult, IGPUHost, IGPUHostDocument
+};
