@@ -55,7 +55,7 @@ router.post("/register",
   }
 );
 
-// Upgrade guest to registered user
+// Upgrade guest to registered user (tested)
 router.post("/register-from-guest",
   isAuthandGuest,
   validateFields, // Validate the fields for upgrade
