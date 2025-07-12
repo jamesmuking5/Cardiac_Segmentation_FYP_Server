@@ -9,6 +9,7 @@ import webhookRoute from '../routes/webhook_routes';
 import debugRoute from '../routes/debug_routes';
 import segmentationRoutes from '../routes/segmentation_routes';
 import gpuStatusRoute from '../routes/gpu_status';
+import adminToolsRoute from '../routes/admin_tools'
 import logger from './logger';
 import cors from 'cors';
 import path from 'path';
@@ -134,8 +135,11 @@ app.use('/segmentation', segmentationRoutes); // Mount the segmentation routes
 // Status Routes (mount under '/status')
 app.use('/status', gpuStatusRoute); // Mount GPU status routes
 
+// Admin Tool Routes
+app.use('adminTools', adminToolsRoute);
+
 // Configure static file serving
-const configureStaticFiles = () => {
+const configureStaticFiles = (): void => {
   // Define base paths
   const publicDir = path.join(__dirname, '../../public');
   const publicAssetsDir = path.join(__dirname, '../../public/assets');
@@ -154,7 +158,7 @@ const configureStaticFiles = () => {
 
   // Serve static files from the 'public' directory
   app.use(express.static(publicDir, staticOptions));
-  
+
   // Serve assets with specific route
   app.use('/assets', express.static(publicAssetsDir, staticOptions));
 
