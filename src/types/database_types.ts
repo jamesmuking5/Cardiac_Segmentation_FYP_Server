@@ -401,7 +401,7 @@ export interface IGPUHost {
     gpuServerIdentity: string; // The identifier representing the intended recipient (audience) of the generated JWTs, which is the GPU/FastAPI server itself. Used in the 'audience' (`aud`) claim.
     jwtRefreshInterval: number; // The interval in milliseconds at which the JWT should be refreshed
     jwtLifetimeSeconds: number; // The lifetime of the JWT in seconds
-    description: string; // A description of the GPU host configuration
+    description?: string; // A description of the GPU host configuration
     setBy: string; // The user id of the person who last changed the GPU host configuration
 }
 export interface IGPUHostDocument extends IGPUHost, Document {

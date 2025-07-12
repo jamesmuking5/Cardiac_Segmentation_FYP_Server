@@ -1544,6 +1544,28 @@ const seedGPUHost = async (): Promise<void> => {
 
 // createGPUHost and deleteGPUHost is omitted as GPU host should only have one entry in the database.
 
+// Helper function to validate the hostname format (can be IP addresses or domain or localhost)
+const isValidIpOrDomain = (ip: string): boolean => {
+  if (typeof ip !== 'string' || ip === '') {
+    return false;
+  }
+  
+  // Special Case
+  if (ip === "localhost") return true;
+
+  // RegEx for IPv4 and IPv6
+  const ipv4Regex = /^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$/;
+  if (ipv4Regex.test(ip)) return true;
+  const ipv6Regex = /^(([0-9a-fA-F]{1,4}:){7,7}[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,7}:|([0-9a-fA-F]{1,4}:){1,6}:[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,5}(:[0-9a-fA-F]{1,4}){1,2}|([0-9a-fA-F]{1,4}:){1,4}(:[0-9a-fA-F]{1,4}){1,3}|([0-9a-fA-F]{1,4}:){1,3}(:[0-9a-fA-F]{1,4}){1,4}|([0-9a-fA-F]{1,4}:){1,2}(:[0-9a-fA-F]{1,4}){1,5}|[0-9a-fA-F]{1,4}:((:[0-9a-fA-F]{1,4}){1,6})|:((:[0-9a-fA-F]{1,4}){1,7}|:)|fe80:(:[0-9a-fA-F]{0,4}){0,4}%[0-9a-zA-Z]{1,}|::(ffff(:0{1,4}){0,1}:){0,1}((25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])\.){3,3}(25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])|([0-9a-fA-F]{1,4}:){1,4}:((25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])\.){3,3}(25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9]))$/i;
+  if (ipv6Regex.test(ip)) return true;
+
+  // RegEx for Domain Name
+  const domainNameRegex = /^((?!-)[A-Za-z0-9-]{1,63}(?<!-)\.)+[A-Za-z]{2,6}$/;
+  if (domainNameRegex.test(ip)) return true;
+
+  return false;
+}
+
 // GPU Host CRUD Function
 // readGPUHost
 const readGPUHost = async (): Promise<GPUHostCrudResult> => {
@@ -1570,8 +1592,24 @@ const updateGPUHost = async (updates: Partial<IGPUHost>): Promise<GPUHostCrudRes
       logger.warn(`Database: No GPU host configuration found.`);
       return { success: false, operation: CRUDOperation.UPDATE, message: "No GPU host configuration found." };
     }
+    // Validation
+    if (updates.host && !isValidIpOrDomain(updates.host.trim())) {
+      return { success: false, operation: CRUDOperation.UPDATE, message: "Invalid host format" };
+    }
+
+    if (updates.port && (typeof updates.port !== 'number' || updates.port < 1 || updates.port > 65535)) {
+      return { success: false, operation: CRUDOperation.UPDATE, message: "Port must be between 1 and 65535" };
+    }
+
+    if (updates.jwtRefreshInterval && (typeof updates.jwtRefreshInterval !== 'number' || updates.jwtRefreshInterval < 60000)) {
+      return { success: false, operation: CRUDOperation.UPDATE, message: "JWT refresh interval must be at least 60 seconds" };
+    }
+
+    if (updates.jwtLifetimeSeconds && (typeof updates.jwtLifetimeSeconds !== 'number' || updates.jwtLifetimeSeconds < 60)) {
+      return { success: false, operation: CRUDOperation.UPDATE, message: "JWT lifetime must be at least 60 seconds" };
+    }
     // Update the GPU host configuration with the provided updates
-    if (updates.host) gpuHost.host = updates.host;
+    if (updates.host) gpuHost.host = updates.host.trim();
     if (updates.port) gpuHost.port = updates.port;
     if (updates.isHTTPS !== undefined) gpuHost.isHTTPS = updates.isHTTPS; // Update HTTPS status
     if (updates.gpuServerAuthJwtSecret) gpuHost.gpuServerAuthJwtSecret = updates.gpuServerAuthJwtSecret; // Update JWT secret
