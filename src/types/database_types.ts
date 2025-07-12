@@ -249,7 +249,7 @@ export interface IProjectSegmentationMask {
 // Segmentation Mask Model Interface (single segmentation mask document in the database)
 export interface IProjectSegmentationMaskDocument extends IProjectSegmentationMask, Document {
     _id: any; // Ensure _id is part of the document type
- }
+}
 
 /*==================================== Project Section ends here =============================================*/
 /*==================================== Job Queue Section starts here =========================================*/
@@ -376,3 +376,46 @@ export interface JobCrudResult {
     jobs?: IJobDocument[]; // Array of job documents (applicable for READ operation)
     message?: string; // Message if error/warning occurred (applicable for all operations)
 }
+
+/*==================================== Job Queue Section ends here ===========================================*/
+
+/*===================================== Administrative Tool Section begins here =============================================*/
+/*===================================== GPU Section begins here =============================================*/
+
+/**
+ * Represents a GPU host configuration for connecting to a remote GPU server.
+ * 
+ * @interface IGPUHost
+ * @property {string} host - The hostname or IP address of the GPU server.
+ * @property {number} port - The port number on which the GPU server is running.
+ * @property {boolean} [isHTTPS] - Optional flag to indicate if the connection should use HTTPS (default is false).
+ * @property {string} description - A description of the GPU host configuration.
+ * @property {string} changedBy - The user id of the person who last changed the GPU host configuration.
+ */
+export interface IGPUHost {
+    host: string; // The hostname or IP address of the GPU server
+    port: number; // The port number on which the GPU server is running
+    isHTTPS?: boolean; // Optional flag to indicate if the connection should use HTTPS (default is false)
+    gpuServerAuthJwtSecret: string; // JWT secret for authenticating with the GPU server
+    serverIdForGpuServer: string; // The identifier for this Node.js server instance/service. Used as the 'subject' (`sub`) and 'issuer' (`iss`) claims within the generated JWT to identify who the token represents and who issued it.
+    gpuServerIdentity: string; // The identifier representing the intended recipient (audience) of the generated JWTs, which is the GPU/FastAPI server itself. Used in the 'audience' (`aud`) claim.
+    jwtRefreshInterval: number; // The interval in milliseconds at which the JWT should be refreshed
+    jwtLifetimeSeconds: number; // The lifetime of the JWT in seconds
+    description: string; // A description of the GPU host configuration
+    setBy: string; // The user id of the person who last changed the GPU host configuration
+}
+export interface IGPUHostDocument extends IGPUHost, Document {
+    createdAt: Date; // Creation date of the GPU host configuration, commented out if extended
+    updatedAt: Date; // Last update date of the GPU host configuration, commented out if extended
+}
+
+// Define result type for GPU host CRUD operations
+export interface GPUHostCrudResult {
+    success: boolean; // Indicates whether the operation was successful
+    operation: CRUDOperation; // The type of operation performed (CREATE, READ, UPDATE, DELETE)
+    gpuHost?: IGPUHostDocument; // The created or updated GPU host configuration (applicable for CREATE and UPDATE operations)
+    message?: string; // Message if error/warning occurred (applicable for all operations)
+}
+
+/*===================================== GPU Section ends here =============================================*/
+/*===================================== Administrative Tool Section ends here =============================================*/
