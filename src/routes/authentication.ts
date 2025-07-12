@@ -4,9 +4,9 @@
 import express, { Request, Response, NextFunction } from "express";
 import passport from "passport";
 import { IUser, IUserSafe, UserRole, createUser, readUser, updateUser, deleteUser, authenticateUser } from "../services/database"; // CRUD + Auth functions for User
-import { isAuth, isAuthAndAdmin, isAuthAndNotGuest } from "../services/passportjs"; // Import Passport.js middleware
+import { isAuth, isAuthAndAdmin, isAuthAndNotGuest, isAuthandGuest } from "../services/passportjs"; // Import Passport.js middleware
 import logger from "../services/logger"; // Import logger
-import { extractS3KeyFromUrl, deleteFromS3 } from "../services/s3_handler";
+// import { extractS3KeyFromUrl, deleteFromS3 } from "../services/s3_handler";
 import validateFields from "../utils/field_validation"; // Import reusable validation middleware
 import { validationResult } from 'express-validator'; // Import express-validator for input validation
 import { v4 as uuidv4 } from 'uuid'; // Import UUID for generating unique guest IDs
@@ -54,6 +54,65 @@ router.post("/register",
     }
   }
 );
+
+// Upgrade guest to registered user
+router.post("/register-from-guest",
+  isAuthandGuest,
+  validateFields, // Validate the fields for upgrade
+  (req: Request, res: Response, next: NextFunction): void => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      res.status(400).json({ register: false, errors: errors.array() });
+    } else {
+      next(); // Proceed to registration if validation passes
+    }
+  },
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const { username, password, email, phone } = req.body;
+      const guestUser = req.user;
+
+      if (!guestUser || !guestUser._id) {
+        logger.error(`${serviceLocation}: Guest user not found or missing ID.`);
+        res.status(400).json({ register: false, message: "Guest user not found." });
+        return;
+      }
+
+      // Update the guest entry with new details and change role to User
+      const updateData = {
+        username,
+        password,
+        email,
+        phone,
+        role: UserRole.User, // Change role to User
+      };
+      const result = await updateUser(guestUser._id, updateData);
+
+      // Check if the update was successful
+      if (!result.success) {
+        logger.error(`${serviceLocation}: Failed to upgrade guest user ${guestUser.username}: ${result.message}`);
+        res.status(400).json({ register: false, message: result.message });
+        return;
+      }
+
+      // If successful, return the updated user information
+      if (result.success && result.user) {
+        logger.info(`${serviceLocation}: Guest user ${guestUser.username} upgraded to registered user ${result.user.username}.`);
+        res.status(200).json({
+          register: true,
+          message: `Guest ${result.user?.username} upgraded to registered user successfully.`,
+          user: result.user,
+        });
+        return;
+      }
+
+    }
+    catch (error: unknown) {
+      logger.error(`${serviceLocation}: Error during guest upgrade: ${error}`);
+      res.status(500).json({ register: false, message: "Internal error during guest upgrade." });
+    }
+  }
+)
 
 router.post("/login",
   [validateFields[0], validateFields[1]],  // Username and password validation
