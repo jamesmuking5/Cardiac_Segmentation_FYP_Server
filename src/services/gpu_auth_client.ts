@@ -5,6 +5,7 @@
  * short-lived JWTs and automatically refreshing them.
  * This client acts on behalf of the Node.js server itself when
  * communicating with the GPU/FastAPI server.
+ * Configuration is loaded from database with fallback to environment variables.
  */
 
 import jwt from "jsonwebtoken";
@@ -12,17 +13,7 @@ import logger from "./logger"; // Assuming Winston logger instance
 import LogError from "../utils/error_logger"; // Assuming custom error logging utility
 import crypto from "crypto"; // Used for generating unique JWT IDs (jti claim)
 import axios from "axios"; // For making HTTP requests to the GPU server
-import { readGPUHost } from "./database";
-
-// get GPU address from environment variables
-const GPU_SERVER_URL = process.env.GPU_SERVER_URL || "localhost"; // Default to localhost if not set
-const GPU_SERVER_PORT = process.env.GPU_SERVER_PORT || 80; // Default to 443 if not set
-const GPU_SERVER_SSL = process.env.GPU_SERVER_SSL === "true" ? true : false; // Convert to boolean
-
-// Get GPU address from Database
-
-// Construct the full address
-const GPU_SERVER_ADDRESS = `${GPU_SERVER_SSL ? "https" : "http"}://${GPU_SERVER_URL}:${GPU_SERVER_PORT}`;
+import { readGPUHost } from "./database"; // Fetch latest GPU config from database
 
 /**
  * Service location identifier for logging purposes within this module.
@@ -30,51 +21,122 @@ const GPU_SERVER_ADDRESS = `${GPU_SERVER_SSL ? "https" : "http"}://${GPU_SERVER_
  */
 const serviceLocation = "API(GPU Authentication)";
 
-// --- Configuration loaded from Environment Variables ---
+/**
+ * Configuration object that holds all GPU server settings.
+ * This is populated from the database with fallbacks to environment variables.
+ */
+interface GPUConfig {
+    host: string;
+    port: number;
+    isHTTPS: boolean;
+    gpuServerAuthJwtSecret: string;
+    serverIdForGpuServer: string;
+    gpuServerIdentity: string;
+    jwtRefreshInterval: number;
+    jwtLifetimeSeconds: number;
+    fullAddress: string; // Computed property for the complete server URL
+}
 
 /**
- * The shared secret key used for signing JWTs (HS256) by this Node.js client
- * and verifying them by the GPU/FastAPI server.
- * **CRITICAL:** Must be kept secret and match the key used by the GPU server.
- * Loaded from `process.env.GPU_SERVER_AUTH_JWT_SECRET`.
- * @constant {string | undefined}
+ * Current GPU configuration loaded from database or environment variables.
+ * This variable is set during initialization and used throughout the module.
  */
-const GPU_SERVER_AUTH_JWT_SECRET = process.env.GPU_SERVER_AUTH_JWT_SECRET;
+let currentGPUConfig: GPUConfig | null = null;
 
 /**
- * The identifier for this Node.js server instance/service.
- * Used as the 'subject' (`sub`) and 'issuer' (`iss`) claims within the generated JWT
- * to identify who the token represents and who issued it.
- * Loaded from `process.env.SERVER_ID_FOR_GPU_SERVER`, defaults to "gpu_server_auth".
- * @constant {string}
+ * Loads GPU configuration from database with fallback to environment variables.
+ * This function prioritizes database settings and only falls back to environment
+ * variables if database fetch fails.
+ * 
+ * @async
+ * @function loadGPUConfig
+ * @returns {Promise<GPUConfig>} The loaded GPU configuration
+ * @throws {Error} If both database and environment variable loading fail
  */
-const SERVER_ID_FOR_GPU_SERVER = process.env.SERVER_ID_FOR_GPU_SERVER || "gpu_server_auth";
+async function loadGPUConfig(): Promise<GPUConfig> {
+    logger.info(`${serviceLocation}: Loading GPU configuration from database...`);
+
+    try {
+        // Try to load from database first
+        const dbResult = await readGPUHost();
+
+        if (dbResult.success && dbResult.gpuHost) {
+            const gpuHost = dbResult.gpuHost;
+            const protocol = gpuHost.isHTTPS ? 'https' : 'http';
+            const fullAddress = `${protocol}://${gpuHost.host}:${gpuHost.port}`;
+
+            const config: GPUConfig = {
+                host: gpuHost.host,
+                port: gpuHost.port,
+                isHTTPS: gpuHost.isHTTPS || false,
+                gpuServerAuthJwtSecret: gpuHost.gpuServerAuthJwtSecret,
+                serverIdForGpuServer: gpuHost.serverIdForGpuServer,
+                gpuServerIdentity: gpuHost.gpuServerIdentity,
+                jwtRefreshInterval: gpuHost.jwtRefreshInterval,
+                jwtLifetimeSeconds: gpuHost.jwtLifetimeSeconds,
+                fullAddress
+            };
+
+            logger.info(`${serviceLocation}: Successfully loaded GPU configuration from database`);
+            logger.info(`${serviceLocation}: GPU Server Address: ${fullAddress}`);
+            return config;
+        } else {
+            logger.warn(`${serviceLocation}: Failed to load GPU configuration from database: ${dbResult.message}`);
+            throw new Error(`Database configuration load failed: ${dbResult.message}`);
+        }
+    } catch (error: unknown) {
+        logger.warn(`${serviceLocation}: Database configuration load failed, falling back to environment variables`);
+        LogError(error as Error, serviceLocation, `Error fetching GPU configuration from database`);
+
+        // Fallback to environment variables
+        return loadConfigFromEnvironment();
+    }
+}
 
 /**
- * The identifier representing the intended recipient (audience) of the generated JWTs,
- * which is the GPU/FastAPI server itself. Used in the 'audience' (`aud`) claim.
- * The GPU server should verify this claim matches its own identity.
- * Loaded from `process.env.GPU_SERVER_IDENTITY`, defaults to "gpu_server_identity".
- * @constant {string}
+ * Loads GPU configuration from environment variables as a fallback.
+ * 
+ * @function loadConfigFromEnvironment
+ * @returns {GPUConfig} The configuration loaded from environment variables
+ * @throws {Error} If critical environment variables are missing
  */
-const GPU_SERVER_IDENTITY = process.env.GPU_SERVER_IDENTITY || "gpu_server_identity";
+function loadConfigFromEnvironment(): GPUConfig {
+    logger.info(`${serviceLocation}: Loading GPU configuration from environment variables (fallback)`);
 
-/**
- * Interval (in milliseconds) at which the JWT should be automatically regenerated
- * and stored, before the previous one expires. Set slightly shorter than the
- * token lifetime to ensure a valid token is usually available.
- * Defaults to 8 minutes.
- * @constant {number}
- */
-const JWT_REFRESH_INTERVAL_MS = 8 * 60 * 1000; // 8 minutes
+    // Load with defaults matching the database schema defaults
+    const host = process.env.GPU_SERVER_URL || 'localhost';
+    const port = parseInt(process.env.GPU_SERVER_PORT || '8000', 10);
+    const isHTTPS = process.env.GPU_SERVER_SSL === 'true';
+    const gpuServerAuthJwtSecret = process.env.GPU_SERVER_AUTH_JWT_SECRET || 'change-this';
+    const serverIdForGpuServer = process.env.SERVER_ID_FOR_GPU_SERVER || 'default-server-id';
+    const gpuServerIdentity = process.env.GPU_SERVER_IDENTITY || 'default-gpu-server-identity';
+    const jwtRefreshInterval = parseInt(process.env.GPU_SERVER_JWT_REFRESH_INTERVAL || '480000', 10); // 8 minutes
+    const jwtLifetimeSeconds = parseInt(process.env.GPU_SERVER_JWT_LIFETIME_SECONDS || '600', 10); // 10 minutes
 
-/**
- * The duration (in seconds) for which each generated JWT will be valid.
- * Corresponds to the `exp` (expiration time) claim in the JWT payload.
- * Defaults to 10 minutes.
- * @constant {number}
- */
-const JWT_LIFETIME_SECONDS = 10 * 60; // 10 minutes
+    // Validate critical configuration
+    if (!gpuServerAuthJwtSecret || gpuServerAuthJwtSecret === 'change-this') {
+        throw new Error("GPU_SERVER_AUTH_JWT_SECRET is not properly configured in environment variables");
+    }
+
+    const protocol = isHTTPS ? 'https' : 'http';
+    const fullAddress = `${protocol}://${host}:${port}`;
+
+    const config: GPUConfig = {
+        host,
+        port,
+        isHTTPS,
+        gpuServerAuthJwtSecret,
+        serverIdForGpuServer,
+        gpuServerIdentity,
+        jwtRefreshInterval,
+        jwtLifetimeSeconds,
+        fullAddress
+    };
+
+    logger.info(`${serviceLocation}: Successfully loaded GPU configuration from environment variables`);
+    logger.info(`${serviceLocation}: GPU Server Address: ${fullAddress}`);
+    return config;
+}
 
 // --- Module State ---
 
@@ -109,45 +171,47 @@ let refreshIntervalId: NodeJS.Timeout | null = null;
 /**
  * @function generateAndStoreJwt
  * @private
- * @description Generates a new JWT using the configured secret and identity,
+ * @description Generates a new JWT using the current GPU configuration,
  * signs it, and stores it along with its expiration time in the
  * module's state variables (`currentJwt`, `tokenExpiresAt`).
  * Logs success or errors encountered during generation.
- * @throws {Error} If essential environment variables (`GPU_SERVER_AUTH_JWT_SECRET`,
- * `SERVER_ID_FOR_GPU_SERVER`, `GPU_SERVER_IDENTITY`) are missing.
- * @throws {Error} If the `jwt.sign` operation fails.
+ * @throws {Error} If GPU configuration is not loaded or JWT generation fails.
  * @returns {void}
  */
 function generateAndStoreJwt(): void {
     // --- Validate configuration ---
-    if (!GPU_SERVER_AUTH_JWT_SECRET) {
-        // LogError is called in the catch block, throwing ensures immediate failure
-        throw new Error("GPU_SERVER_AUTH_JWT_SECRET is not defined in the environment variables.");
+    if (!currentGPUConfig) {
+        throw new Error("GPU configuration is not loaded. Call initAndRefreshAuth first.");
     }
-    if (!SERVER_ID_FOR_GPU_SERVER) {
-        throw new Error("SERVER_ID_FOR_GPU_SERVER is not defined in the environment variables.");
-    }
-    if (!GPU_SERVER_IDENTITY) {
-        throw new Error("GPU_SERVER_IDENTITY is not defined in the environment variables.");
+
+    const {
+        gpuServerAuthJwtSecret,
+        serverIdForGpuServer,
+        gpuServerIdentity,
+        jwtLifetimeSeconds
+    } = currentGPUConfig;
+
+    if (!gpuServerAuthJwtSecret || gpuServerAuthJwtSecret === 'change-this') {
+        throw new Error("GPU server JWT secret is not properly configured.");
     }
 
     try {
         // --- Calculate Timestamps ---
         const nowSeconds = Math.floor(Date.now() / 1000); // Current time in seconds
-        const expiresSeconds = nowSeconds + JWT_LIFETIME_SECONDS; // Expiration time in seconds
+        const expiresSeconds = nowSeconds + jwtLifetimeSeconds; // Expiration time in seconds
 
         // --- Define JWT Payload ---
         const payload = {
-            sub: SERVER_ID_FOR_GPU_SERVER, // Subject: Who this token represents
-            iss: SERVER_ID_FOR_GPU_SERVER, // Issuer: Who created this token
+            sub: serverIdForGpuServer, // Subject: Who this token represents
+            iss: serverIdForGpuServer, // Issuer: Who created this token
             iat: nowSeconds,             // Issued At: When the token was created
             exp: expiresSeconds,           // Expiration Time: When the token becomes invalid
-            aud: GPU_SERVER_IDENTITY,    // Audience: Who this token is intended for
+            aud: gpuServerIdentity,    // Audience: Who this token is intended for
             jti: crypto.randomBytes(16).toString('hex'), // JWT ID: Unique identifier for this specific token
         };
 
         // --- Sign the JWT ---
-        const newJwt = jwt.sign(payload, GPU_SERVER_AUTH_JWT_SECRET, {
+        const newJwt = jwt.sign(payload, gpuServerAuthJwtSecret, {
             algorithm: "HS256", // Specify the algorithm consistent with the secret type
         });
 
@@ -170,34 +234,45 @@ function generateAndStoreJwt(): void {
     }
 }
 
+/**
+ * Checks if the GPU server is reachable and operational during initialization.
+ * This function verifies connectivity without requiring authentication.
+ * 
+ * @async
+ * @function checkGpuStatusOnInitialization
+ * @returns {Promise<void>} Resolves when the check is complete (regardless of result)
+ */
 async function checkGpuStatusOnInitialization(): Promise<void> {
-    // This function is called to check the GPU status on initialization
-    // It can be used to verify if the GPU server is reachable and operational
-    try {
-        const fullAddress = `${GPU_SERVER_ADDRESS}/status/gpu`;
-        const response = await axios.get(fullAddress, { timeout: 10000, });// Add a 10-second timeout
-        if (response.status === 200) {
-            logger.info(`${serviceLocation}: GPU server is reachable and operational.`);
-        }
-    }
-    catch (error: unknown) {
-        logger.warn(`${serviceLocation}: GPU server is not reachable or operational.`, { error });
+    if (!currentGPUConfig) {
+        logger.warn(`${serviceLocation}: Cannot check GPU status - configuration not loaded`);
+        return;
     }
 
+    try {
+        const statusUrl = `${currentGPUConfig.fullAddress}/status/gpu`;
+        const response = await axios.get(statusUrl, { timeout: 10000 }); // Add a 10-second timeout
+
+        if (response.status === 200) {
+            logger.info(`${serviceLocation}: GPU server is reachable and operational at ${currentGPUConfig.fullAddress}`);
+        }
+    } catch (error: unknown) {
+        logger.warn(`${serviceLocation}: GPU server is not reachable or operational at ${currentGPUConfig.fullAddress}`, { error });
+    }
 }
 
 /**
  * @function initAndRefreshAuth
- * @description Initializes the GPU server authentication process. It performs
- * an immediate generation of the first JWT and then sets up a
- * `setInterval` timer to automatically regenerate the JWT based on
- * `JWT_REFRESH_INTERVAL_MS` before the old one expires.
+ * @description Initializes the GPU server authentication process. It loads the
+ * GPU configuration from database (with fallback to environment variables),
+ * performs an immediate generation of the first JWT and then sets up a
+ * `setInterval` timer to automatically regenerate the JWT based on the
+ * configured refresh interval before the old one expires.
  * This function should be called once during application startup.
- * @throws {Error} If the *initial* JWT generation fails (e.g., due to missing env vars),
+ * @throws {Error} If the configuration loading or initial JWT generation fails,
  * the error is re-thrown to potentially halt application startup.
- * @returns {void}
+ * @returns {Promise<void>}
  */
-function initAndRefreshAuth(): void {
+async function initAndRefreshAuth(): Promise<void> {
     // Ensure any previous interval is cleared if this function were ever called again
     if (refreshIntervalId) {
         clearInterval(refreshIntervalId);
@@ -205,11 +280,18 @@ function initAndRefreshAuth(): void {
     }
 
     logger.info(`${serviceLocation}: Initializing GPU server authentication and starting refresh timer.`);
+
     try {
+        // Load GPU configuration from database with fallback to environment variables
+        currentGPUConfig = await loadGPUConfig();
+
+        // Check GPU server status during initialization
+        await checkGpuStatusOnInitialization();
+
         // Generate the first token immediately. If this fails, an error will be thrown.
         generateAndStoreJwt();
 
-        // Schedule subsequent token refreshes
+        // Schedule subsequent token refreshes based on the configured interval
         refreshIntervalId = setInterval(() => {
             logger.info(`${serviceLocation}: Refreshing the JWT token for GPU server authentication.`);
             try {
@@ -221,13 +303,13 @@ function initAndRefreshAuth(): void {
                 logger.error(`${serviceLocation}: Failed to refresh JWT during scheduled interval:`, { error: refreshError });
                 LogError(refreshError as Error, serviceLocation, `Error refreshing JWT`);
             }
-        }, JWT_REFRESH_INTERVAL_MS); // Refresh based on the defined interval
+        }, currentGPUConfig.jwtRefreshInterval); // Refresh based on the configured interval
 
-        logger.info(`${serviceLocation}: JWT refresh scheduled every ${JWT_REFRESH_INTERVAL_MS / 1000 / 60} minutes.`);
+        logger.info(`${serviceLocation}: JWT refresh scheduled every ${currentGPUConfig.jwtRefreshInterval / 1000 / 60} minutes.`);
 
     } catch (initialError) {
-        // Log the critical failure during initial generation
-        logger.error(`${serviceLocation}: CRITICAL - Failed during initial JWT generation.`, { error: initialError });
+        // Log the critical failure during initial setup
+        logger.error(`${serviceLocation}: CRITICAL - Failed during initialization.`, { error: initialError });
         LogError(initialError as Error, serviceLocation, `Critical error - initializing GPU server authentication`);
         // Rethrow the error so the main application startup process knows initialization failed
         throw initialError;
@@ -263,6 +345,56 @@ function getCurrentToken(): string | null {
 }
 
 /**
+ * @function getGPUServerAddress
+ * @description Returns the full address (URL) of the configured GPU server.
+ * This is useful for making requests to the GPU server.
+ * @returns {string | null} The full GPU server address, or null if not configured.
+ */
+function getGPUServerAddress(): string | null {
+    return currentGPUConfig?.fullAddress || null;
+}
+
+/**
+ * @function reloadGPUConfig
+ * @description Reloads the GPU configuration from the database. This can be used
+ * to pick up configuration changes without restarting the application.
+ * The JWT refresh interval will be updated but existing tokens remain valid.
+ * @returns {Promise<void>}
+ * @throws {Error} If configuration loading fails
+ */
+async function reloadGPUConfig(): Promise<void> {
+    logger.info(`${serviceLocation}: Reloading GPU configuration...`);
+
+    try {
+        const newConfig = await loadGPUConfig();
+        currentGPUConfig = newConfig;
+
+        // Update the refresh interval if it has changed
+        if (refreshIntervalId && currentGPUConfig) {
+            clearInterval(refreshIntervalId);
+
+            refreshIntervalId = setInterval(() => {
+                logger.info(`${serviceLocation}: Refreshing the JWT token for GPU server authentication.`);
+                try {
+                    generateAndStoreJwt();
+                } catch (refreshError) {
+                    logger.error(`${serviceLocation}: Failed to refresh JWT during scheduled interval:`, { error: refreshError });
+                    LogError(refreshError as Error, serviceLocation, `Error refreshing JWT`);
+                }
+            }, currentGPUConfig.jwtRefreshInterval);
+
+            logger.info(`${serviceLocation}: JWT refresh interval updated to ${currentGPUConfig.jwtRefreshInterval / 1000 / 60} minutes.`);
+        }
+
+        logger.info(`${serviceLocation}: GPU configuration reloaded successfully`);
+    } catch (error: unknown) {
+        logger.error(`${serviceLocation}: Failed to reload GPU configuration`, { error });
+        LogError(error as Error, serviceLocation, `Error reloading GPU configuration`);
+        throw error;
+    }
+}
+
+/**
  * @function stopTokenRefresh
  * @description Clears the `setInterval` timer responsible for periodically refreshing
  * the JWT. This should be called during a graceful shutdown sequence of the
@@ -279,4 +411,11 @@ function stopTokenRefresh(): void {
 }
 
 // Export the public functions needed by the rest of the application
-export { initAndRefreshAuth, getCurrentToken, stopTokenRefresh, checkGpuStatusOnInitialization };
+export {
+    initAndRefreshAuth,
+    getCurrentToken,
+    getGPUServerAddress,
+    reloadGPUConfig,
+    stopTokenRefresh,
+    checkGpuStatusOnInitialization
+};
