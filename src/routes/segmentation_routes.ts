@@ -9,8 +9,7 @@ import {
     readProject,
     jobModel,
     userModel,
-    JobStatus,
-    createProjectSegmentationMask
+    JobStatus
 } from "../services/database";
 import { isAuth, isAuthAndAdmin, isAuthAndNotGuest } from "../services/passportjs";
 import LogError from "../utils/error_logger";
@@ -18,11 +17,10 @@ import { ComponentBoundingBoxesClass, IProjectSegmentationMask, IProjectDocument
 import fs from 'fs-extra'; // Use fs-extra for easier directory handling and tar extraction
 import path from 'path';
 import { exec } from 'child_process';
-import tar from 'tar'; // For extracting the JPEG tar
 import axios from 'axios'; // Simplified Axios import
 import { v4 as uuidv4 } from 'uuid';
 import { generatePresignedGetUrl } from "../utils/s3_presigned_url";
-import { extractS3KeyFromUrl, downloadFromS3, uploadToS3, uploadMaskToS3 } from "../services/s3_handler";
+import { extractS3KeyFromUrl, downloadFromS3, uploadMaskToS3 } from "../services/s3_handler";
 
 const router = Router();
 const serviceLocation = "SegmentationRoutes";
@@ -30,19 +28,15 @@ const serviceLocation = "SegmentationRoutes";
 interface GpuManualInferenceResponse {
     uuid: string;
     status: string;
-    result?: {
-        [imageName: string]: {
-            boxes: Array<{
-                bbox: number[];
-                confidence?: number;
-                class_id?: number;
-                class_name?: string;
-            }>;
-            masks: {
-                [className: string]: string;
-            };
-        };
-    };
+    result?: Record<string, {
+        boxes: {
+            bbox: number[];
+            confidence?: number;
+            class_id?: number;
+            class_name?: string;
+        }[];
+        masks: Record<string, string>;
+    }>;
     error?: string | null;
     message?: string;
 }
@@ -106,7 +100,7 @@ router.post("/start-manual-segmentation/:projectId",
     injectGpuAuthToken,
     async (req: Request, res: Response) => {
         const { projectId } = req.params;
-        const userId = (req.user as any)?._id;
+        const userId = req.user?._id;
         const {
             image_name,
             bbox,
@@ -279,7 +273,7 @@ router.post("/start-manual-segmentation/:projectId",
     });
 
 router.get("/user-check-jobs", isAuth, async (req: Request, res: Response) => {
-    const userId = (req.user as any)?._id;
+    const userId = req.user?._id;
     logger.info(`${serviceLocation}: Fetching all jobs for user ${req.user?.username}`);
     try {
         const jobs = await jobModel.find({ userid: userId }).sort({ createdAt: -1 }).limit(20);
@@ -305,7 +299,7 @@ router.get("/user-check-jobs", isAuth, async (req: Request, res: Response) => {
                 };
             })
         });
-    } catch (error: any) {
+    } catch (error: unknown) {
         LogError(error as Error, serviceLocation, `Error fetching jobs for user ${userId}`);
         return res.status(500).json({
             success: false,
@@ -327,7 +321,7 @@ router.get("/admin-check-all-jobs-status", isAuthAndAdmin, async (req: Request, 
         const jobs = await jobModel.find().sort({ createdAt: -1 }).skip(skip).limit(limit);
         const userIds = [...new Set(jobs.map(job => job.userid))];
         const users = await userModel.find({ _id: { $in: userIds } }).select('_id username');
-        const userMap: { [key: string]: string } = {};
+        const userMap: Record<string, string> = {};
         users.forEach(user => {
             userMap[String(user._id)] = user.username;
         });
@@ -354,8 +348,8 @@ router.get("/admin-check-all-jobs-status", isAuthAndAdmin, async (req: Request, 
                 message: job.message || ""
             }))
         });
-    } catch (error: any) {
-        LogError(error as Error, serviceLocation, `Admin error fetching all jobs: ${error.message}`);
+    } catch (error: unknown) {
+        LogError(error as Error, serviceLocation, `Admin error fetching all jobs: ${error instanceof Error ? error.message : String(error)}`);
         return res.status(500).json({
             success: false,
             message: "An error occurred while fetching all jobs"
@@ -434,7 +428,7 @@ function mergeFramesData(
     }
 
     for (const reqFrame of requestedFramesPayload) {
-        let dbFrame = framesMap.get(reqFrame.frameindex);
+        const dbFrame = framesMap.get(reqFrame.frameindex);
 
         if (!dbFrame) {
             framesMap.set(reqFrame.frameindex, JSON.parse(JSON.stringify(reqFrame)));
@@ -453,7 +447,7 @@ function mergeFramesData(
             }
 
             for (const reqSlice of reqFrame.slices) {
-                let dbSlice = slicesMap.get(reqSlice.sliceindex);
+                const dbSlice = slicesMap.get(reqSlice.sliceindex);
                 if (dbSlice) {
                     if (reqSlice.componentboundingboxes !== undefined) {
                         dbSlice.componentboundingboxes = JSON.parse(JSON.stringify(reqSlice.componentboundingboxes));
@@ -475,7 +469,7 @@ router.put("/save-manual-segmentation/:projectId",
     isAuthAndNotGuest,
     async (req: Request, res: Response) => {
         const { projectId } = req.params;
-        const userId = (req.user as any)?._id;
+        const userId = req.user?._id;
         const { name, description, frames: framesFromBody } = req.body as {
             name?: string;
             description?: string;
@@ -588,10 +582,10 @@ router.put("/save-manual-segmentation/:projectId",
         }
     });
 
-    // Route to export project data as a NIfTI segmentation mask
+// Route to export project data as a NIfTI segmentation mask
 router.get("/export-project-data/:projectId", isAuth, async (req: Request, res: Response) => {
     const { projectId } = req.params;
-    const userId = (req.user as any)?._id;
+    const userId = req.user?._id;
     const serviceLocationExport = `${serviceLocation}/exportProjectDataNifti`;
     const tempExportId = uuidv4();
     const baseTempDir = path.join(__dirname, '..', 'temp_exports', tempExportId);
@@ -620,8 +614,8 @@ router.get("/export-project-data/:projectId", isAuth, async (req: Request, res: 
             logger.error(`${serviceLocationExport}: Project ${projectId} is missing critical dimension data (width/height). Cannot proceed with NIfTI export.`);
             return res.status(500).json({ success: false, message: "Project is missing critical dimension data." });
         }
-        const planeHeightForRLE = project.dimensions.height; 
-        const planeWidthForRLE = project.dimensions.width;   
+        const planeHeightForRLE = project.dimensions.height;
+        const planeWidthForRLE = project.dimensions.width;
 
 
         // 2. Download Original NIfTI file (needed for header/affine by Python script)
@@ -640,7 +634,7 @@ router.get("/export-project-data/:projectId", isAuth, async (req: Request, res: 
 
         // 3. Read All Segmentation Masks and create segmentations.json
         const segmentationMasksResult = await readProjectSegmentationMask(projectId);
-        let segmentationsToProcess: IProjectSegmentationMask[] = []; 
+        let segmentationsToProcess: IProjectSegmentationMask[] = [];
         if (segmentationMasksResult.success && segmentationMasksResult.projectsegmentationmasks && segmentationMasksResult.projectsegmentationmasks.length > 0) {
             // Prioritize the mask that is NOT an AI output (manual/edited mask)
             const manualMask = segmentationMasksResult.projectsegmentationmasks.find(mask => mask.isMedSAMOutput === false);
@@ -664,17 +658,17 @@ router.get("/export-project-data/:projectId", isAuth, async (req: Request, res: 
 
         logger.info(`${serviceLocationExport}: Executing Python script: ${pythonCommand}`);
         await new Promise<void>((resolve, reject) => {
-            exec(pythonCommand, { maxBuffer: 1024 * 1024 * 20 }, (error, stdout, stderr) => { 
+            exec(pythonCommand, { maxBuffer: 1024 * 1024 * 20 }, (error, stdout, stderr) => {
                 if (error) {
                     logger.error(`${serviceLocationExport}: Python script error for project ${projectId}: ${stderr || error.message}`);
                     return reject(new Error(`NIfTI creation failed: ${stderr || error.message}`));
                 }
                 logger.info(`${serviceLocationExport}: Python script stdout for project ${projectId}: ${stdout}`);
                 if (stderr) logger.warn(`${serviceLocationExport}: Python script stderr for project ${projectId}: ${stderr}`);
-                
+
                 const niftiPathMatch = stdout.match(/NIFTI_FILE_PATH:(.*)/);
                 if (!niftiPathMatch || !niftiPathMatch[1] || !fs.existsSync(niftiPathMatch[1].trim())) {
-                     return reject(new Error(`Output NIfTI path not found in Python script output or file does not exist. Output: ${stdout}`));
+                    return reject(new Error(`Output NIfTI path not found in Python script output or file does not exist. Output: ${stdout}`));
                 }
                 resolve();
             });
@@ -684,11 +678,11 @@ router.get("/export-project-data/:projectId", isAuth, async (req: Request, res: 
         let baseExportName = project.name.replace(/[^a-zA-Z0-9_.-]+/g, '_');
         if (project.originalfilename) {
             const originalName = project.originalfilename;
-            let base = path.basename(originalName, path.extname(originalName)); 
-            if (originalName.toLowerCase().endsWith(".nii.gz")) { 
+            let base = path.basename(originalName, path.extname(originalName));
+            if (originalName.toLowerCase().endsWith(".nii.gz")) {
                 base = path.basename(originalName, ".nii.gz");
             }
-            baseExportName = base.replace(/[^a-zA-Z0-9_.-]+/g, '_'); 
+            baseExportName = base.replace(/[^a-zA-Z0-9_.-]+/g, '_');
         }
         const suggestedNiftiFilename = `${baseExportName}_segmentation.nii.gz`;
         logger.info(`${serviceLocationExport}: Suggested filename for export NIfTI: ${suggestedNiftiFilename}`);
@@ -713,7 +707,7 @@ router.get("/export-project-data/:projectId", isAuth, async (req: Request, res: 
         if (!finalS3Key) {
             throw new Error(`Could not extract S3 key from the uploaded export URL: ${exportS3Url}`);
         }
-        const presignedExportUrl = await generatePresignedGetUrl(s3BucketName!, finalS3Key, 3600); 
+        const presignedExportUrl = await generatePresignedGetUrl(s3BucketName!, finalS3Key, 3600);
 
         if (!presignedExportUrl) {
             throw new Error("Failed to generate presigned URL for the segmentation NIfTI.");
@@ -727,7 +721,7 @@ router.get("/export-project-data/:projectId", isAuth, async (req: Request, res: 
             projectName: project.name,
             exportPackageUrl: presignedExportUrl,
             exportPackageUrlExpiresAt: Date.now() + (3600 * 1000),
-            exportContentType: "application/gzip" 
+            exportContentType: "application/gzip"
         });
 
     } catch (error) {
