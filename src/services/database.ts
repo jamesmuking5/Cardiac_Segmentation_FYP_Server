@@ -48,6 +48,7 @@ const connectToDatabase = async (): Promise<void> => {
     // Added this for unit test to use the createAdminUser function without explicitly exposing it
     if (mongoose.connection.readyState !== 1) {
       await mongoose.connect(DB_URI);
+
       // Verify if connection is ready (to prevent race conditions with GPU configuration fetch)
       if (mongoose.connection.db) {
         await mongoose.connection.db.admin().ping();

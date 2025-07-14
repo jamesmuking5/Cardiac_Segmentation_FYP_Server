@@ -89,7 +89,9 @@ router.put("/upload-new-project",
 
 // Route to read/search projects (limited to id, name, filetype, daterange)
 router.get("/get-projects-list", isAuth, async (req: Request, res: Response) => {
-  const userId = (req.user as any)?._id;
+  const userId = req.user?._id;
+
+  logger.info(`${serviceLocation}: User ${req.user?.username} requested project list.`);
 
   const { projectid, name, filetype: filetypeParam, daterange: daterangeParam } = req.query;
 

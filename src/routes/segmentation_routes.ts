@@ -21,6 +21,7 @@ import axios from 'axios'; // Simplified Axios import
 import { v4 as uuidv4 } from 'uuid';
 import { generatePresignedGetUrl } from "../utils/s3_presigned_url";
 import { extractS3KeyFromUrl, downloadFromS3, uploadMaskToS3 } from "../services/s3_handler";
+import { getFreshGPUServerAddress } from "../services/gpu_auth_client"; // Import fresh GPU server address function
 
 const router = Router();
 const serviceLocation = "SegmentationRoutes";
@@ -154,13 +155,15 @@ router.post("/start-manual-segmentation/:projectId",
             logger.info(`${serviceLocation}: Generated presigned URL for project ${projectId}.`);
 
             const gpuRequestId = uuidv4();
-            const gpuHost = process.env.GPU_SERVER_URL;
-            const gpuPort = process.env.GPU_SERVER_PORT;
-            if (!gpuHost || !gpuPort) {
-                logger.error(`${serviceLocation}: GPU_SERVER_URL or GPU_SERVER_PORT environment variables are not set.`);
+
+            // Get fresh GPU server configuration from database
+            const gpuServerAddress = await getFreshGPUServerAddress();
+            if (!gpuServerAddress) {
+                logger.error(`${serviceLocation}: GPU server configuration is not available.`);
                 return res.status(500).json({ success: false, message: "Server configuration error: GPU server details missing." });
             }
-            const gpuServerUrl = `http://${gpuHost}:${gpuPort}/inference/v2/medsam-inference-manual`;
+
+            const gpuServerUrl = `${gpuServerAddress}/inference/v2/medsam-inference-manual`;
             logger.info(`${serviceLocation}: Sending request to GPU server ${gpuServerUrl} for image ${image_name} with UUID ${gpuRequestId}.`);
             const gpuServerPayload = { url: presignedUrl, uuid: gpuRequestId, image_name: image_name, bbox: bbox };
 

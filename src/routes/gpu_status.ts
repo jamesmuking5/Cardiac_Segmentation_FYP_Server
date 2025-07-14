@@ -5,7 +5,7 @@ import axios from "axios"; // Import axios for HTTP requests
 
 // Import the middleware to require GPU auth token
 import { injectGpuAuthToken } from "../middleware/gpuauthmiddleware";
-import { getGPUServerAddress } from "../services/gpu_auth_client"; // Import GPU server address function
+import { getFreshGPUServerAddress } from "../services/gpu_auth_client"; // Import fresh GPU server address function
 import LogError from "../utils/error_logger";
 import logger from "../services/logger";
 const router = express.Router();
@@ -35,7 +35,7 @@ router.get(
   async (req: Request, res: Response): Promise<void> => {
     // Make authenticated request to the GPU server
     try {
-      const serverAddress = getGPUServerAddress();
+      const serverAddress = await getFreshGPUServerAddress();
       if (!serverAddress) {
         logger.error(`${serviceLocation}: GPU server address is not configured`);
         res.status(503).json({
@@ -58,7 +58,7 @@ router.get(
 
       if (response.status === 200) {
         logger.info(`${serviceLocation}: GPU is available`);
-        logger.info(`Response from GPU server: ${response}`);
+        logger.info(`Response from GPU server: ${response.data}`);
         res.status(200).json({
           message: "GPU is available.",
           status: "online",
@@ -80,7 +80,7 @@ router.get(
       let statusCode = 503;
       let errorDetails: Record<string, unknown> = {};
 
-      const serverAddress = getGPUServerAddress();
+      const serverAddress = await getFreshGPUServerAddress();
 
       if (isAxiosErrorLike(error)) {
         // Handle specific axios errors
@@ -151,7 +151,7 @@ router.get(
   "/gpu-system-status",
   async (req: Request, res: Response): Promise<void> => {
     try {
-      const serverAddress = getGPUServerAddress();
+      const serverAddress = await getFreshGPUServerAddress();
       if (!serverAddress) {
         logger.error(`${serviceLocation}: GPU server address is not configured`);
         res.status(503).json({
