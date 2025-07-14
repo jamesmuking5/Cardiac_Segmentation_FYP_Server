@@ -48,11 +48,12 @@ const connectToDatabase = async (): Promise<void> => {
     // Added this for unit test to use the createAdminUser function without explicitly exposing it
     if (mongoose.connection.readyState !== 1) {
       await mongoose.connect(DB_URI);
-      logger.info(`${serviceLocation}: Connected to MongoDB database: ${DB_NAME} at ${DB_URI}`);
       // Verify if connection is ready (to prevent race conditions with GPU configuration fetch)
       if (mongoose.connection.db) {
         await mongoose.connection.db.admin().ping();
-        logger.info(`${serviceLocation}: MongoDB connection is ready for queries.`);
+        // Hide the database URI in production for security
+        const showDBURI = process.env.NODE_ENV === 'development' ? DB_URI : '"hidden due to production environment"';
+        logger.info(`${serviceLocation}: Connected to MongoDB database: ${DB_NAME} at ${showDBURI}`);
       } else {
         throw new Error("Database connection established but db object is undefined.");
       }
