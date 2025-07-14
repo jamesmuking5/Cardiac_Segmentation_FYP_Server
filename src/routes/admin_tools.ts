@@ -6,7 +6,7 @@
 import { Request, Response, Router } from "express";
 import { readGPUHost, updateGPUHost, IGPUHost } from "../services/database";
 import { isAuthAndAdmin } from "../services/passportjs";
-import { reloadGPUConfig, getGPUServerAddress } from "../services/gpu_auth_client"; // Import new functions
+import { reloadGPUConfig, getFreshGPUServerAddress } from "../services/gpu_auth_client"; // Import new functions
 import logger from "../services/logger";
 import LogError from "../utils/error_logger";
 import axios from "axios"; // For testing GPU server connection
@@ -223,7 +223,7 @@ router.post("/gpu-config/test-connection", isAuthAndAdmin, async (req: Request, 
       });
     }
 
-    const serverAddress = getGPUServerAddress();
+    const serverAddress = await getFreshGPUServerAddress();
     if (!serverAddress) {
       return res.status(400).json({
         success: false,

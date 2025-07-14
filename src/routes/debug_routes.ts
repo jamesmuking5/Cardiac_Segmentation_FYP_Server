@@ -1,6 +1,6 @@
 // DEBUG only - Strictly do not use in production
 import express, { Request, Response } from "express";
-import { getCurrentToken } from "../services/gpu_auth_client"; // Import the function to get the current token
+import { getCurrentToken, getFreshGPUServerAddress } from "../services/gpu_auth_client"; // Import the function to get the current token and fresh GPU address
 const router = express.Router();
 import logger from "../services/logger"; // Import the logger
 import LogError from "../utils/error_logger"; // Import the error logging utility
@@ -11,7 +11,7 @@ import { isAuth } from "../services/passportjs"; // Import the authentication mi
 import axios from "axios"; // Import axios for HTTP requests
 
 // fetch env variables
-const { HOST, PORT, NODE_ENV, GPU_SERVER_URL, GPU_SERVER_PORT, GPU_SERVER_SSL } = process.env; // Fetch environment variables for host and port
+const { PORT, NODE_ENV } = process.env; // Fetch environment variables for host and port
 
 const serviceLocation = "API (Debug Route)"; // Define a service location for logging
 
@@ -50,9 +50,15 @@ router.get('/start-bbox-inferencing', /*isAuth,*/ injectGpuAuthToken, async (req
     const callback_url = `${httpOrHttps}://192.168.0.2:${PORT}/gpu-webhook`; // Callback URL for the webhook
     // const callback_url = `https://webhook-test.com/618bf16792c7dd3f3c61fe1204de78cd`; // Debug webhook URL for testing   
 
-    const gpuHttpOrHttps = GPU_SERVER_SSL === "true" ? "https" : "http";
-    const GPU_SERVER_ADDRESS = `${gpuHttpOrHttps}://${GPU_SERVER_URL}:${GPU_SERVER_PORT}`; // Construct the full address
-    const fullAddress = `${GPU_SERVER_ADDRESS}/inference/v2/medsam-inference`; // Full address for the GPU server
+    // Get fresh GPU server configuration from database
+    const gpuServerAddress = await getFreshGPUServerAddress();
+    if (!gpuServerAddress) {
+        logger.error(`${serviceLocation}: GPU server configuration is not available.`);
+        res.status(500).json({ error: "GPU server configuration is not available." });
+        return;
+    }
+    
+    const fullAddress = `${gpuServerAddress}/inference/v2/medsam-inference`; // Full address for the GPU server
 
     // use axios to send a POST request to the GPU server with the job data
     try {

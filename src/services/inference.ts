@@ -9,12 +9,9 @@ import { createJob, IJob, JobStatus } from "../services/database";
 import axios from 'axios';
 import { generatePresignedGetUrl } from "../utils/s3_presigned_url";
 import { URL } from 'url'; 
+import { getFreshGPUServerAddress } from "./gpu_auth_client"; // Import fresh GPU server address function
 
 const serviceLocation = "Inference";
-const GPU_SERVER_SSL = process.env.GPU_SERVER_SSL === 'true' || false;
-const GPU_SERVER_URL = process.env.GPU_SERVER_URL;
-const GPU_SERVER_PORT = process.env.GPU_SERVER_PORT;
-const cloudGpuBaseUrl = `${GPU_SERVER_SSL ? 'https' : 'http'}://${GPU_SERVER_URL}${GPU_SERVER_PORT ? `:${GPU_SERVER_PORT}` : ''}`;
 
 // Interface for the expected GPU response for direct manual segmentation
 interface GpuManualPredictionResponseData {
@@ -37,9 +34,11 @@ interface GpuManualPredictionResponseData {
 }
 
 const sendInferenceRequestToCloudGpu = async (inferenceData: any, gpuAuthToken: string): Promise<{ success: boolean; jobId?: string; error?: string }> => {
+    // Get fresh GPU server configuration from database
+    const cloudGpuBaseUrl = await getFreshGPUServerAddress();
     if (!cloudGpuBaseUrl) {
         logger.info(`${serviceLocation}: Currently configured Cloud GPU URL: ${cloudGpuBaseUrl}`);
-        logger.error(`${serviceLocation}: GPU_SERVER_URL, GPU_SERVER_PORT and GPU_SERVER_SSL is not set in environment variables.`);
+        logger.error(`${serviceLocation}: GPU server configuration is not available from database.`);
         return { success: false, error: "Cloud GPU URL not configured." };
     }
 
@@ -232,6 +231,14 @@ const getDirectGpuManualPrediction = async (
     error?: string 
 }> => {
     const serviceLocationDirectGpu = `${serviceLocation}_DirectGpuManualPrediction`;
+    
+    // Get fresh GPU server configuration from database
+    const cloudGpuBaseUrl = await getFreshGPUServerAddress();
+    if (!cloudGpuBaseUrl) {
+        logger.error(`${serviceLocationDirectGpu}: GPU server configuration is not available from database.`);
+        return { success: false, error: "Cloud GPU URL not configured." };
+    }
+    
     const inferenceEndpoint = `${cloudGpuBaseUrl}/inference/v2/medsam-inference-manual`; 
 
     logger.info(`${serviceLocationDirectGpu}: Sending direct manual prediction request to ${inferenceEndpoint} for image ${inferenceData.image_name}, internal UUID ${inferenceData.uuid}`);
