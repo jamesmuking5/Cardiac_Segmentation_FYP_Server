@@ -6,8 +6,10 @@
 import { Request, Response, Router } from "express";
 import { readGPUHost, updateGPUHost, IGPUHost } from "../services/database";
 import { isAuthAndAdmin } from "../services/passportjs";
+import { reloadGPUConfig, getGPUServerAddress } from "../services/gpu_auth_client"; // Import new functions
 import logger from "../services/logger";
 import LogError from "../utils/error_logger";
+import axios from "axios"; // For testing GPU server connection
 
 const router = Router();
 const serviceLocation = "API (Admin Tools)";
@@ -17,17 +19,21 @@ router.get("/gpu-config", isAuthAndAdmin, async (req: Request, res: Response) =>
   try {
     const result = await readGPUHost();
     if (result.success && result.gpuHost) {
-      // Remove sensitive data before sending
+      // Remove sensitive JWT secret before sending, but include other JWT config
       const safeConfig = {
         host: result.gpuHost.host,
         port: result.gpuHost.port,
         isHTTPS: result.gpuHost.isHTTPS,
         description: result.gpuHost.description,
+        serverIdForGpuServer: result.gpuHost.serverIdForGpuServer,
+        gpuServerIdentity: result.gpuHost.gpuServerIdentity,
         jwtRefreshInterval: result.gpuHost.jwtRefreshInterval,
         jwtLifetimeSeconds: result.gpuHost.jwtLifetimeSeconds,
         createdAt: result.gpuHost.createdAt,
         updatedAt: result.gpuHost.updatedAt,
-        setBy: result.gpuHost.setBy
+        setBy: result.gpuHost.setBy,
+        // Note: gpuServerAuthJwtSecret is intentionally excluded for security
+        hasJwtSecret: !!(result.gpuHost.gpuServerAuthJwtSecret && result.gpuHost.gpuServerAuthJwtSecret !== 'change-this')
       };
 
       return res.status(200).json({
@@ -50,10 +56,21 @@ router.get("/gpu-config", isAuthAndAdmin, async (req: Request, res: Response) =>
 });
 
 // Update GPU configuration
-router.put("/gpu-config", isAuthAndAdmin, async (req: Request, res: Response) => {
+router.patch("/gpu-config", isAuthAndAdmin, async (req: Request, res: Response) => {
   try {
-    const { host, port, isHTTPS, description, jwtRefreshInterval, jwtLifetimeSeconds } = req.body;
-    const adminUserId = (req.user as any)?._id;
+    const {
+      host,
+      port,
+      isHTTPS,
+      description,
+      serverIdForGpuServer,
+      gpuServerIdentity,
+      gpuServerAuthJwtSecret,
+      jwtRefreshInterval,
+      jwtLifetimeSeconds
+    } = req.body;
+
+    const adminUserId = (req.user as { _id: string })?._id;
 
     if (!adminUserId) {
       return res.status(401).json({
@@ -74,6 +91,27 @@ router.put("/gpu-config", isAuthAndAdmin, async (req: Request, res: Response) =>
       return res.status(400).json({
         success: false,
         message: "Port must be between 1 and 65535"
+      });
+    }
+
+    if (serverIdForGpuServer && (typeof serverIdForGpuServer !== 'string' || serverIdForGpuServer.trim() === '')) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid server ID format"
+      });
+    }
+
+    if (gpuServerIdentity && (typeof gpuServerIdentity !== 'string' || gpuServerIdentity.trim() === '')) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid GPU server identity format"
+      });
+    }
+
+    if (gpuServerAuthJwtSecret && (typeof gpuServerAuthJwtSecret !== 'string' || gpuServerAuthJwtSecret.trim() === '' || gpuServerAuthJwtSecret === 'change-this')) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid JWT secret - must be a non-empty string and not default value"
       });
     }
 
@@ -99,6 +137,9 @@ router.put("/gpu-config", isAuthAndAdmin, async (req: Request, res: Response) =>
     if (port !== undefined) updates.port = port;
     if (isHTTPS !== undefined) updates.isHTTPS = isHTTPS;
     if (description !== undefined) updates.description = description;
+    if (serverIdForGpuServer) updates.serverIdForGpuServer = serverIdForGpuServer.trim();
+    if (gpuServerIdentity) updates.gpuServerIdentity = gpuServerIdentity.trim();
+    if (gpuServerAuthJwtSecret) updates.gpuServerAuthJwtSecret = gpuServerAuthJwtSecret.trim();
     if (jwtRefreshInterval !== undefined) updates.jwtRefreshInterval = jwtRefreshInterval;
     if (jwtLifetimeSeconds !== undefined) updates.jwtLifetimeSeconds = jwtLifetimeSeconds;
 
@@ -107,16 +148,19 @@ router.put("/gpu-config", isAuthAndAdmin, async (req: Request, res: Response) =>
     if (result.success && result.gpuHost) {
       logger.info(`Admin ${adminUserId} updated GPU configuration`);
 
-      // Remove sensitive data before sending
+      // Remove sensitive JWT secret before sending
       const safeConfig = {
         host: result.gpuHost.host,
         port: result.gpuHost.port,
         isHTTPS: result.gpuHost.isHTTPS,
         description: result.gpuHost.description,
+        serverIdForGpuServer: result.gpuHost.serverIdForGpuServer,
+        gpuServerIdentity: result.gpuHost.gpuServerIdentity,
         jwtRefreshInterval: result.gpuHost.jwtRefreshInterval,
         jwtLifetimeSeconds: result.gpuHost.jwtLifetimeSeconds,
         updatedAt: result.gpuHost.updatedAt,
-        setBy: result.gpuHost.setBy
+        setBy: result.gpuHost.setBy,
+        hasJwtSecret: !!(result.gpuHost.gpuServerAuthJwtSecret && result.gpuHost.gpuServerAuthJwtSecret !== 'change-this')
       };
 
       return res.status(200).json({
@@ -139,5 +183,91 @@ router.put("/gpu-config", isAuthAndAdmin, async (req: Request, res: Response) =>
   }
 });
 
+// Reload GPU configuration from database
+router.post("/gpu-config/reload", isAuthAndAdmin, async (req: Request, res: Response) => {
+  try {
+    const adminUserId = (req.user as { _id: string })?._id;
+
+    if (!adminUserId) {
+      return res.status(401).json({
+        success: false,
+        message: "Admin user ID not found"
+      });
+    }
+
+    await reloadGPUConfig();
+    logger.info(`Admin ${adminUserId} reloaded GPU configuration`);
+
+    return res.status(200).json({
+      success: true,
+      message: "GPU configuration reloaded successfully from database"
+    });
+  } catch (error) {
+    LogError(error as Error, serviceLocation, "Error reloading GPU configuration");
+    return res.status(500).json({
+      success: false,
+      message: "An error occurred while reloading GPU configuration"
+    });
+  }
+});
+
+// Test GPU server connection
+router.post("/gpu-config/test-connection", isAuthAndAdmin, async (req: Request, res: Response) => {
+  try {
+    const adminUserId = (req.user as { _id: string })?._id;
+
+    if (!adminUserId) {
+      return res.status(401).json({
+        success: false,
+        message: "Admin user ID not found"
+      });
+    }
+
+    const serverAddress = getGPUServerAddress();
+    if (!serverAddress) {
+      return res.status(400).json({
+        success: false,
+        message: "GPU server address is not configured"
+      });
+    }
+
+    try {
+      const testUrl = `${serverAddress}/status/gpu`;
+      const response = await axios.get(testUrl, {
+        timeout: 10000,
+        validateStatus: (status) => status < 500 // Accept any response that's not a server error
+      });
+
+      logger.info(`Admin ${adminUserId} tested GPU server connection - Status: ${response.status}`);
+
+      return res.status(200).json({
+        success: true,
+        message: "GPU server connection test completed",
+        serverAddress,
+        testUrl,
+        status: response.status,
+        statusText: response.statusText,
+        reachable: response.status >= 200 && response.status < 300
+      });
+    } catch (connectionError: unknown) {
+      const errorMessage = connectionError instanceof Error ? connectionError.message : 'Unknown connection error';
+      logger.warn(`Admin ${adminUserId} tested GPU server connection - Failed: ${errorMessage}`);
+
+      return res.status(200).json({
+        success: false,
+        message: "GPU server is not reachable",
+        serverAddress,
+        error: errorMessage,
+        reachable: false
+      });
+    }
+  } catch (error) {
+    LogError(error as Error, serviceLocation, "Error testing GPU server connection");
+    return res.status(500).json({
+      success: false,
+      message: "An error occurred while testing GPU server connection"
+    });
+  }
+});
+
 export default router;
-// ...existing code...
