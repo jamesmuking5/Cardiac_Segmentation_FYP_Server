@@ -48,9 +48,16 @@ const connectToDatabase = async (): Promise<void> => {
     // Added this for unit test to use the createAdminUser function without explicitly exposing it
     if (mongoose.connection.readyState !== 1) {
       await mongoose.connect(DB_URI);
-      logger.info(`Database: Connected to MongoDB database: ${DB_NAME} at ${DB_URI}`);
+      logger.info(`${serviceLocation}: Connected to MongoDB database: ${DB_NAME} at ${DB_URI}`);
+      // Verify if connection is ready (to prevent race conditions with GPU configuration fetch)
+      if (mongoose.connection.db) {
+        await mongoose.connection.db.admin().ping();
+        logger.info(`${serviceLocation}: MongoDB connection is ready for queries.`);
+      } else {
+        throw new Error("Database connection established but db object is undefined.");
+      }
     } else {
-      logger.info(`Database: Already connected to ${DB_NAME}. Skipping connect call.`);
+      logger.info(`${serviceLocation}: Already connected to ${DB_NAME}. Skipping connect call.`);
     }
     await createAdminUser();
     await seedGPUHost(); // Seed the GPU host configuration based on env vars
@@ -95,19 +102,19 @@ const userSchema = new Schema<IUserDocument>({
 userSchema.pre('deleteOne', { document: true, query: false }, async function (next) {
   const serviceLocationCascade = `${serviceLocation} - User Delete Hook`;
   try {
-    logger.info(`Database: Cascade delete triggered for user ${this._id}`);
+    logger.info(`${serviceLocation}: Cascade delete triggered for user ${this._id}`);
     const projects = await projectModel.find({ userid: this._id }).select('_id').lean(); // Use lean for plain objects
     const projectIds = projects.map(p => p._id);
     if (projectIds.length > 0) {
-      logger.info(`Database: Deleting ${projectIds.length} projects and their associated masks for user ${this._id}`);
+      logger.info(`${serviceLocation}: Deleting ${projectIds.length} projects and their associated masks for user ${this._id}`);
       // Delete all masks for all found projects first
       const maskDeleteResult = await projectSegmentationMaskModel.deleteMany({ projectid: { $in: projectIds } });
-      logger.info(`Database: Deleted ${maskDeleteResult.deletedCount} segmentation masks for user ${this._id}`);
+      logger.info(`${serviceLocation}: Deleted ${maskDeleteResult.deletedCount} segmentation masks for user ${this._id}`);
       // Then delete all projects for the user
       const projectDeleteResult = await projectModel.deleteMany({ userid: this._id });
-      logger.info(`Database: Deleted ${projectDeleteResult.deletedCount} projects for user ${this._id}`);
+      logger.info(`${serviceLocation}: Deleted ${projectDeleteResult.deletedCount} projects for user ${this._id}`);
     } else {
-      logger.info(`Database: No projects found for user ${this._id}. No cascade delete needed for projects/masks.`);
+      logger.info(`${serviceLocation}: No projects found for user ${this._id}. No cascade delete needed for projects/masks.`);
     }
     next(); // Proceed to user deletion
   } catch (error: unknown) {
@@ -141,7 +148,7 @@ const createAdminUser = async (): Promise<void> => {
   try {
     if (!existingAdmin) {
       logger.info(
-        `Database: No admin account found. Creating default admin account.`
+        `${serviceLocation}: No admin account found. Creating default admin account.`
       );
       // Create an admin user with username "admin" and password "admin" (Emergency creation of admin account in case of no admin account)
       const hashedPassword = await bcrypt.hash(adminPass, 10);
@@ -157,9 +164,9 @@ const createAdminUser = async (): Promise<void> => {
       await admin.save();
       // Check if the admin user was created successfully
       const createdAdmin = await userModel.findOne({ username: "admin" });
-      if (createdAdmin) logger.warn(`Database: WARNING: Default admin account created successfully with ID:${createdAdmin._id}. Please change the password IMMEDIATELY.`);
+      if (createdAdmin) logger.warn(`${serviceLocation}: WARNING: Default admin account created successfully with ID:${createdAdmin._id}. Please change the password IMMEDIATELY.`);
     } else {
-      logger.info(`Database: Admin account(s) already exists.`);
+      logger.info(`${serviceLocation}: Admin account(s) already exists.`);
       return;
     }
   } catch (error: unknown) {
@@ -206,7 +213,7 @@ const createUser = async (
       if (existingUser.phone === user.phone) {
         reasons += ` Phone "${user.phone}" already exists.`;
       }
-      logger.warn(`Database: Error creating user: ${reasons}`);
+      logger.warn(`${serviceLocation}: Error creating user: ${reasons}`);
       return { success: false, operation: CRUDOperation.CREATE, message: reasons };
     }
     // Hash the password before saving it to the database
@@ -221,7 +228,7 @@ const createUser = async (
     });
     // Save the new user to the database
     await newUser.save();
-    logger.info(`Database: User ${newUser._id} created successfully: ${newUser.username}, ${newUser.email}, ${newUser.phone}, ${newUser.role}`);
+    logger.info(`${serviceLocation}: User ${newUser._id} created successfully: ${newUser.username}, ${newUser.email}, ${newUser.phone}, ${newUser.role}`);
     return { success: true, operation: CRUDOperation.CREATE, user: toIUserSafe(newUser) };
   } catch (error: unknown) {
     logger.error(`${serviceLocation}: Error creating user ${user.username}: ${error}`);
@@ -265,7 +272,7 @@ const readUser = async (
 
   try {
     if (searchConditions.length === 0) {
-      logger.info(`Database: Reading all users.`);
+      logger.info(`${serviceLocation}: Reading all users.`);
       const foundUsers = await userModel.find({});
       const safeUsers = foundUsers.map(toIUserSafe);
       return {
@@ -275,11 +282,11 @@ const readUser = async (
       };
     } else {
       const query = { $or: searchConditions };
-      logger.info(`Database: Reading users matching ANY of: ${filterCriteriaString}`);
+      logger.info(`${serviceLocation}: Reading users matching ANY of: ${filterCriteriaString}`);
       const foundUsers = await userModel.find(query);
 
       if (foundUsers.length === 0) {
-        logger.info(`Database: No users found matching criteria: ${filterCriteriaString}`);
+        logger.info(`${serviceLocation}: No users found matching criteria: ${filterCriteriaString}`);
         return {
           success: true,
           operation: CRUDOperation.READ,
@@ -350,7 +357,7 @@ const updateUser = async (
     // Check if the user exists
     const existingUser = await userModel.findOne({ _id: userid });
     if (!existingUser) {
-      logger.warn(`Database: User ${userid} does not exist.`);
+      logger.warn(`${serviceLocation}: User ${userid} does not exist.`);
       return { success: false, operation: CRUDOperation.UPDATE, message: `User ${userid} does not exist.` };
     }
 
@@ -434,14 +441,14 @@ const updateUser = async (
 
     // Return if no fields were updated at all
     if (Object.keys(updateData).length === 0) {
-      logger.warn(`Database: No fields to update for user ${userid}. Unchanged fields: ${unchangedFields.join(", ")}`);
+      logger.warn(`${serviceLocation}: No fields to update for user ${userid}. Unchanged fields: ${unchangedFields.join(", ")}`);
       return { success: false, operation: CRUDOperation.UPDATE, message: `No fields to update for user ${userid}.`, };
     }
 
     // Perform the update
     const updatedUser = existingUser.set(updateData);
     await updatedUser.save();
-    logger.info(`Database: User ${userid} with username ${updatedUser.username} updated successfully. Updated fields: ${Object.keys(updateData).join(", ")}`);
+    logger.info(`${serviceLocation}: User ${userid} with username ${updatedUser.username} updated successfully. Updated fields: ${Object.keys(updateData).join(", ")}`);
     return { success: true, operation: CRUDOperation.UPDATE, user: toIUserSafe(updatedUser) };
   } catch (error: unknown) {
     LogError(error as Error, serviceLocation, `Error updating user ${userid}.`);
@@ -473,12 +480,12 @@ const deleteUser = async (user_id: string): Promise<UserCrudResult> => {
       // Check if this is the last admin
       const adminCount = await userModel.countDocuments({ role: UserRole.Admin });
       if (adminCount <= 1) {
-        logger.warn(`Database: Attempted to delete last admin user: ${existingUser.username}`);
+        logger.warn(`${serviceLocation}: Attempted to delete last admin user: ${existingUser.username}`);
         return { success: false, operation, message: 'Cannot delete the last administrator account' };
       }
     }
     if (!existingUser) {
-      logger.warn(`Database: User ${user_id} does not exist.`);
+      logger.warn(`${serviceLocation}: User ${user_id} does not exist.`);
       return { success: false, operation, message: `User ${user_id} does not exist.` };
     }
     // Delete the user
@@ -488,11 +495,11 @@ const deleteUser = async (user_id: string): Promise<UserCrudResult> => {
     if (deletedUserResult.success && deletedUserResult.users && deletedUserResult.users.length > 0) {
       // This condition should ideally not be met if deleteOne succeeded without error,
       // but it's kept as a safeguard based on the original code's logic.
-      logger.warn(`Database: User ${deletedUserResult.user?._id} was not deleted successfully.`);
+      logger.warn(`${serviceLocation}: User ${deletedUserResult.user?._id} was not deleted successfully.`);
       return { success: false, operation, message: `User ${user_id} was not deleted successfully.` };
     }
     // User deleted successfully
-    logger.info(`Database: User ${user_id} deleted successfully.`);
+    logger.info(`${serviceLocation}: User ${user_id} deleted successfully.`);
     return { success: true, operation, message: `User ${user_id} deleted successfully.` };
 
   } catch (error: unknown) {
@@ -528,13 +535,13 @@ const authenticateUser = async (
 
   // Check for null, undefined, empty strings, or non-string types for username
   if (!username || typeof username !== 'string' || username.trim() === '') {
-    logger.warn(`Database: Attempt with invalid or empty username.`);
+    logger.warn(`${serviceLocation}: Attempt with invalid or empty username.`);
     return { success: false, operation, message: 'Invalid username or password.' };
   }
 
   // Check for null, undefined, or empty string for password (allow any characters)
   if (passwordAttempt === undefined || passwordAttempt === null || passwordAttempt === '') { // Explicitly check empty string
-    logger.warn(`Database: Attempt for username "${username}" with missing or empty password.`);
+    logger.warn(`${serviceLocation}: Attempt for username "${username}" with missing or empty password.`);
     return { success: false, operation, message: 'Invalid username or password.' };
   }
 
@@ -545,13 +552,13 @@ const authenticateUser = async (
 
     // 2. Handle case where username doesn't exist
     if (!user) {
-      logger.warn(`Database: Authentication attempt failed for non-existent username: ${username}`);
+      logger.warn(`${serviceLocation}: Authentication attempt failed for non-existent username: ${username}`);
       return { success: false, operation, message: 'Invalid username or password.' };
     }
 
     // Check if the user record retrieved actually has a valid password hash stored, protects against data corruption or improperly created user records.
     if (!user.password || typeof user.password !== 'string' || user.password.length === 0) {
-      logger.error(`Database: User "${username}" found in DB but has a missing, null, or empty password hash. Cannot authenticate.`);
+      logger.error(`${serviceLocation}: User "${username}" found in DB but has a missing, null, or empty password hash. Cannot authenticate.`);
       return { success: false, operation, message: 'Authentication failed due to an account configuration issue.' };
     }
 
@@ -560,12 +567,12 @@ const authenticateUser = async (
 
     // 4. Handle case where passwords don't match
     if (!isMatch) {
-      logger.warn(`Database: Authentication attempt failed for username: ${username} (Incorrect password)`);
+      logger.warn(`${serviceLocation}: Authentication attempt failed for username: ${username} (Incorrect password)`);
       return { success: false, operation, message: 'Invalid username or password.' };
     }
 
     // 5. Authentication successful!
-    logger.info(`Database: Authentication successful for username: ${username}`);
+    logger.info(`${serviceLocation}: Authentication successful for username: ${username}`);
     return { success: true, operation, user: toIUserSafe(user) };
 
   } catch (error: unknown) {
@@ -633,10 +640,10 @@ projectSchema.pre('save', async function (next) {
 projectSchema.pre('deleteOne', { document: true, query: false }, async function (next) {
   const serviceLocationCascade = `${serviceLocation} - Project Delete Hook`;
   try {
-    logger.info(`Database: Cascade delete triggered for project ${this._id}`);
+    logger.info(`${serviceLocation}: Cascade delete triggered for project ${this._id}`);
     // Delete all masks associated with this project
     const maskDeleteResult = await projectSegmentationMaskModel.deleteMany({ projectid: this._id });
-    logger.info(`Database: Deleted ${maskDeleteResult.deletedCount} segmentation masks for project ${this._id}`);
+    logger.info(`${serviceLocation}: Deleted ${maskDeleteResult.deletedCount} segmentation masks for project ${this._id}`);
     next(); // Proceed to project deletion
   } catch (error: unknown) {
     LogError(error as Error, serviceLocationCascade, `Error during cascade delete for project ${this._id}.`);
@@ -772,7 +779,7 @@ const createProject = async (
     // If user does not exist, return error
     const user = await userModel.findById(userid);
     if (!user) {
-      logger.warn(`Database: User ${userid} does not exist.`);
+      logger.warn(`${serviceLocation}: User ${userid} does not exist.`);
       return { success: false, operation, message: `User ${userid} does not exist.` };
     }
 
@@ -781,26 +788,26 @@ const createProject = async (
     const stringInputs = [userid, name, originalfilename, filename, filehash, basepath, originalfilepath, extractedfolderpath, datatype];
     const emptyStringInputs = stringInputs.filter(input => !input || typeof input !== 'string' || input.trim() === '');
     if (emptyStringInputs.length > 0) {
-      logger.warn(`Database: Invalid input parameters for project creation: ${emptyStringInputs.join(", ")}`);
+      logger.warn(`${serviceLocation}: Invalid input parameters for project creation: ${emptyStringInputs.join(", ")}`);
       return { success: false, operation, message: `Invalid input parameters for project creation: ${emptyStringInputs.join(", ")}` };
     }
     // Check if the numeric inputs are valid numbers
     if (isNaN(filesize) || isNaN(dimensions.width) || isNaN(dimensions.height) || isNaN(dimensions.slices)) {
-      logger.warn(`Database: Invalid numeric input parameters for project creation: ${JSON.stringify({ filesize, dimensions })}`);
+      logger.warn(`${serviceLocation}: Invalid numeric input parameters for project creation: ${JSON.stringify({ filesize, dimensions })}`);
       return { success: false, operation, message: `Invalid numeric input parameters for project creation.` };
     }
     // Check if all numeric inputs are more than 0
     const numericInputs = [filesize, dimensions.width, dimensions.height, dimensions.slices];
     const negativeNumericInputs = numericInputs.filter(input => input <= 0);
     if (negativeNumericInputs.length > 0) {
-      logger.warn(`Database: Invalid numeric input parameters for project creation: ${negativeNumericInputs.join(", ")}`);
+      logger.warn(`${serviceLocation}: Invalid numeric input parameters for project creation: ${negativeNumericInputs.join(", ")}`);
       return { success: false, operation, message: `Invalid numeric input parameters for project creation.` };
     }
     // Check that voxelSize inputs are more than 0 if provided
     if (voxelsize) {
       const voxelNumericInputs = [voxelsize.x, voxelsize.y, voxelsize.z, voxelsize.t].filter(input => (input ?? 0) <= 0);
       if (voxelNumericInputs.length > 0) {
-        logger.warn(`Database: Invalid voxel size input parameters for project creation: ${voxelNumericInputs.join(", ")}`);
+        logger.warn(`${serviceLocation}: Invalid voxel size input parameters for project creation: ${voxelNumericInputs.join(", ")}`);
         return { success: false, operation, message: `Invalid voxel size input parameters for project creation.` };
       }
     }
@@ -823,7 +830,7 @@ const createProject = async (
       if (existingProject.originalfilepath === originalfilepath) reasons += ` Original filepath "${originalfilepath}" is already in use globally.`;
       if (existingProject.extractedfolderpath === extractedfolderpath) reasons += ` Extracted folder path "${extractedfolderpath}" is already in use globally.`;
       if (existingProject.filename === filename) reasons += ` Server filename "${filename}" is already in use globally.`;
-      logger.warn(`Database: Error creating project: ${reasons}`);
+      logger.warn(`${serviceLocation}: Error creating project: ${reasons}`);
       return { success: false, operation, message: reasons };
     }
 
@@ -848,7 +855,7 @@ const createProject = async (
     // Save the new project to the database
     await newProject.save();
 
-    logger.info(`Database: Project ${newProject._id} created successfully: ${newProject.name}, ${newProject.originalfilename}, ${newProject.filename}, ${newProject.filehash}`);
+    logger.info(`${serviceLocation}: Project ${newProject._id} created successfully: ${newProject.name}, ${newProject.originalfilename}, ${newProject.filename}, ${newProject.filehash}`);
     return { success: true, operation, project: newProject }; // Return the created project
   } catch (error: unknown) {
     LogError(error as Error, serviceLocation, `Error creating project.`);
@@ -961,24 +968,24 @@ const readProject = async (
   }
   // If no search conditions are provided, return all projects
   if (searchConditions.length === 0) {
-    logger.warn(`Database: No search conditions provided. Returning all projects.`);
+    logger.warn(`${serviceLocation}: No search conditions provided. Returning all projects.`);
     // Remove .lean() to return Mongoose documents (IProjectDocument) instead of plain objects
     return { success: true, operation, projects: await projectModel.find({}) }; // Return all projects as Mongoose documents
   }
 
   // If there are search conditions, build the query
   const query = { $and: searchConditions }; // Combine all conditions with $and
-  logger.info(`Database: Reading projects matching query: ${JSON.stringify(query)}`);
+  logger.info(`${serviceLocation}: Reading projects matching query: ${JSON.stringify(query)}`);
 
   try {
     const projects = await projectModel.find(query); // Execute the query
 
     if (projects.length === 0) {
-      logger.info(`Database: No projects found matching the criteria.`);
+      logger.info(`${serviceLocation}: No projects found matching the criteria.`);
       return { success: true, operation, message: "No projects found matching the criteria." };
     }
 
-    logger.info(`Database: Found ${projects.length} projects matching the criteria.`);
+    logger.info(`${serviceLocation}: Found ${projects.length} projects matching the criteria.`);
     return { success: true, operation, projects: projects }; // Return found projects as Mongoose documents
 
   } catch (error: unknown) {
@@ -1014,7 +1021,7 @@ const updateProject = async (
   // Look for the project by id
   const project = await projectModel.findById(projectid);
   if (!project) {
-    logger.warn(`Database: Project ${projectid} not found.`);
+    logger.warn(`${serviceLocation}: Project ${projectid} not found.`);
     return { success: false, operation, message: `Project ${projectid} not found.` };
   }
   try {
@@ -1053,7 +1060,7 @@ const updateProject = async (
     // Save the updated project to the database
     await project.save();
 
-    logger.info(`Database: Project ${project._id} updated successfully.`);
+    logger.info(`${serviceLocation}: Project ${project._id} updated successfully.`);
     return { success: true, operation, project: project }; // Return the updated project
   } catch (error: unknown) {
     LogError(error as Error, serviceLocation, `Error updating project ${projectid} with error: ${error}.`);
@@ -1078,12 +1085,12 @@ const deleteProject = async (projectid: string): Promise<ProjectCrudResult> => {
     // Find the project by ID
     const project = await projectModel.findById(projectid);
     if (!project) {
-      logger.warn(`Database: Project ${projectid} not found.`);
+      logger.warn(`${serviceLocation}: Project ${projectid} not found.`);
       return { success: false, operation, message: `Project ${projectid} not found.` };
     }
     // Delete the project
     await project.deleteOne();
-    logger.info(`Database: Project ${project._id} deleted successfully.`);
+    logger.info(`${serviceLocation}: Project ${project._id} deleted successfully.`);
     return { success: true, operation, message: `Project ${project._id} deleted successfully.` };
   } catch (error: unknown) {
     LogError(error as Error, serviceLocation, `Error deleting project ${projectid}.`);
@@ -1117,12 +1124,12 @@ const createProjectSegmentationMask = async (
     const projectid = projectsegmentationmask.projectid;
     const projectidexists = await projectModel.exists({ _id: projectid });
     if (!projectidexists) {
-      logger.warn(`Database: Project ID ${projectid} does not exist.`);
+      logger.warn(`${serviceLocation}: Project ID ${projectid} does not exist.`);
       return { success: false, operation, message: `Project ID ${projectid} does not exist.` };
     }
     const projectsegmasknameexists = await projectSegmentationMaskModel.exists({ name: psm.name, projectid: psm.projectid })
     if (projectsegmasknameexists) {
-      logger.warn(`Database: Invalid input parameters for project segmentation mask creation: Segmentation mask name ${psm.name} already exists for this project.`);
+      logger.warn(`${serviceLocation}: Invalid input parameters for project segmentation mask creation: Segmentation mask name ${psm.name} already exists for this project.`);
       return { success: false, operation, message: `Invalid input parameters for project segmentation mask creation: Segmentation mask name ${psm.name} already exists for this project.` };
     }
     const stringInputs = [
@@ -1130,7 +1137,7 @@ const createProjectSegmentationMask = async (
     ]
     const emptyStringInputs = stringInputs.filter(input => !input || typeof input !== 'string' || input.trim() === '');
     if (emptyStringInputs.length > 0) {
-      logger.warn(`Database: Invalid input parameters for project segmentation mask creation: ${emptyStringInputs.join(", ")}`);
+      logger.warn(`${serviceLocation}: Invalid input parameters for project segmentation mask creation: ${emptyStringInputs.join(", ")}`);
       return { success: false, operation, message: `Invalid input parameters for project segmentation mask creation: ${emptyStringInputs.join(", ")}` };
     }
     const numericInputs = [
@@ -1143,17 +1150,17 @@ const createProjectSegmentationMask = async (
     ].flat();
     const negativeNumericInputs = numericInputs.filter(input => typeof input === 'number' && input < 0);
     if (negativeNumericInputs.length > 0) {
-      logger.warn(`Database: Invalid numeric input parameters for project segmentation mask creation: ${negativeNumericInputs.join(", ")}`);
+      logger.warn(`${serviceLocation}: Invalid numeric input parameters for project segmentation mask creation: ${negativeNumericInputs.join(", ")}`);
       return { success: false, operation, message: `Invalid numeric input parameters for project segmentation mask creation.` };
     }
     const invalidBoundingBoxes = psm.frames.flatMap(frame => frame.slices.flatMap(slices => slices.componentboundingboxes?.filter(box => box.x_max < box.x_min || box.y_max < box.y_min) || []));
     if (invalidBoundingBoxes.length > 0) {
       const invalidBoundingBoxesResult = invalidBoundingBoxes.map(box => `(${box.x_min}, ${box.y_min}) to (${box.x_max}, ${box.y_max})`).join(", ");
-      logger.warn(`Database: Invalid bounding box coordinates for project segmentation mask creation: ${invalidBoundingBoxesResult}`);
+      logger.warn(`${serviceLocation}: Invalid bounding box coordinates for project segmentation mask creation: ${invalidBoundingBoxesResult}`);
       return { success: false, operation, message: `Invalid bounding box coordinates for project segmentation mask creation: ${invalidBoundingBoxesResult}.` };
     }
     if (!psm.frames || !Array.isArray(psm.frames) || psm.frames.length === 0) {
-      logger.warn(`Database: Invalid input parameters for project segmentation mask creation: frames array must be populated with at least one frame.`);
+      logger.warn(`${serviceLocation}: Invalid input parameters for project segmentation mask creation: frames array must be populated with at least one frame.`);
       return { success: false, operation, message: `Invalid input parameters for project segmentation mask creation: frames array must be populated with at least one frame.` };
     }
 
@@ -1170,7 +1177,7 @@ const createProjectSegmentationMask = async (
               typeof maskEntry.segmentationmaskcontents !== 'string') {
               const offendingLocation = `frame ${frame.frameindex}, slice ${slice.sliceindex}, class ${maskEntry.class}`;
               const messageDetail = `segmentationmaskcontents must be a non-null string. Received: ${maskEntry.segmentationmaskcontents}`;
-              logger.warn(`Database: Invalid input for project segmentation mask creation: ${messageDetail} in ${offendingLocation}.`);
+              logger.warn(`${serviceLocation}: Invalid input for project segmentation mask creation: ${messageDetail} in ${offendingLocation}.`);
               return {
                 success: false,
                 operation,
@@ -1185,10 +1192,10 @@ const createProjectSegmentationMask = async (
     const newProjectSegmentationMask = new projectSegmentationMaskModel(psm);
     const result = await newProjectSegmentationMask.save();
     if (!result) {
-      logger.warn(`Database: Error creating project segmentation mask.`);
+      logger.warn(`${serviceLocation}: Error creating project segmentation mask.`);
       return { success: false, operation, message: "Error creating project segmentation mask." };
     }
-    logger.info(`Database: Project segmentation mask ${result._id} created successfully.`);
+    logger.info(`${serviceLocation}: Project segmentation mask ${result._id} created successfully.`);
     return { success: true, operation, projectsegmentationmask: result };
   } catch (error: unknown) {
     LogError(error as Error, serviceLocation, `Error creating project segmentation mask, ${error}`);
@@ -1216,16 +1223,16 @@ const readProjectSegmentationMask = async (
     // validate the project id
     const projectidexists = await projectModel.exists({ _id: projectid });
     if (!projectidexists) {
-      logger.warn(`Database: Project ID ${projectid} does not exist.`);
+      logger.warn(`${serviceLocation}: Project ID ${projectid} does not exist.`);
       return { success: false, operation, message: `Project ID ${projectid} does not exist.` }; // Project ID does not exist
     }
     // Find all segmentation masks for the project
     const projectSegmentationMasks = await projectSegmentationMaskModel.find({ projectid: projectid });
     if (!projectSegmentationMasks || projectSegmentationMasks.length === 0) {
-      logger.info(`Database: No segmentation masks found for project ID ${projectid}.`);
+      logger.info(`${serviceLocation}: No segmentation masks found for project ID ${projectid}.`);
       return { success: true, operation, message: "No segmentation masks found for this project." }; // true success, but no results found
     }
-    logger.info(`Database: Found ${projectSegmentationMasks.length} segmentation masks for project ID ${projectid}.`);
+    logger.info(`${serviceLocation}: Found ${projectSegmentationMasks.length} segmentation masks for project ID ${projectid}.`);
     return { success: true, operation, projectsegmentationmasks: projectSegmentationMasks }; // Return the found segmentation masks
 
   } catch (error: unknown) {
@@ -1260,7 +1267,7 @@ const updateProjectSegmentationMask = async (
   try {
     const mask = await projectSegmentationMaskModel.findById(maskid);
     if (!mask) {
-      logger.warn(`Database: Project segmentation mask ${maskid} not found.`);
+      logger.warn(`${serviceLocation}: Project segmentation mask ${maskid} not found.`);
       return { success: false, operation, message: `Project segmentation mask ${maskid} not found.` };
     }
 
@@ -1319,7 +1326,7 @@ const updateProjectSegmentationMask = async (
           const invalidBoundingBoxes = slice.componentboundingboxes?.filter(box => box.x_max < box.x_min || box.y_max < box.y_min) || [];
           if (invalidBoundingBoxes.length > 0) {
             const invalidBoundingBoxesResult = invalidBoundingBoxes.map(box => `(${box.x_min}, ${box.y_min}) to (${box.x_max}, ${box.y_max})`).join(", ");
-            logger.warn(`Database: Invalid bounding box coordinates for project segmentation mask update: ${invalidBoundingBoxesResult}`);
+            logger.warn(`${serviceLocation}: Invalid bounding box coordinates for project segmentation mask update: ${invalidBoundingBoxesResult}`);
             return { success: false, operation, message: `Invalid bounding box coordinates for project segmentation mask update: ${invalidBoundingBoxesResult}.` };
           }
           if (slice.segmentationmasks && Array.isArray(slice.segmentationmasks)) {
@@ -1329,7 +1336,7 @@ const updateProjectSegmentationMask = async (
                 typeof maskEntry.segmentationmaskcontents !== 'string') {
                 const offendingLocation = `frame ${frame.frameindex}, slice ${slice.sliceindex}, class ${maskEntry.class}`; // Define offendingLocation and messageDetail here
                 const messageDetail = `segmentationmaskcontents must be a non-null string. Received: ${maskEntry.segmentationmaskcontents}`; // Define messageDetail here
-                logger.warn(`Database: Invalid input for project segmentation mask update: ${messageDetail} in ${offendingLocation}.`);
+                logger.warn(`${serviceLocation}: Invalid input for project segmentation mask update: ${messageDetail} in ${offendingLocation}.`);
                 return {
                   success: false,
                   operation,
@@ -1345,7 +1352,7 @@ const updateProjectSegmentationMask = async (
 
     await mask.save();
 
-    logger.info(`Database: Project segmentation mask ${maskid} updated successfully.`);
+    logger.info(`${serviceLocation}: Project segmentation mask ${maskid} updated successfully.`);
     return { success: true, operation, projectsegmentationmask: mask };
 
   } catch (error: unknown) {
@@ -1361,12 +1368,12 @@ const deleteProjectSegmentationMask = async (maskid: string): Promise<ProjectSeg
     // Find the segmentation mask by ID
     const mask = await projectSegmentationMaskModel.findById(maskid);
     if (!mask) {
-      logger.warn(`Database: Project segmentation mask ${maskid} not found.`);
+      logger.warn(`${serviceLocation}: Project segmentation mask ${maskid} not found.`);
       return { success: false, operation, message: `Project segmentation mask ${maskid} not found.` };
     }
     // Delete the segmentation mask
     await mask.deleteOne();
-    logger.info(`Database: Project segmentation mask ${mask._id} deleted successfully.`);
+    logger.info(`${serviceLocation}: Project segmentation mask ${mask._id} deleted successfully.`);
     return { success: true, operation, message: `Project segmentation mask ${mask._id} deleted successfully.` };
   } catch (error: unknown) {
     LogError(error as Error, serviceLocation, `Error deleting project segmentation mask ${maskid}.`);
@@ -1399,7 +1406,7 @@ const createJob = async (job: IJob): Promise<JobCrudResult> => {
     const newJob = new jobModel(job);
     const results = await newJob.save();
     if (results._id) {
-      logger.info(`Database: Job ${results._id} created successfully.`);
+      logger.info(`${serviceLocation}: Job ${results._id} created successfully.`);
       return { success: true, operation, job: newJob };
     }
     else {
@@ -1417,10 +1424,10 @@ const readJob = async (uuid: string): Promise<JobCrudResult> => {
   try {
     const job = await jobModel.findOne({ uuid: uuid });
     if (!job) {
-      logger.warn(`Database: Job for user ${uuid} not found.`);
+      logger.warn(`${serviceLocation}: Job for user ${uuid} not found.`);
       return { success: false, operation, message: `Job for user ${uuid} not found.` };
     }
-    logger.info(`Database: Job ${job._id} found matching UUID if ${uuid}.`);
+    logger.info(`${serviceLocation}: Job ${job._id} found matching UUID if ${uuid}.`);
     return { success: true, operation, job: job };
   } catch (error: unknown) {
     LogError(error as Error, serviceLocation, `Error reading job.`);
@@ -1434,13 +1441,13 @@ const updateJob = async (uuid: string, updates: Partial<IJob>): Promise<JobCrudR
   try {
     const job = await jobModel.findOne({ uuid: uuid });
     if (!job) {
-      logger.warn(`Database: Job for user ${uuid} not found.`);
+      logger.warn(`${serviceLocation}: Job for user ${uuid} not found.`);
       return { success: false, operation, message: `Job for user ${uuid} not found.` };
     }
     // Update the job with the provided updates
     Object.assign(job, updates);
     await job.save();
-    logger.info(`Database: Job ${job._id} updated successfully.`);
+    logger.info(`${serviceLocation}: Job ${job._id} updated successfully.`);
     return { success: true, operation, job: job };
   } catch (error: unknown) {
     LogError(error as Error, serviceLocation, `Error updating job.`);
@@ -1454,11 +1461,11 @@ const deleteJob = async (uuid: string): Promise<JobCrudResult> => {
   try {
     const job = await jobModel.findOne({ uuid: uuid });
     if (!job) {
-      logger.warn(`Database: Job for user ${uuid} not found.`);
+      logger.warn(`${serviceLocation}: Job for user ${uuid} not found.`);
       return { success: false, operation, message: `Job for user ${uuid} not found.` };
     }
     await job.deleteOne();
-    logger.info(`Database: Job ${job._id} deleted successfully.`);
+    logger.info(`${serviceLocation}: Job ${job._id} deleted successfully.`);
     return { success: true, operation, message: `Job ${job._id} deleted successfully.` };
   } catch (error: unknown) {
     LogError(error as Error, serviceLocation, `Error deleting job.`);
@@ -1511,13 +1518,13 @@ const seedGPUHost = async (): Promise<void> => {
   try {
     const existingGPUHost = await gpuHostModel.findOne({});
     if (existingGPUHost) {
-      logger.info(`Database: GPU host configuration already exists. No need to create a new one.`);
+      logger.info(`${serviceLocation}: GPU host configuration already exists. No need to create a new one.`);
       return; // GPU host already exists, no need to create a new one
     }
     // Get admin ID from User Model
     const adminUser = await userModel.findOne({ role: UserRole.Admin, username: 'admin' });
     if (!adminUser) {
-      logger.error(`Database: Admin user not found. Cannot create GPU host configuration.`);
+      logger.error(`${serviceLocation}: Admin user not found. Cannot create GPU host configuration.`);
       throw new Error('Admin user not found. Cannot create GPU host configuration.');
     }
     // Create a new GPU host configuration with default values
@@ -1549,7 +1556,7 @@ const isValidIpOrDomain = (ip: string): boolean => {
   if (typeof ip !== 'string' || ip === '') {
     return false;
   }
-  
+
   // Special Case
   if (ip === "localhost") return true;
 
@@ -1567,15 +1574,30 @@ const isValidIpOrDomain = (ip: string): boolean => {
 }
 
 // GPU Host CRUD Function
-// readGPUHost
+// readGPUHost - only fetches the one and only entry in the database
+/**
+ * Reads the GPU host configuration from the database.
+ * 
+ * Attempts to find the single GPU host configuration document in the database.
+ * If no configuration is found, logs a warning and returns a failure result.
+ * If successful, logs the operation and returns the GPU host configuration.
+ * 
+ * @returns A Promise that resolves to a GPUHostCrudResult object containing:
+ *   - success: boolean indicating if the operation was successful
+ *   - operation: CRUDOperation.READ enum value
+ *   - gpuHost: the GPU host configuration object (if successful)
+ *   - message: error or warning message (if unsuccessful)
+ * 
+ * @throws Catches and logs any database errors, returning a failure result with error message
+ */
 const readGPUHost = async (): Promise<GPUHostCrudResult> => {
   try {
     const gpuHost = await gpuHostModel.findOne({});
     if (!gpuHost) {
-      logger.warn(`Database: No GPU host configuration found.`);
+      logger.warn(`${serviceLocation}: No GPU host configuration found.`);
       return { success: false, operation: CRUDOperation.READ, message: "No GPU host configuration found." };
     }
-    logger.info(`Database: GPU host configuration read successfully.`);
+    logger.info(`${serviceLocation}: GPU host configuration read successfully.`);
     return { success: true, operation: CRUDOperation.READ, gpuHost: gpuHost }; // Return the GPU host configuration
 
   }
@@ -1585,11 +1607,39 @@ const readGPUHost = async (): Promise<GPUHostCrudResult> => {
   }
 }
 
+/**
+ * Updates the GPU host configuration with the provided partial updates.
+ * 
+ * @param updates - Partial GPU host configuration object containing the fields to update
+ * @returns Promise that resolves to a GPUHostCrudResult indicating success/failure and updated data
+ * 
+ * @remarks
+ * This function performs validation on the following fields:
+ * - `host`: Must be a valid IP address or domain name
+ * - `port`: Must be a number between 1 and 65535
+ * - `jwtRefreshInterval`: Must be a number of at least 60000 milliseconds (60 seconds)
+ * - `jwtLifetimeSeconds`: Must be a number of at least 60 seconds
+ * 
+ * The function will only update fields that are provided in the updates object.
+ * If no GPU host configuration exists in the database, the operation will fail (which should not happen).
+ * 
+ * @example
+ * ```typescript
+ * const result = await updateGPUHost({
+ *   host: "192.168.1.100",
+ *   port: 8080,
+ *   isHTTPS: true
+ * });
+ * if (result.success) {
+ *   console.log("GPU host updated successfully");
+ * }
+ * ```
+ */
 const updateGPUHost = async (updates: Partial<IGPUHost>): Promise<GPUHostCrudResult> => {
   try {
     const gpuHost = await gpuHostModel.findOne({});
     if (!gpuHost) {
-      logger.warn(`Database: No GPU host configuration found.`);
+      logger.warn(`${serviceLocation}: No GPU host configuration found.`);
       return { success: false, operation: CRUDOperation.UPDATE, message: "No GPU host configuration found." };
     }
     // Validation
@@ -1621,12 +1671,12 @@ const updateGPUHost = async (updates: Partial<IGPUHost>): Promise<GPUHostCrudRes
     if (updates.setBy) gpuHost.setBy = updates.setBy; // Update setBy field
 
     await gpuHost.save();
-    logger.info(`Database: GPU host configuration updated successfully.`);
+    logger.info(`${serviceLocation}: GPU host configuration updated successfully.`);
     return { success: true, operation: CRUDOperation.UPDATE, gpuHost: gpuHost }; // Return the updated GPU host configuration
   }
   catch (error: unknown) {
     LogError(error as Error, serviceLocation, `Error updating GPU host configuration.`);
-    return { success: false, operation: CRUDOperation.UPDATE, message: "Unknown error while updating GPU host configuration." };
+    return { success: false, operation: CRUDOperation.UPDATE, message: `Unknown error while updating GPU host configuration - ${error}` };
   }
 }
 
