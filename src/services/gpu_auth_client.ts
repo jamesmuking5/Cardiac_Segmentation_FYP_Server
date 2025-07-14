@@ -14,6 +14,7 @@ import LogError from "../utils/error_logger"; // Assuming custom error logging u
 import crypto from "crypto"; // Used for generating unique JWT IDs (jti claim)
 import axios from "axios"; // For making HTTP requests to the GPU server
 import { readGPUHost } from "./database"; // Fetch latest GPU config from database
+import { IGPUHost } from "../types/database_types"; // Import GPU host interface from database types
 
 /**
  * Service location identifier for logging purposes within this module.
@@ -22,19 +23,14 @@ import { readGPUHost } from "./database"; // Fetch latest GPU config from databa
 const serviceLocation = "API(GPU Authentication)";
 
 /**
- * Configuration object that holds all GPU server settings.
- * This is populated from the database with fallbacks to environment variables.
+ * Extended GPU configuration that includes computed properties.
+ * This extends the database IGPUHost interface with runtime-computed values.
+ * Makes some database-specific properties optional for runtime usage.
  */
-interface GPUConfig {
-    host: string;
-    port: number;
-    isHTTPS: boolean;
-    gpuServerAuthJwtSecret: string;
-    serverIdForGpuServer: string;
-    gpuServerIdentity: string;
-    jwtRefreshInterval: number;
-    jwtLifetimeSeconds: number;
+interface GPUConfig extends Omit<IGPUHost, 'setBy' | 'description'> {
     fullAddress: string; // Computed property for the complete server URL
+    description?: string; // Optional description
+    setBy?: string; // Optional setBy field
 }
 
 /**
@@ -65,6 +61,7 @@ async function loadGPUConfig(): Promise<GPUConfig> {
             const protocol = gpuHost.isHTTPS ? 'https' : 'http';
             const fullAddress = `${protocol}://${gpuHost.host}:${gpuHost.port}`;
 
+            // Extract plain object properties from the Mongoose document
             const config: GPUConfig = {
                 host: gpuHost.host,
                 port: gpuHost.port,
@@ -74,11 +71,27 @@ async function loadGPUConfig(): Promise<GPUConfig> {
                 gpuServerIdentity: gpuHost.gpuServerIdentity,
                 jwtRefreshInterval: gpuHost.jwtRefreshInterval,
                 jwtLifetimeSeconds: gpuHost.jwtLifetimeSeconds,
-                fullAddress
+                fullAddress,
+                description: gpuHost.description,
+                setBy: gpuHost.setBy
             };
 
             logger.info(`${serviceLocation}: Successfully loaded GPU configuration from database`);
             logger.info(`${serviceLocation}: GPU Server Address: ${fullAddress}`);
+            
+            // Debug: Log the configuration to see what we got from database
+            logger.info(`${serviceLocation}: GPU configuration details:`, {
+                host: config.host,
+                port: config.port,
+                isHTTPS: config.isHTTPS,
+                hasJwtSecret: !!config.gpuServerAuthJwtSecret,
+                jwtSecret: config.gpuServerAuthJwtSecret, // Temporary debug
+                serverIdForGpuServer: config.serverIdForGpuServer,
+                gpuServerIdentity: config.gpuServerIdentity,
+                jwtRefreshInterval: config.jwtRefreshInterval,
+                jwtLifetimeSeconds: config.jwtLifetimeSeconds
+            });
+            
             return config;
         } else {
             logger.warn(`${serviceLocation}: Failed to load GPU configuration from database: ${dbResult.message}`);
@@ -191,7 +204,17 @@ function generateAndStoreJwt(): void {
         jwtLifetimeSeconds
     } = currentGPUConfig;
 
+    // DEBUG LOG EVERYTHING
+    logger.info(`${serviceLocation}: Generating new JWT with the following configuration:`, {
+        serverIdForGpuServer,
+        gpuServerIdentity,
+        jwtLifetimeSeconds,
+        jwtSecretConfigured: !!gpuServerAuthJwtSecret && gpuServerAuthJwtSecret !== 'change-this'
+    });
+
     if (!gpuServerAuthJwtSecret || gpuServerAuthJwtSecret === 'change-this') {
+        // DEBUG
+        logger.info(gpuServerAuthJwtSecret);
         throw new Error("GPU server JWT secret is not properly configured.");
     }
 
@@ -410,6 +433,24 @@ function stopTokenRefresh(): void {
     }
 }
 
+/**
+ * @function getFreshGPUServerAddress
+ * @description Reloads the GPU configuration from database and returns the full address.
+ * This ensures that the latest configuration is always used for API calls.
+ * @returns {Promise<string | null>} The full GPU server address with fresh config, or null if not configured.
+ */
+async function getFreshGPUServerAddress(): Promise<string | null> {
+    try {
+        // Reload configuration from database to get latest settings
+        await reloadGPUConfig();
+        return currentGPUConfig?.fullAddress || null;
+    } catch (error: unknown) {
+        logger.error(`${serviceLocation}: Failed to get fresh GPU server address`, { error });
+        LogError(error as Error, serviceLocation, `Error getting fresh GPU server address`);
+        return null;
+    }
+}
+
 // Export the public functions needed by the rest of the application
 export {
     initAndRefreshAuth,
@@ -417,5 +458,6 @@ export {
     getGPUServerAddress,
     reloadGPUConfig,
     stopTokenRefresh,
-    checkGpuStatusOnInitialization
+    checkGpuStatusOnInitialization,
+    getFreshGPUServerAddress
 };
