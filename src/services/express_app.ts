@@ -136,7 +136,7 @@ app.use('/segmentation', segmentationRoutes); // Mount the segmentation routes
 app.use('/status', gpuStatusRoute); // Mount GPU status routes
 
 // Admin Tool Routes
-app.use('adminTools', adminToolsRoute);
+app.use('/admintools', adminToolsRoute);
 
 // Configure static file serving
 const configureStaticFiles = (): void => {
