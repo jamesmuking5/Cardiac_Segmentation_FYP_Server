@@ -29,6 +29,18 @@ export function injectGpuAuthToken(req: Request, res: Response, next: NextFuncti
         res.status(503).json({
             error: 'Service temporarily unavailable',
             detail: 'Cannot authenticate with dependent service at the moment.',
+            troubleshooting: {
+                possibleCauses: [
+                    'GPU server configuration was recently changed and JWT needs regeneration',
+                    'JWT token has expired and refresh is pending',
+                    'GPU server authentication initialization failed'
+                ],
+                adminActions: [
+                    'Check GPU configuration in admin panel',
+                    'Try forcing JWT regeneration via /admintools/gpu-config/force-jwt-regeneration',
+                    'Verify GPU server is reachable and JWT secret is properly configured'
+                ]
+            }
         });
         // Stop processing the request chain
         return;
