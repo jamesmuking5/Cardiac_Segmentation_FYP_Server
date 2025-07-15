@@ -6,7 +6,7 @@
 import { Request, Response, Router } from "express";
 import { readGPUHost, updateGPUHost, IGPUHost } from "../services/database";
 import { isAuthAndAdmin } from "../services/passportjs";
-import { reloadGPUConfig, getFreshGPUServerAddress } from "../services/gpu_auth_client"; // Import new functions
+import { reloadGPUConfig, getFreshGPUServerAddress, forceTokenRegeneration } from "../services/gpu_auth_client"; // Import new functions
 import logger from "../services/logger";
 import LogError from "../utils/error_logger";
 import axios from "axios"; // For testing GPU server connection
@@ -148,6 +148,16 @@ router.patch("/gpu-config", isAuthAndAdmin, async (req: Request, res: Response) 
     if (result.success && result.gpuHost) {
       logger.info(`Admin ${adminUserId} updated GPU configuration`);
 
+      // 🆕 CRITICAL: Automatically reload GPU configuration and regenerate JWT immediately after database update
+      try {
+        await forceTokenRegeneration();
+        logger.info(`${serviceLocation}: Auto-reloaded GPU configuration and regenerated JWT immediately after update`);
+      } catch (reloadError) {
+        logger.warn(`${serviceLocation}: Failed to auto-reload GPU configuration and regenerate JWT after update:`, { error: reloadError });
+        LogError(reloadError as Error, serviceLocation, `Auto-reload GPU config and JWT regeneration after update failed`);
+        // Don't fail the whole operation, but warn the admin
+      }
+
       // Remove sensitive JWT secret before sending
       const safeConfig = {
         host: result.gpuHost.host,
@@ -165,8 +175,9 @@ router.patch("/gpu-config", isAuthAndAdmin, async (req: Request, res: Response) 
 
       return res.status(200).json({
         success: true,
-        message: "GPU configuration updated successfully",
-        gpuHost: safeConfig
+        message: "GPU configuration updated and reloaded successfully",
+        gpuHost: safeConfig,
+        configReloaded: true
       });
     } else {
       return res.status(400).json({
@@ -207,6 +218,34 @@ router.post("/gpu-config/reload", isAuthAndAdmin, async (req: Request, res: Resp
     return res.status(500).json({
       success: false,
       message: "An error occurred while reloading GPU configuration"
+    });
+  }
+});
+
+// Force JWT token regeneration with fresh configuration
+router.post("/gpu-config/force-jwt-regeneration", isAuthAndAdmin, async (req: Request, res: Response) => {
+  try {
+    const adminUserId = (req.user as { _id: string })?._id;
+
+    if (!adminUserId) {
+      return res.status(401).json({
+        success: false,
+        message: "Admin user ID not found"
+      });
+    }
+
+    await forceTokenRegeneration();
+    logger.info(`Admin ${adminUserId} forced JWT token regeneration`);
+
+    return res.status(200).json({
+      success: true,
+      message: "JWT token regenerated successfully with latest configuration"
+    });
+  } catch (error) {
+    LogError(error as Error, serviceLocation, "Error forcing JWT token regeneration");
+    return res.status(500).json({
+      success: false,
+      message: "An error occurred while regenerating JWT token"
     });
   }
 });

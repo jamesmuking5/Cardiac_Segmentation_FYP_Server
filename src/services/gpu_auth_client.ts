@@ -434,6 +434,32 @@ function stopTokenRefresh(): void {
 }
 
 /**
+ * @function forceTokenRegeneration
+ * @description Forces immediate regeneration of the JWT token using current configuration.
+ * This is useful when configuration changes and you want to generate a new token immediately
+ * instead of waiting for the next scheduled refresh.
+ * @returns {Promise<void>}
+ * @throws {Error} If JWT generation fails or configuration is not loaded
+ */
+async function forceTokenRegeneration(): Promise<void> {
+    logger.info(`${serviceLocation}: Forcing immediate JWT token regeneration...`);
+    
+    try {
+        // Reload configuration first to ensure we have the latest settings
+        await reloadGPUConfig();
+        
+        // Generate new token immediately
+        generateAndStoreJwt();
+        
+        logger.info(`${serviceLocation}: JWT token regenerated successfully after configuration change`);
+    } catch (error: unknown) {
+        logger.error(`${serviceLocation}: Failed to force JWT token regeneration`, { error });
+        LogError(error as Error, serviceLocation, `Error forcing JWT token regeneration`);
+        throw error;
+    }
+}
+
+/**
  * @function getFreshGPUServerAddress
  * @description Reloads the GPU configuration from database and returns the full address.
  * This ensures that the latest configuration is always used for API calls.
@@ -459,5 +485,6 @@ export {
     reloadGPUConfig,
     stopTokenRefresh,
     checkGpuStatusOnInitialization,
-    getFreshGPUServerAddress
+    getFreshGPUServerAddress,
+    forceTokenRegeneration
 };
