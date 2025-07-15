@@ -50,7 +50,7 @@ let currentGPUConfig: GPUConfig | null = null;
  * @throws {Error} If both database and environment variable loading fail
  */
 async function loadGPUConfig(): Promise<GPUConfig> {
-    logger.info(`${serviceLocation}: Loading GPU configuration from database...`);
+    logger.info(`${serviceLocation}: Fetching GPU configuration from database.`);
 
     try {
         // Try to load from database first
@@ -78,20 +78,19 @@ async function loadGPUConfig(): Promise<GPUConfig> {
 
             logger.info(`${serviceLocation}: Successfully loaded GPU configuration from database`);
             logger.info(`${serviceLocation}: GPU Server Address: ${fullAddress}`);
-            
+
             // Debug: Log the configuration to see what we got from database
-            logger.info(`${serviceLocation}: GPU configuration details:`, {
-                host: config.host,
-                port: config.port,
-                isHTTPS: config.isHTTPS,
-                hasJwtSecret: !!config.gpuServerAuthJwtSecret,
-                jwtSecret: config.gpuServerAuthJwtSecret, // Temporary debug
-                serverIdForGpuServer: config.serverIdForGpuServer,
-                gpuServerIdentity: config.gpuServerIdentity,
-                jwtRefreshInterval: config.jwtRefreshInterval,
-                jwtLifetimeSeconds: config.jwtLifetimeSeconds
-            });
-            
+            logger.info(`${serviceLocation}: GPU configuration details:`);
+            logger.info(`${serviceLocation}: - Host: ${config.host}`);
+            logger.info(`${serviceLocation}: - Port: ${config.port}`);
+            logger.info(`${serviceLocation}: - Is HTTPS: ${config.isHTTPS}`);
+            logger.info(`${serviceLocation}: - Has JWT Secret: ${!!config.gpuServerAuthJwtSecret}`);
+            logger.info(`${serviceLocation}: - JWT Secret: ${config.gpuServerAuthJwtSecret}`); // Temporary debug
+            logger.info(`${serviceLocation}: - Server ID for GPU Server: ${config.serverIdForGpuServer}`);
+            logger.info(`${serviceLocation}: - GPU Server Identity: ${config.gpuServerIdentity}`);
+            logger.info(`${serviceLocation}: - JWT Refresh Interval: ${config.jwtRefreshInterval}ms`);
+            logger.info(`${serviceLocation}: - JWT Lifetime Seconds: ${config.jwtLifetimeSeconds}s`);
+
             return config;
         } else {
             logger.warn(`${serviceLocation}: Failed to load GPU configuration from database: ${dbResult.message}`);
@@ -443,14 +442,14 @@ function stopTokenRefresh(): void {
  */
 async function forceTokenRegeneration(): Promise<void> {
     logger.info(`${serviceLocation}: Forcing immediate JWT token regeneration...`);
-    
+
     try {
         // Reload configuration first to ensure we have the latest settings
         await reloadGPUConfig();
-        
+
         // Generate new token immediately
         generateAndStoreJwt();
-        
+
         logger.info(`${serviceLocation}: JWT token regenerated successfully after configuration change`);
     } catch (error: unknown) {
         logger.error(`${serviceLocation}: Failed to force JWT token regeneration`, { error });
