@@ -1,14 +1,14 @@
 // File: src/services/inference.ts
 // Description: Service layer for initiating the inference process, including Cloud GPU communication.
 
-import { IUserSafe, ProjectCrudResult, segmentationSource, IProjectSegmentationMask, ComponentBoundingBoxesClass } from "../types/database_types";
+import { IUserSafe, ProjectCrudResult, segmentationSource } from "../types/database_types";
 import logger from "./logger";
 import { readProject } from "./database";
 import { v4 as uuidv4 } from 'uuid';
 import { createJob, IJob, JobStatus } from "../services/database";
 import axios from 'axios';
 import { generatePresignedGetUrl } from "../utils/s3_presigned_url";
-import { URL } from 'url'; 
+import { URL } from 'url';
 import { getFreshGPUServerAddress } from "./gpu_auth_client"; // Import fresh GPU server address function
 
 const serviceLocation = "Inference";
@@ -17,19 +17,15 @@ const serviceLocation = "Inference";
 interface GpuManualPredictionResponseData {
     uuid?: string; // GPU's internal request/job ID
     status?: string;
-    result?: {
-        [imageName: string]: {
-            boxes: Array<{
-                bbox: number[];
-                confidence?: number;
-                class_id?: number;
-                class_name?: string; // Expected to be "manual"
-            }>;
-            masks: {
-                [className: string]: string; // Expecting a key like "manual" with RLE string
-            };
-        };
-    };
+    result?: Record<string, {
+        boxes: {
+            bbox: number[];
+            confidence?: number;
+            class_id?: number;
+            class_name?: string; // Expected to be "manual"
+        }[];
+        masks: Record<string, string>; // Expecting a key like "manual" with RLE string
+    }>;
     error?: string | null;
 }
 
@@ -130,7 +126,7 @@ export const startInference = async (projectId: string, user?: IUserSafe, gpuAut
             return { success: false, message: `Project with ID ${projectId} not found.` };
         }
 
-        const projectData = projectResult.projects[0]; 
+        const projectData = projectResult.projects[0];
 
         const s3HttpsUrlForTar = projectData.extractedfolderpath;
         if (!s3HttpsUrlForTar) {
@@ -143,7 +139,7 @@ export const startInference = async (projectId: string, user?: IUserSafe, gpuAut
             const parsedUrl = new URL(s3HttpsUrlForTar);
             objectKeyForTar = parsedUrl.pathname;
             if (objectKeyForTar.startsWith('/')) {
-                objectKeyForTar = objectKeyForTar.substring(1); 
+                objectKeyForTar = objectKeyForTar.substring(1);
             }
         } catch (e: any) {
             logger.error(`${serviceLocation}: Invalid S3 URL format in project.extractedfolderpath: ${s3HttpsUrlForTar}`, e);
@@ -168,7 +164,7 @@ export const startInference = async (projectId: string, user?: IUserSafe, gpuAut
             projectId: projectId, // Added projectId to AI inference payload as well for consistency if needed by GPU
             uuid: jobUuid,
             callback_url: callback_url,
-            url: dataUrlForGpu, 
+            url: dataUrlForGpu,
         };
 
         // The logger in sendInferenceRequestToCloudGpu will log the full payload.
@@ -177,14 +173,14 @@ export const startInference = async (projectId: string, user?: IUserSafe, gpuAut
 
         const inferenceResult = await sendInferenceRequestToCloudGpu(inferenceData, gpuAuthToken);
 
-        if (inferenceResult.success && inferenceResult.jobId) { 
+        if (inferenceResult.success && inferenceResult.jobId) {
             logger.info(`${serviceLocation}: Inference request sent successfully for project ${projectId}. GPU Job ID: ${inferenceResult.jobId}, Local UUID: ${jobUuid}.`);
 
             const jobData: IJob = {
                 userid: user?._id?.toString() || 'unknown',
                 projectid: projectId,
-                uuid: jobUuid, 
-                status: JobStatus.PENDING, 
+                uuid: jobUuid,
+                status: JobStatus.PENDING,
                 segmentationSource: segmentationSource.AI_INFERENCE
             };
             const jobCreationResult = await createJob(jobData);
@@ -195,7 +191,7 @@ export const startInference = async (projectId: string, user?: IUserSafe, gpuAut
                 logger.error(`${serviceLocation}: Failed to create job record for ${jobUuid}: ${jobCreationResult.message || 'Unknown error'}`);
                 return { success: true, message: `Inference accepted by GPU (Job ID: ${inferenceResult.jobId}), but failed to track job locally. UUID: ${jobUuid}`, uuid: jobUuid };
             }
-        } else if (inferenceResult.success) { 
+        } else if (inferenceResult.success) {
             logger.warn(`${serviceLocation}: Inference request reported success for project ${projectId} but no definite Job ID was returned from GPU. Local UUID: ${jobUuid}`);
             return { success: true, message: `Inference request sent for project ${projectId}, but no Job ID was clearly identified from GPU. UUID: ${jobUuid}`, uuid: jobUuid };
         } else {
@@ -212,34 +208,34 @@ export const startInference = async (projectId: string, user?: IUserSafe, gpuAut
 // This function is for direct synchronous GPU prediction if needed, not used by the job-based startManualInference below.
 const getDirectGpuManualPrediction = async (
     inferenceData: {
-        uuid: string; 
-        callback_url: string; 
-        url: string;          
-        image_name: string;   
-        bbox: number[];       
+        uuid: string;
+        callback_url: string;
+        url: string;
+        image_name: string;
+        bbox: number[];
         projectId?: string; // Added projectId here if GPU needs it
     },
     gpuAuthToken: string
-): Promise<{ 
-    success: boolean; 
-    data?: { 
-        imageNameFromGpu: string; 
-        rleString: string; 
-        bboxFromGpu: number[]; 
-        confidenceFromGpu?: number; 
-    }; 
-    error?: string 
+): Promise<{
+    success: boolean;
+    data?: {
+        imageNameFromGpu: string;
+        rleString: string;
+        bboxFromGpu: number[];
+        confidenceFromGpu?: number;
+    };
+    error?: string
 }> => {
     const serviceLocationDirectGpu = `${serviceLocation}_DirectGpuManualPrediction`;
-    
+
     // Get fresh GPU server configuration from database
     const cloudGpuBaseUrl = await getFreshGPUServerAddress();
     if (!cloudGpuBaseUrl) {
         logger.error(`${serviceLocationDirectGpu}: GPU server configuration is not available from database.`);
         return { success: false, error: "Cloud GPU URL not configured." };
     }
-    
-    const inferenceEndpoint = `${cloudGpuBaseUrl}/inference/v2/medsam-inference-manual`; 
+
+    const inferenceEndpoint = `${cloudGpuBaseUrl}/inference/v2/medsam-inference-manual`;
 
     logger.info(`${serviceLocationDirectGpu}: Sending direct manual prediction request to ${inferenceEndpoint} for image ${inferenceData.image_name}, internal UUID ${inferenceData.uuid}`);
     logger.debug(`${serviceLocationDirectGpu}: Payload for GPU:`, inferenceData);
@@ -250,7 +246,7 @@ const getDirectGpuManualPrediction = async (
                 'Authorization': `Bearer ${gpuAuthToken}`,
                 'Content-Type': 'application/json',
             },
-            timeout: 60000, 
+            timeout: 60000,
         });
 
         logger.debug(`${serviceLocationDirectGpu}: Received response from Cloud GPU. Status: ${response.status}, Data:`, response.data);
@@ -261,18 +257,18 @@ const getDirectGpuManualPrediction = async (
                 logger.error(`${serviceLocationDirectGpu}: GPU response successful but 'result' object is empty.`);
                 return { success: false, error: "GPU returned no result data." };
             }
-            const imageNameFromGpu = resultKeys[0]; 
+            const imageNameFromGpu = resultKeys[0];
             const imageData = response.data.result[imageNameFromGpu];
 
             if (!imageData || !imageData.masks || !imageData.boxes || imageData.boxes.length === 0) {
                 logger.error(`${serviceLocationDirectGpu}: GPU response for image ${imageNameFromGpu} is missing masks or boxes.`);
                 return { success: false, error: "GPU response missing critical segmentation data." };
             }
-            
-            const rleString = imageData.masks["manual"]; 
+
+            const rleString = imageData.masks["manual"];
             const firstBox = imageData.boxes[0];
             const bboxFromGpu = firstBox.bbox;
-            const confidenceFromGpu = firstBox.confidence; 
+            const confidenceFromGpu = firstBox.confidence;
 
             if (!rleString) {
                 logger.error(`${serviceLocationDirectGpu}: RLE string for 'manual' class not found in GPU response for image ${imageNameFromGpu}. Masks available: ${Object.keys(imageData.masks).join(', ')}`);
@@ -294,7 +290,7 @@ const getDirectGpuManualPrediction = async (
     } catch (error: any) {
         logger.error(`${serviceLocationDirectGpu}: Error sending direct prediction request to ${inferenceEndpoint}: ${error.message}`, { errorDetail: error });
         let errorMessage = `Error communicating with Cloud GPU: ${error.message}`;
-        if (error.response && error.response.status) { 
+        if (error.response && error.response.status) {
             errorMessage += ` (Status: ${error.response.status})`;
         }
         return { success: false, error: errorMessage };
