@@ -58,7 +58,6 @@ router.get(
 
       if (response.status === 200) {
         logger.info(`${serviceLocation}: GPU is available`);
-        logger.info(`Response from GPU server: ${response.data}`);
         res.status(200).json({
           message: "GPU is available.",
           status: "online",
