@@ -180,11 +180,11 @@ app.get('/', (req: Request, res: Response) => {
 //     }
 //   });
 
-logger.info(`${serviceLocation}: Static file serving configured`);
-};
+// logger.info(`${serviceLocation}: Static file serving configured`);
+// };
 
 // Apply static file configuration
-configureStaticFiles();
+// configureStaticFiles();
 
 // Export the configured app instance
 export { app };
