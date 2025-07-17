@@ -138,41 +138,49 @@ app.use('/status', gpuStatusRoute); // Mount GPU status routes
 // Admin Tool Routes
 app.use('/admintools', adminToolsRoute);
 
-// Configure static file serving
-const configureStaticFiles = (): void => {
-  // Define base paths
-  const publicDir = path.join(__dirname, '../../public');
-  const publicAssetsDir = path.join(__dirname, '../../public/assets');
-  const indexHtmlPath = path.join(publicDir, 'index.html');
-
-  // Verify that the public directory exists
-  if (!fs.existsSync(publicDir)) {
-    logger.warn(`${serviceLocation}: Public directory not found at ${publicDir}`);
-  }
-
-  // Configure static file middleware with caching options
-  const staticOptions = {
-    maxAge: envType === 'production' ? '1d' : 0, // Cache for 1 day in production
-    etag: true,
-  };
-
-  // Serve static files from the 'public' directory
-  app.use(express.static(publicDir, staticOptions));
-
-  // Serve assets with specific route
-  app.use('/assets', express.static(publicAssetsDir, staticOptions));
-
-  // SPA fallback - serve index.html for any unmatched routes
-  app.get('*', (req: Request, res: Response) => {
-    if (fs.existsSync(indexHtmlPath)) {
-      res.sendFile(indexHtmlPath);
-    } else {
-      logger.error(`${serviceLocation}: index.html not found at ${indexHtmlPath}`);
-      res.status(404).send('Application entry point not found');
-    }
+// Return simple server status when accessing the root path
+app.get('/', (req: Request, res: Response) => {
+  res.status(200).json({
+    message: 'Visheart API Server is running',
+    environment: envType,
   });
+});
 
-  logger.info(`${serviceLocation}: Static file serving configured`);
+// Configure static file serving
+// const configureStaticFiles = (): void => {
+//   // Define base paths
+//   const publicDir = path.join(__dirname, '../../public');
+//   const publicAssetsDir = path.join(__dirname, '../../public/assets');
+//   const indexHtmlPath = path.join(publicDir, 'index.html');
+
+//   // Verify that the public directory exists
+//   if (!fs.existsSync(publicDir)) {
+//     logger.warn(`${serviceLocation}: Public directory not found at ${publicDir}`);
+//   }
+
+//   // Configure static file middleware with caching options
+//   const staticOptions = {
+//     maxAge: envType === 'production' ? '1d' : 0, // Cache for 1 day in production
+//     etag: true,
+//   };
+
+//   // Serve static files from the 'public' directory
+//   app.use(express.static(publicDir, staticOptions));
+
+//   // Serve assets with specific route
+//   app.use('/assets', express.static(publicAssetsDir, staticOptions));
+
+//   // SPA fallback - serve index.html for any unmatched routes
+//   app.get('*', (req: Request, res: Response) => {
+//     if (fs.existsSync(indexHtmlPath)) {
+//       res.sendFile(indexHtmlPath);
+//     } else {
+//       logger.error(`${serviceLocation}: index.html not found at ${indexHtmlPath}`);
+//       res.status(404).send('Application entry point not found');
+//     }
+//   });
+
+logger.info(`${serviceLocation}: Static file serving configured`);
 };
 
 // Apply static file configuration
