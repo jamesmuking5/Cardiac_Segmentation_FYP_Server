@@ -70,7 +70,7 @@
     "axios": "^1.9.0",
     "axios-cookiejar-support": "^5.0.5",
     "eslint": "^9.24.0",
-    "eslint-config-prettier": "^10.1.1",
+    "eslint-config-prettier": "^10.1.8",
     "eslint-plugin-prettier": "^5.2.6",
     "globals": "^16.0.0",
     "jest": "^29.7.0",
