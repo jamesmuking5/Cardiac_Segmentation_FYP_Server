@@ -33,7 +33,7 @@ if (redisCloud) {
     socket: {
       host: process.env.REDIS_HOST,
       port: parseInt(process.env.REDIS_PORT || "6379", 10),
-      reconnectStrategy: (retries) => {
+      reconnectStrategy: (retries: number) => {
         if (retries > 5) {
           logger.error(`${serviceLocation}: Exceeded maximum retry attempts.`);
           LogError(
@@ -59,7 +59,7 @@ if (redisCloud) {
     password: process.env.REDIS_PASSWORD || undefined,
     socket: {
       tls: process.env.REDIS_TLS === "true",
-      reconnectStrategy: (retries) => {
+      reconnectStrategy: (retries: number) => {
         if (retries > 5) {
           logger.error(`${serviceLocation}: Exceeded maximum retry attempts.`);
           LogError(
