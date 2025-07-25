@@ -220,6 +220,14 @@ let tokenExpiresAt: number | null = null;
 let refreshIntervalId: NodeJS.Timeout | null = null;
 
 /**
+ * Flag to prevent concurrent JWT generation attempts.
+ * When true, indicates that a JWT generation is already in progress.
+ * @private
+ * @type {boolean}
+ */
+let isGeneratingToken: boolean = false;
+
+/**
  * @function generateAndStoreJwt
  * @private
  * @description Generates a new JWT using the current GPU configuration,
@@ -373,7 +381,17 @@ async function initAndRefreshAuth(): Promise<void> {
       logger.info(
         `${serviceLocation}: Refreshing the JWT token for GPU server authentication.`
       );
+      
+      // Skip if already generating to prevent race conditions
+      if (isGeneratingToken) {
+        logger.info(
+          `${serviceLocation}: Skipping scheduled refresh - JWT generation already in progress.`
+        );
+        return;
+      }
+      
       try {
+        isGeneratingToken = true;
         // Generate and store the new token in the background
         generateAndStoreJwt();
       } catch (refreshError) {
@@ -388,6 +406,8 @@ async function initAndRefreshAuth(): Promise<void> {
           serviceLocation,
           `Error refreshing JWT`
         );
+      } finally {
+        isGeneratingToken = false;
       }
     }, currentGPUConfig.jwtRefreshInterval); // Refresh based on the configured interval
 
@@ -413,11 +433,10 @@ async function initAndRefreshAuth(): Promise<void> {
 /**
  * @function getCurrentToken
  * @description Retrieves the most recently generated JWT string, provided it exists
- * and has not expired (considering a small buffer). Intended to be called
- * just before making an authenticated request to the GPU server.
+ * and has not expired (considering a small buffer). If the token is expired or about
+ * to expire, it will attempt to generate a new one immediately (on-demand refresh).
  * @returns {string | null} The current valid JWT string, or `null` if no valid token
- * is currently available (e.g., initialization failed, token
- * expired and refresh is pending, or refresh failed).
+ * is currently available (e.g., initialization failed or token generation failed).
  */
 function getCurrentToken(): string | null {
   if (!currentJwt) {
@@ -431,11 +450,47 @@ function getCurrentToken(): string | null {
   const bufferSeconds = 30; // Check 30 seconds before actual expiry for safety margin
   if (!tokenExpiresAt || Date.now() >= tokenExpiresAt - bufferSeconds * 1000) {
     logger.warn(
-      `${serviceLocation}: Current JWT is expired or nearing expiration (expires: ${tokenExpiresAt ? new Date(tokenExpiresAt).toISOString() : "N/A"}). Waiting for refresh interval.`
+      `${serviceLocation}: Current JWT is expired or nearing expiration (expires: ${tokenExpiresAt ? new Date(tokenExpiresAt).toISOString() : "N/A"}). Attempting on-demand refresh...`
     );
-    // Return null because the current token is considered invalid for use.
-    // The background refresh should provide a new one soon.
-    return null;
+    
+    // Check if another thread is already generating a token
+    if (isGeneratingToken) {
+      logger.info(
+        `${serviceLocation}: JWT generation already in progress, returning current token (may be expired).`
+      );
+      return currentJwt; // Return current token even if expired, rather than null
+    }
+    
+    // Ensure we have configuration before attempting to generate
+    if (!currentGPUConfig) {
+      logger.error(
+        `${serviceLocation}: Cannot refresh JWT on-demand - GPU configuration not loaded.`
+      );
+      return null;
+    }
+    
+    // Try to generate a new token immediately instead of just returning null
+    try {
+      isGeneratingToken = true; // Set flag to prevent concurrent generation
+      generateAndStoreJwt();
+      logger.info(
+        `${serviceLocation}: Successfully generated new JWT on-demand. New expiry: ${tokenExpiresAt ? new Date(tokenExpiresAt).toISOString() : "N/A"}`
+      );
+      return currentJwt; // Return the newly generated token
+    } catch (error) {
+      logger.error(
+        `${serviceLocation}: Failed to generate JWT on-demand. Requests will fail until next scheduled refresh.`,
+        { error }
+      );
+      LogError(
+        error as Error,
+        serviceLocation,
+        `On-demand JWT generation failed`
+      );
+      return null; // Return null if we couldn't generate a new token
+    } finally {
+      isGeneratingToken = false; // Always clear the generation flag
+    }
   }
 
   // Token exists and is within its validity period (including buffer)
@@ -480,7 +535,17 @@ async function reloadGPUConfig(): Promise<void> {
         logger.info(
           `${serviceLocation}: [SCHEDULED REFRESH] Refreshing JWT token (interval: ${refreshInterval}ms)`
         );
+        
+        // Skip if already generating to prevent race conditions
+        if (isGeneratingToken) {
+          logger.info(
+            `${serviceLocation}: Skipping scheduled refresh - JWT generation already in progress.`
+          );
+          return;
+        }
+        
         try {
+          isGeneratingToken = true;
           generateAndStoreJwt();
         } catch (refreshError) {
           logger.error(
@@ -492,6 +557,8 @@ async function reloadGPUConfig(): Promise<void> {
             serviceLocation,
             `Error refreshing JWT`
           );
+        } finally {
+          isGeneratingToken = false;
         }
       }, currentGPUConfig.jwtRefreshInterval);
 
@@ -550,10 +617,26 @@ async function forceTokenRegeneration(): Promise<void> {
 
     // Generate a fresh token immediately (reloadGPUConfig doesn't generate a token)
     if (currentGPUConfig) {
-      generateAndStoreJwt();
-      logger.info(
-        `${serviceLocation}: [FORCE REGEN] JWT token regenerated immediately with new configuration`
-      );
+      // Use the race condition protection here too
+      if (isGeneratingToken) {
+        logger.info(
+          `${serviceLocation}: JWT generation already in progress during force regeneration, waiting for completion...`
+        );
+        // Wait briefly for the current generation to complete
+        await new Promise(resolve => setTimeout(resolve, 100));
+      }
+      
+      if (!isGeneratingToken) {
+        try {
+          isGeneratingToken = true;
+          generateAndStoreJwt();
+          logger.info(
+            `${serviceLocation}: [FORCE REGEN] JWT token regenerated immediately with new configuration`
+          );
+        } finally {
+          isGeneratingToken = false;
+        }
+      }
     }
 
     logger.info(
