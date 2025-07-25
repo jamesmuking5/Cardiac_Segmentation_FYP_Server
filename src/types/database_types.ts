@@ -9,9 +9,9 @@ import { Document } from "mongoose";
  * @property {string} Admin - Represents an administrator with elevated privileges.
  */
 export enum UserRole {
-    User = "user",
-    Admin = "admin",
-    Guest = "guest", // For temporary users
+  User = "user",
+  Admin = "admin",
+  Guest = "guest", // For temporary users
 }
 
 /**
@@ -24,11 +24,11 @@ export enum UserRole {
  * @property {UserRole} role - The role assigned to the user (e.g., User, Admin).
  */
 export interface IUser {
-    username: string;
-    password: string;
-    email: string;
-    phone: string;
-    role: UserRole; // Default to "user" unless specified otherwise
+  username: string;
+  password: string;
+  email: string;
+  phone: string;
+  role: UserRole; // Default to "user" unless specified otherwise
 }
 
 /**
@@ -44,20 +44,19 @@ export interface IUser {
  * @property {Date} [updatedAt] - The date when the user was last updated (optional).
  */
 export interface IUserSafe {
-    _id: string; // MongoDB Object ID of the user
-    username: string;
-    email: string;
-    phone: string;
-    role: UserRole; // Default to "user" unless specified otherwise
-    createdAt?: Date; // Creation date of the user
-    updatedAt?: Date; // Last update date of the user
+  _id: string; // MongoDB Object ID of the user
+  username: string;
+  email: string;
+  phone: string;
+  role: UserRole; // Default to "user" unless specified otherwise
+  createdAt?: Date; // Creation date of the user
+  updatedAt?: Date; // Last update date of the user
 }
 // User Model Interface (single user document in the database)
 export interface IUserDocument extends IUser, Document {
-    createdAt: Date; // Creation date of the user, commented out if extended with mongoose.Document
-    updatedAt: Date; // Last update date of the user, commented out if extended with mongoose.Document
+  createdAt: Date; // Creation date of the user, commented out if extended with mongoose.Document
+  updatedAt: Date; // Last update date of the user, commented out if extended with mongoose.Document
 }
-
 
 /*==================================== Project Section begins here =============================================*/
 // Enumeration for file types
@@ -72,10 +71,10 @@ export interface IUserDocument extends IUser, Document {
  * @property {string} NIFTI_GZ_CUSTOM - Represents a non-standard, custom MIME type for compressed NIfTI files (.nii.gz).
  */
 export enum FileType {
-    NIFTI = "application/octet-stream", // .nii (standard MIME for NIfTI files)
-    NIFTI_GZ = "application/gzip", // .nii.gz (standard MIME for gzip-compressed NIfTI files)
-    NIFTI_GZ_2 = "application/x-gzip", // .nii.gz alternate variant
-    DICOM = "application/dicom", // .dcm (standard MIME for DICOM files)
+  NIFTI = "application/octet-stream", // .nii (standard MIME for NIfTI files)
+  NIFTI_GZ = "application/gzip", // .nii.gz (standard MIME for gzip-compressed NIfTI files)
+  NIFTI_GZ_2 = "application/x-gzip", // .nii.gz alternate variant
+  DICOM = "application/dicom", // .dcm (standard MIME for DICOM files)
 }
 
 // Enumeration for DataType
@@ -93,14 +92,14 @@ export enum FileType {
  * @property {string} FLOAT64 - Represents a 64-bit floating-point number.
  */
 export enum FileDataType {
-    UNKNOWN = "unknown",       // Used when the data type is not determined.
-    FLOAT32 = "float32",       // Common for continuous-valued data (e.g., images, scans).
-    UINT16 = "uint16",         // Common for medical images (e.g., grayscale).
-    UINT8 = "uint8",           // Common for segmentation masks (often used for binary masks).
-    INT16 = "int16",           // Common for signed integer data types.
-    INT32 = "int32",           // Used in some medical imaging formats.
-    UINT32 = "uint32",         // Used in certain specialized data formats.
-    FLOAT64 = "float64"        // Less common, but used for high-precision floating point.
+  UNKNOWN = "unknown", // Used when the data type is not determined.
+  FLOAT32 = "float32", // Common for continuous-valued data (e.g., images, scans).
+  UINT16 = "uint16", // Common for medical images (e.g., grayscale).
+  UINT8 = "uint8", // Common for segmentation masks (often used for binary masks).
+  INT16 = "int16", // Common for signed integer data types.
+  INT32 = "int32", // Used in some medical imaging formats.
+  UINT32 = "uint32", // Used in certain specialized data formats.
+  FLOAT64 = "float64", // Less common, but used for high-precision floating point.
 }
 
 /**
@@ -119,7 +118,7 @@ export enum FileDataType {
  * @property {string} basepath - The base path for the file storage (e.g., s3://devel-visheart-s3-bucket/temp/"the-user-id"/"the-user-id"_2630fcede25328c13a15c4dfe6376c068201eb1f8d871736cd8197c2b1463ed3).
  * @property {string} originalfilepath - The original file location (e.g., s3://devel-visheart-s3-bucket/temp/"the-user-id"/"the-user-id"_2630fcede25328c13a15c4dfe6376c068201eb1f8d871736cd8197c2b1463ed3/"the-user-id"_2630fcede25328c13a15c4dfe6376c068201eb1f8d871736cd8197c2b1463ed3.nii.gz).
  * @property {string} extractedfolderpath - The folder where all the extracted JPEGs from NIfTI are saved. (e.g. s3://devel-visheart-s3-bucket/temp/${testUser._id}/${String(testUser._id)}_2630fcede25328c13a15c4dfe6376c068201eb1f8d871736cd8197c2b1463ed3/extracted)
-* @property {string} datatype - The data type of the image (e.g., uint8, float32).
+ * @property {string} datatype - The data type of the image (e.g., uint8, float32).
  * @property {object} dimensions - The dimensions of the image.
  * @property {number} dimensions.width - The width of the image in pixels.
  * @property {number} dimensions.height - The height of the image in pixels.
@@ -132,43 +131,43 @@ export enum FileDataType {
  * @property {number} voxelsize.t - The size in the t-dimension (optional).
  */
 export interface IProject {
-    // Identifiers
-    // _id:  string; // MongoDB Object ID of the project, commented out if extended with mongoose.Document
-    userid: string; // MongoDB User ID of the user who uploaded the file
-    // User inputs
-    name: string; // Name of the project
-    originalfilename: string;
-    description: string;
-    isSaved: boolean; // Indicates if the project is saved in the database
-    // File properties
-    filename: string; // Server rename - e.g., userid_projid.nii - use new mongoose.Types.ObjectId() to pregenerate before creating document in DB
-    filetype: FileType; // MIME type of the file
-    filesize: number; // Size of the renamed file in bytes
-    filehash: string; // SHA256 hash of the renamed file
-    // Location tracking
-    basepath: string // Base path for the file storage (e.g., S3 bucket URL + user + filehash)
-    originalfilepath: string; // Original (nifti/dicom) file location (e.g., S3 bucket URL)
-    extractedfolderpath: string; // Saves the folder where all the extracted jpeg from nifti are saved. Use naming convention for each extracted jpeg as filename_slice_frame.jpeg
-    // File specifics
-    datatype: FileDataType; // Data type of the image (e.g., uint8, float32)
-    dimensions: {
-        width: number; // Width of the image in pixels
-        height: number; // Height of the image in pixels
-        slices: number; // Depth/Slices of the image in pixels (for 3D images)
-        frames?: number; // Time/Frames dimension (optional, for 4D images)
-    }
+  // Identifiers
+  // _id:  string; // MongoDB Object ID of the project, commented out if extended with mongoose.Document
+  userid: string; // MongoDB User ID of the user who uploaded the file
+  // User inputs
+  name: string; // Name of the project
+  originalfilename: string;
+  description: string;
+  isSaved: boolean; // Indicates if the project is saved in the database
+  // File properties
+  filename: string; // Server rename - e.g., userid_projid.nii - use new mongoose.Types.ObjectId() to pregenerate before creating document in DB
+  filetype: FileType; // MIME type of the file
+  filesize: number; // Size of the renamed file in bytes
+  filehash: string; // SHA256 hash of the renamed file
+  // Location tracking
+  basepath: string; // Base path for the file storage (e.g., S3 bucket URL + user + filehash)
+  originalfilepath: string; // Original (nifti/dicom) file location (e.g., S3 bucket URL)
+  extractedfolderpath: string; // Saves the folder where all the extracted jpeg from nifti are saved. Use naming convention for each extracted jpeg as filename_slice_frame.jpeg
+  // File specifics
+  datatype: FileDataType; // Data type of the image (e.g., uint8, float32)
+  dimensions: {
+    width: number; // Width of the image in pixels
+    height: number; // Height of the image in pixels
+    slices: number; // Depth/Slices of the image in pixels (for 3D images)
+    frames?: number; // Time/Frames dimension (optional, for 4D images)
+  };
 
-    /** Physical size of one voxel (usually in mm).
-     * From NIfTI pixdim = [?, 0.5, 0.5, 1.0, 2.0, 0, 0, 0], first ? and last 3 zeroes are not used,
-     * but the 4 numbers are in mm, mm, mm and seconds. */
-    voxelsize?: { x: number; y: number; z?: number; t?: number; };
+  /** Physical size of one voxel (usually in mm).
+   * From NIfTI pixdim = [?, 0.5, 0.5, 1.0, 2.0, 0, 0, 0], first ? and last 3 zeroes are not used,
+   * but the 4 numbers are in mm, mm, mm and seconds. */
+  voxelsize?: { x: number; y: number; z?: number; t?: number };
 
-    // Based on mongoose timestamp
-    createdAt?: Date; // Creation date of the project
-    updatedAt?: Date; // Last update date of the project
+  // Based on mongoose timestamp
+  createdAt?: Date; // Creation date of the project
+  updatedAt?: Date; // Last update date of the project
 }
 // Project Model Interface (single project document in the database)
-export interface IProjectDocument extends IProject, Document { }
+export interface IProjectDocument extends IProject, Document {}
 
 // Enumeration for component bounding box classes
 /**
@@ -180,10 +179,10 @@ export interface IProjectDocument extends IProject, Document { }
  * @property {string} MANUAL - Represents a manually generated segmentation class.
  */
 export enum ComponentBoundingBoxesClass {
-    RV = "rv",
-    MYO = "myo",
-    LVC = "lvc",
-    MANUAL = "manual", // Added for manual segmentations from GPU
+  RV = "rv",
+  MYO = "myo",
+  LVC = "lvc",
+  MANUAL = "manual", // Added for manual segmentations from GPU
 }
 
 /**
@@ -214,70 +213,72 @@ export enum ComponentBoundingBoxesClass {
  * @property {string} frames.slices.segmentationmasks.segmentationmaskcontents - The contents of the segmentation mask (e.g., RLE format).
  */
 export interface IProjectSegmentationMask {
-    // Identifiers
-    _id?: any; // Allow _id to be compatible with the transformed object for new segmentations
-    projectid: string; // MongoDB Project ID of the project to which the segmentation mask belongs
-    // User inputs
-    name: string; // Name of the segmentation mask
-    description?: string; // Description of the segmentation mask
-    isSaved: boolean; // Indicates if the segmentation mask is saved in the database
-    segmentationmaskRLE: boolean; // Indicates if the mask is in RLE format
-    isMedSAMOutput: boolean; // Indicates if the segmentation mask is a MedSAM output (should not delete if its the output of MedSAM)
-    // Properties of the bounding box coordinates used to input into MedSAM for segmentation
-    // If the segmentation mask is a single frame, there will be only one entry in the frames array
-    frames: {
-        frameindex: number; // The index of the frame (0-based)
-        // Since GPU limitaion, predict on only one frame at a time, this is a record
-        frameinferred: boolean; // Indicates if the frame has been inferred
-        slices: {
-            sliceindex: number; // The index of the slice (0-based)
-            componentboundingboxes?: {
-                class: ComponentBoundingBoxesClass; // Class of the component (e.g., rv, myo, lvc)
-                confidence: number; // Confidence score of the bounding box
-                x_min: number; // X coordinate of the minimum bounding box corner
-                y_min: number; // Y coordinate of the minimum bounding box corner
-                x_max: number; // X coordinate of the maximum bounding box corner
-                y_max: number; // Y coordinate of the maximum bounding box corner
-            }[];
-            segmentationmasks?: {
-                class: ComponentBoundingBoxesClass; // Class of the component (e.g., rv, myo, lvc)
-                segmentationmaskcontents: string;
-            }[];
-        }[];
+  // Identifiers
+  _id?: any; // Allow _id to be compatible with the transformed object for new segmentations
+  projectid: string; // MongoDB Project ID of the project to which the segmentation mask belongs
+  // User inputs
+  name: string; // Name of the segmentation mask
+  description?: string; // Description of the segmentation mask
+  isSaved: boolean; // Indicates if the segmentation mask is saved in the database
+  segmentationmaskRLE: boolean; // Indicates if the mask is in RLE format
+  isMedSAMOutput: boolean; // Indicates if the segmentation mask is a MedSAM output (should not delete if its the output of MedSAM)
+  // Properties of the bounding box coordinates used to input into MedSAM for segmentation
+  // If the segmentation mask is a single frame, there will be only one entry in the frames array
+  frames: {
+    frameindex: number; // The index of the frame (0-based)
+    // Since GPU limitaion, predict on only one frame at a time, this is a record
+    frameinferred: boolean; // Indicates if the frame has been inferred
+    slices: {
+      sliceindex: number; // The index of the slice (0-based)
+      componentboundingboxes?: {
+        class: ComponentBoundingBoxesClass; // Class of the component (e.g., rv, myo, lvc)
+        confidence: number; // Confidence score of the bounding box
+        x_min: number; // X coordinate of the minimum bounding box corner
+        y_min: number; // Y coordinate of the minimum bounding box corner
+        x_max: number; // X coordinate of the maximum bounding box corner
+        y_max: number; // Y coordinate of the maximum bounding box corner
+      }[];
+      segmentationmasks?: {
+        class: ComponentBoundingBoxesClass; // Class of the component (e.g., rv, myo, lvc)
+        segmentationmaskcontents: string;
+      }[];
     }[];
+  }[];
 }
 // Segmentation Mask Model Interface (single segmentation mask document in the database)
-export interface IProjectSegmentationMaskDocument extends IProjectSegmentationMask, Document {
-    _id: any; // Ensure _id is part of the document type
+export interface IProjectSegmentationMaskDocument
+  extends IProjectSegmentationMask,
+    Document {
+  _id: any; // Ensure _id is part of the document type
 }
 
 /*==================================== Project Section ends here =============================================*/
 /*==================================== Job Queue Section starts here =========================================*/
 // Enumeration for job statuses
 export enum JobStatus {
-    PENDING = "pending",
-    IN_PROGRESS = "in_progress",
-    COMPLETED = "completed",
-    FAILED = "failed",
+  PENDING = "pending",
+  IN_PROGRESS = "in_progress",
+  COMPLETED = "completed",
+  FAILED = "failed",
 }
 
 export enum segmentationSource {
-    AI_INFERENCE = "ai_inference", // Segmentation generated by AI inference
-    MANUAL_INFERENCE = "manual_inference", // Segmentation generated by manual inference
+  AI_INFERENCE = "ai_inference", // Segmentation generated by AI inference
+  MANUAL_INFERENCE = "manual_inference", // Segmentation generated by manual inference
 }
 
 export interface IJob {
-    userid: string; // ID of the user who created the job
-    projectid: string; // ID of the project associated with the job
-    uuid: string; // UUID of the job (for tracking purposes)
-    status: JobStatus; // Current status of the job (e.g., pending, in_progress, completed, failed)
-    result?: string; // Result of the job (e.g., path to the output file, success message, etc.)
-    message?: string; // Optional error message if the job fails
-    segmentationName?: string; // Optional user-defined name for the resulting segmentation
-    segmentationDescription?: string; // Optional user-defined description for the resulting segmentation
-    segmentationSource?: segmentationSource; // Source of the image for segmentation
+  userid: string; // ID of the user who created the job
+  projectid: string; // ID of the project associated with the job
+  uuid: string; // UUID of the job (for tracking purposes)
+  status: JobStatus; // Current status of the job (e.g., pending, in_progress, completed, failed)
+  result?: string; // Result of the job (e.g., path to the output file, success message, etc.)
+  message?: string; // Optional error message if the job fails
+  segmentationName?: string; // Optional user-defined name for the resulting segmentation
+  segmentationDescription?: string; // Optional user-defined description for the resulting segmentation
+  segmentationSource?: segmentationSource; // Source of the image for segmentation
 }
-export interface IJobDocument extends IJob, Document { }
+export interface IJobDocument extends IJob, Document {}
 
 /*==================================== Job Queue Section ends here ===========================================*/
 /* Database Functions */
@@ -297,20 +298,20 @@ export interface IJobDocument extends IJob, Document { }
  * Project:
  */
 export enum CRUDOperation {
-    CREATE = "create",
-    READ = "read",
-    UPDATE = "update",
-    DELETE = "delete",
-    /**
-     * AUTHENTICATE is used for user authentication operations and is not a standard CRUD operation,
-     * but it is included here for consistency in reporting operation types, especially for PassportJS integration.
-     */
-    AUTHENTICATE = "authenticate",
-    // Project specific operations
+  CREATE = "create",
+  READ = "read",
+  UPDATE = "update",
+  DELETE = "delete",
+  /**
+   * AUTHENTICATE is used for user authentication operations and is not a standard CRUD operation,
+   * but it is included here for consistency in reporting operation types, especially for PassportJS integration.
+   */
+  AUTHENTICATE = "authenticate",
+  // Project specific operations
 
-    // // Project Segmentation Mask specific operations
-    // UPDATE_SINGLE_SLICE = "update_single_slice", // Update a single slice in the segmentation mask
-    // UPDATE_SINGLE_FRAME = "update_single_frame", // Update a single frame in the segmentation mask
+  // // Project Segmentation Mask specific operations
+  // UPDATE_SINGLE_SLICE = "update_single_slice", // Update a single slice in the segmentation mask
+  // UPDATE_SINGLE_FRAME = "update_single_frame", // Update a single frame in the segmentation mask
 }
 // Define result type for user CRUD operations
 /**
@@ -324,11 +325,11 @@ export enum CRUDOperation {
  * @property {string} [message] - An optional message providing more details, especially in case of failure (e.g., validation error, user not found) or warnings.
  */
 export interface UserCrudResult {
-    success: boolean; // Indicates whether the operation was successful
-    operation: CRUDOperation; // The type of operation performed (CREATE, READ, UPDATE, DELETE)
-    user?: IUserSafe; // The created or updated user document (applicable for CREATE and UPDATE operations)
-    users?: IUserSafe[]; // Array of user documents (applicable for READ operation)
-    message?: string; // Message if error/warning occurred (applicable for all operations)
+  success: boolean; // Indicates whether the operation was successful
+  operation: CRUDOperation; // The type of operation performed (CREATE, READ, UPDATE, DELETE)
+  user?: IUserSafe; // The created or updated user document (applicable for CREATE and UPDATE operations)
+  users?: IUserSafe[]; // Array of user documents (applicable for READ operation)
+  message?: string; // Message if error/warning occurred (applicable for all operations)
 }
 
 // Define result type for project CRUD operations
@@ -343,11 +344,11 @@ export interface UserCrudResult {
  * @property {string} [message] - An optional message providing more details, especially in case of failure (e.g., validation error, project not found) or warnings.
  */
 export interface ProjectCrudResult {
-    success: boolean; // Indicates whether the operation was successful
-    operation: CRUDOperation; // The type of operation performed (CREATE, READ, UPDATE, DELETE)
-    project?: IProjectDocument; // The created or updated project document (applicable for CREATE and UPDATE operations)
-    projects?: IProjectDocument[]; // Array of project documents (applicable for READ operation)
-    message?: string; // Message if error/warning occurred (applicable for all operations)
+  success: boolean; // Indicates whether the operation was successful
+  operation: CRUDOperation; // The type of operation performed (CREATE, READ, UPDATE, DELETE)
+  project?: IProjectDocument; // The created or updated project document (applicable for CREATE and UPDATE operations)
+  projects?: IProjectDocument[]; // Array of project documents (applicable for READ operation)
+  message?: string; // Message if error/warning occurred (applicable for all operations)
 }
 
 /**
@@ -361,20 +362,20 @@ export interface ProjectCrudResult {
  * @property {string} [message] - An optional message providing more details, especially in case of failure (e.g., validation error, segmentation mask not found) or warnings.
  */
 export interface ProjectSegmentationMaskCrudResult {
-    success: boolean; // Indicates whether the operation was successful
-    operation: CRUDOperation; // The type of operation performed (CREATE, READ, UPDATE, DELETE)
-    projectsegmentationmask?: IProjectSegmentationMaskDocument; // The created or updated segmentation mask document (applicable for CREATE and UPDATE operations)
-    projectsegmentationmasks?: IProjectSegmentationMaskDocument[]; // Array of segmentation mask documents (applicable for READ operation)
-    message?: string; // Message if error/warning occurred (applicable for all operations)
+  success: boolean; // Indicates whether the operation was successful
+  operation: CRUDOperation; // The type of operation performed (CREATE, READ, UPDATE, DELETE)
+  projectsegmentationmask?: IProjectSegmentationMaskDocument; // The created or updated segmentation mask document (applicable for CREATE and UPDATE operations)
+  projectsegmentationmasks?: IProjectSegmentationMaskDocument[]; // Array of segmentation mask documents (applicable for READ operation)
+  message?: string; // Message if error/warning occurred (applicable for all operations)
 }
 
 // Define result type for job CRUD operations
 export interface JobCrudResult {
-    success: boolean; // Indicates whether the operation was successful
-    operation: CRUDOperation; // The type of operation performed (CREATE, READ, UPDATE, DELETE)
-    job?: IJobDocument; // The created or updated job document (applicable for CREATE and UPDATE operations)
-    jobs?: IJobDocument[]; // Array of job documents (applicable for READ operation)
-    message?: string; // Message if error/warning occurred (applicable for all operations)
+  success: boolean; // Indicates whether the operation was successful
+  operation: CRUDOperation; // The type of operation performed (CREATE, READ, UPDATE, DELETE)
+  job?: IJobDocument; // The created or updated job document (applicable for CREATE and UPDATE operations)
+  jobs?: IJobDocument[]; // Array of job documents (applicable for READ operation)
+  message?: string; // Message if error/warning occurred (applicable for all operations)
 }
 
 /*==================================== Job Queue Section ends here ===========================================*/
@@ -384,7 +385,7 @@ export interface JobCrudResult {
 
 /**
  * Represents a GPU host configuration for connecting to a remote GPU server.
- * 
+ *
  * @interface IGPUHost
  * @property {string} host - The hostname or IP address of the GPU server.
  * @property {number} port - The port number on which the GPU server is running.
@@ -393,28 +394,28 @@ export interface JobCrudResult {
  * @property {string} changedBy - The user id of the person who last changed the GPU host configuration.
  */
 export interface IGPUHost {
-    host: string; // The hostname or IP address of the GPU server
-    port: number; // The port number on which the GPU server is running
-    isHTTPS?: boolean; // Optional flag to indicate if the connection should use HTTPS (default is false)
-    gpuServerAuthJwtSecret: string; // JWT secret for authenticating with the GPU server
-    serverIdForGpuServer: string; // The identifier for this Node.js server instance/service. Used as the 'subject' (`sub`) and 'issuer' (`iss`) claims within the generated JWT to identify who the token represents and who issued it.
-    gpuServerIdentity: string; // The identifier representing the intended recipient (audience) of the generated JWTs, which is the GPU/FastAPI server itself. Used in the 'audience' (`aud`) claim.
-    jwtRefreshInterval: number; // The interval in milliseconds at which the JWT should be refreshed
-    jwtLifetimeSeconds: number; // The lifetime of the JWT in seconds
-    description?: string; // A description of the GPU host configuration
-    setBy: string; // The user id of the person who last changed the GPU host configuration
+  host: string; // The hostname or IP address of the GPU server
+  port: number; // The port number on which the GPU server is running
+  isHTTPS?: boolean; // Optional flag to indicate if the connection should use HTTPS (default is false)
+  gpuServerAuthJwtSecret: string; // JWT secret for authenticating with the GPU server
+  serverIdForGpuServer: string; // The identifier for this Node.js server instance/service. Used as the 'subject' (`sub`) and 'issuer' (`iss`) claims within the generated JWT to identify who the token represents and who issued it.
+  gpuServerIdentity: string; // The identifier representing the intended recipient (audience) of the generated JWTs, which is the GPU/FastAPI server itself. Used in the 'audience' (`aud`) claim.
+  jwtRefreshInterval: number; // The interval in milliseconds at which the JWT should be refreshed
+  jwtLifetimeSeconds: number; // The lifetime of the JWT in seconds
+  description?: string; // A description of the GPU host configuration
+  setBy: string; // The user id of the person who last changed the GPU host configuration
 }
 export interface IGPUHostDocument extends IGPUHost, Document {
-    createdAt: Date; // Creation date of the GPU host configuration, commented out if extended
-    updatedAt: Date; // Last update date of the GPU host configuration, commented out if extended
+  createdAt: Date; // Creation date of the GPU host configuration, commented out if extended
+  updatedAt: Date; // Last update date of the GPU host configuration, commented out if extended
 }
 
 // Define result type for GPU host CRUD operations
 export interface GPUHostCrudResult {
-    success: boolean; // Indicates whether the operation was successful
-    operation: CRUDOperation; // The type of operation performed (CREATE, READ, UPDATE, DELETE)
-    gpuHost?: IGPUHostDocument; // The created or updated GPU host configuration (applicable for CREATE and UPDATE operations)
-    message?: string; // Message if error/warning occurred (applicable for all operations)
+  success: boolean; // Indicates whether the operation was successful
+  operation: CRUDOperation; // The type of operation performed (CREATE, READ, UPDATE, DELETE)
+  gpuHost?: IGPUHostDocument; // The created or updated GPU host configuration (applicable for CREATE and UPDATE operations)
+  message?: string; // Message if error/warning occurred (applicable for all operations)
 }
 
 /*===================================== GPU Section ends here =============================================*/
