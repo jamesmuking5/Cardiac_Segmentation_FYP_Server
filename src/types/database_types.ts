@@ -378,7 +378,6 @@ export interface JobCrudResult {
   message?: string; // Message if error/warning occurred (applicable for all operations)
 }
 
-/*==================================== Job Queue Section ends here ===========================================*/
 
 /*===================================== Administrative Tool Section begins here =============================================*/
 /*===================================== GPU Section begins here =============================================*/
