@@ -63,12 +63,10 @@ router.get(
       }
     } catch (error) {
       LogError(error as Error, serviceLocation, "Error fetching project info");
-      return res
-        .status(500)
-        .json({
-          success: false,
-          message: "An error occurred while fetching the project information.",
-        });
+      return res.status(500).json({
+        success: false,
+        message: "An error occurred while fetching the project information.",
+      });
     }
   }
 );
@@ -97,12 +95,10 @@ router.put(
         logger.warn(
           `${serviceLocation}: No response sent after saveFileAndPushToS3`
         );
-        return res
-          .status(500)
-          .json({
-            success: false,
-            message: "Upload processed but no response generated",
-          });
+        return res.status(500).json({
+          success: false,
+          message: "Upload processed but no response generated",
+        });
       }
     } catch (error) {
       // More specific error handling based on error type
@@ -116,12 +112,10 @@ router.put(
       }
 
       LogError(error as Error, serviceLocation, "Error handling file upload");
-      return res
-        .status(500)
-        .json({
-          success: false,
-          message: "An error occurred while processing the upload.",
-        });
+      return res.status(500).json({
+        success: false,
+        message: "An error occurred while processing the upload.",
+      });
     }
   }
 );
@@ -221,12 +215,10 @@ router.get(
       const result = await readUser({});
 
       if (!result.success || !result.users) {
-        res
-          .status(404)
-          .json({
-            fetch: false,
-            message: "No users found or error fetching users.",
-          });
+        res.status(404).json({
+          fetch: false,
+          message: "No users found or error fetching users.",
+        });
         return;
       }
 
@@ -466,12 +458,10 @@ router.get(
       );
 
       if (!presignedUrl) {
-        return res
-          .status(500)
-          .json({
-            success: false,
-            message: "Failed to generate presigned URL",
-          });
+        return res.status(500).json({
+          success: false,
+          message: "Failed to generate presigned URL",
+        });
       }
 
       return res.json({
@@ -484,15 +474,14 @@ router.get(
         `${serviceLocation}: Error generating presigned URL: ${error.message}`,
         error
       );
-      return res
-        .status(500)
-        .json({
-          success: false,
-          message: "Server error generating presigned URL",
-        });
+      return res.status(500).json({
+        success: false,
+        message: "Server error generating presigned URL",
+      });
     }
   }
 );
+
 router.delete(
   "/user-delete-project/:projectId",
   isAuthAndNotGuest,
@@ -543,12 +532,10 @@ router.delete(
           `${serviceLocation}: S3_BUCKET_NAME is not configured. Cannot delete S3 files for project ${projectId}.`
         ); // CORRECTED
         // Decide if you want to proceed with DB deletion or halt. For now, halting.
-        return res
-          .status(500)
-          .json({
-            success: false,
-            message: "Server configuration error: S3 bucket not set.",
-          });
+        return res.status(500).json({
+          success: false,
+          message: "Server configuration error: S3 bucket not set.",
+        });
       }
 
       const s3KeysToDelete: string[] = [];
@@ -657,12 +644,10 @@ router.delete(
         logger.error(
           `${serviceLocation}: S3_BUCKET_NAME is not configured. Admin ${adminUserId} cannot delete S3 files for project ${projectId}.`
         ); // CORRECTED
-        return res
-          .status(500)
-          .json({
-            success: false,
-            message: "Server configuration error: S3 bucket not set.",
-          });
+        return res.status(500).json({
+          success: false,
+          message: "Server configuration error: S3 bucket not set.",
+        });
       }
 
       const s3KeysToDelete: string[] = [];
