@@ -76,20 +76,21 @@ router.get("/segmentation-results/:projectId", isAuth, async (req: Request, res:
         if (!result.success) {
             if (result.message?.includes("does not exist")) {
                 logger.warn(`${serviceLocation}: Project with ID ${projectId} not found when fetching segmentation masks.`);
-                return res.status(404).json({ message: result.message });
+                return res.status(404).json({ success: false, message: result.message });
             }
             logger.error(`${serviceLocation}: Error reading segmentation masks for project ${projectId}: ${result.message}`);
-            return res.status(500).json({ message: result.message || "Error reading segmentation masks." });
+            return res.status(500).json({ success: false, message: result.message || "Error reading segmentation masks." });
         }
         if (!result.projectsegmentationmasks || result.projectsegmentationmasks.length === 0) {
             logger.info(`${serviceLocation}: No segmentation masks found for project ID ${projectId}.`);
             return res.status(200).json({
                 message: "No segmentation masks found for this project.",
+                success: false,
                 segmentations: []
             });
         }
         logger.info(`${serviceLocation}: Successfully fetched ${result.projectsegmentationmasks.length} segmentation mask(s) for project ID ${projectId}.`);
-        return res.status(200).json({ segmentations: result.projectsegmentationmasks });
+        return res.status(200).json({success:true, segmentations: result.projectsegmentationmasks });
     } catch (error) {
         LogError(error as Error, serviceLocation, `Unexpected error fetching segmentation masks for project ${projectId}`);
         return res.status(500).json({ message: "An unexpected error occurred while fetching segmentation masks." });
