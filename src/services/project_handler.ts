@@ -151,27 +151,37 @@ export const saveFileAndPushToS3 = async (req: Request, res: Response) => {
       const pythonCommand = `python "${pythonScriptPath}" "${newFilePath}" "${jpegOutputDir}" "${(actualTarFilePath || "").replace('.tar', '')}" "${userId}" "${String(filehash)}"`;
       try {
         const { stdout, stderr } = await new Promise<{ stdout: string; stderr: string }>((resolve, reject) => {
-          exec(pythonCommand, { maxBuffer: 1024 * 1024 * 10 }, (error, stdout, stderr) => {
+          exec(pythonCommand, { maxBuffer: 1024 * 1024 * 10 }, async (error, stdout, stderr) => {
             if (error) {
               LogError(error as Error, serviceLocation, `Error extracting JPEG conversion script - ${stderr}.`);
               reject(new Error(`JPEG conversion failed: ${stderr}`));
+              return;
             }
             logger.info(`${serviceLocation}: JPEG conversion script stdout:`, stdout);
             const tarPathMatch = stdout.match(/TAR_FILE_PATH:(.*)/);
             if (tarPathMatch && tarPathMatch[1]) {
               actualTarFilePath = tarPathMatch[1].trim();
+
+              // Wait a bit for file to be fully written to prevent race condition
+              await new Promise(resolve => setTimeout(resolve, 500));
             }
             resolve({ stdout, stderr });
           });
         });
 
-        if (!actualTarFilePath) {
-          LogError(new Error("TAR file path not found in stdout"), serviceLocation, "TAR file path extraction failed.");
+        if (!actualTarFilePath || !fs.existsSync(actualTarFilePath)) {
+          LogError(new Error("TAR file path not found or file does not exist"), serviceLocation, "TAR file path extraction failed.");
           tarFileS3Url = "";
-          // Handle the error appropriately
         } else {
-          const tarFile = fs.createReadStream(actualTarFilePath);
-          tarFileS3Url = await uploadToS3(tarFile, userId, filehash, '.tar', s3KeyPrefix); // Upload TAR to the user's folder
+          // Verify file exists and has content before reading
+          const stats = fs.statSync(actualTarFilePath);
+          if (stats.size === 0) {
+            LogError(new Error("TAR file is empty"), serviceLocation, "TAR file is empty.");
+            tarFileS3Url = "";
+          } else {
+            const tarFile = fs.createReadStream(actualTarFilePath);
+            tarFileS3Url = await uploadToS3(tarFile, userId, filehash, '.tar', s3KeyPrefix); // Upload TAR to the user's folder
+          }
         }
       } catch (error: unknown) {
         LogError(error as Error, serviceLocation, "Error during JPEG conversion or archiving.");

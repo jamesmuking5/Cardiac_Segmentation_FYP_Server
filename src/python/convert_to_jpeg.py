@@ -75,10 +75,17 @@ def bundle_to_tar(output_dir, tar_file):
             # Add each file in the output directory to the tar
             for filename in os.listdir(output_dir):
                 file_path = os.path.join(output_dir, filename)
-                if os.path.isfile(file_path):  # Only add files, not directories
+                if os.path.isfile(file_path) and filename.endswith('.jpg'):  # Only add JPEG files
                     # Use arcname to avoid including the full path in the archive
                     tar.add(file_path, arcname=filename)
         
+        # Ensure file is fully written to disk before announcing completion
+        try:
+            with open(tar_file, 'rb') as f:
+                os.fsync(f.fileno())
+        except:
+            pass  # Fallback if fsync fails
+            
         print(f"Bundled files into {tar_file}")
         print(f"TAR_FILE_PATH:{os.path.abspath(tar_file)}")
     except Exception as e:
