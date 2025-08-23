@@ -6,6 +6,7 @@ import json
 import sys
 import numpy as np
 
+
 def extract_nifti_metadata(nifti_path):
     """
     Extract metadata from a NIfTI file (.nii or .nii.gz) with optimized performance.
@@ -17,16 +18,16 @@ def extract_nifti_metadata(nifti_path):
         header = img.header
         shape = img.shape
         zooms = header.get_zooms()
-        
+
         # Determine data type in a more robust way
         data_dtype = str(header.get_data_dtype())
-        
+
         # Build metadata dictionary with proper type conversions
         metadata = {
             "datatype": data_dtype,
             "dimensions": {
-                "width": int(shape[1]) if len(shape) > 1 else 0,
-                "height": int(shape[0]) if len(shape) > 0 else 0,
+                "width": int(shape[0]) if len(shape) > 0 else 0,
+                "height": int(shape[1]) if len(shape) > 1 else 0,
                 "slices": int(shape[2]) if len(shape) > 2 else 0,
                 "frames": int(shape[3]) if len(shape) > 3 else 0
             },
@@ -37,15 +38,17 @@ def extract_nifti_metadata(nifti_path):
                 "t": float(zooms[3]) if len(zooms) > 3 else 0.0
             }
         }
-        
+
         return metadata
     except Exception as e:
         raise Exception(f"Failed to extract metadata: {str(e)}")
 
+
 # Entry point: optimized for local file processing
 if __name__ == "__main__":
     if len(sys.argv) != 2:
-        print(json.dumps({"error": "Usage: python extract_metadata.py <path_to_nifti>"}))
+        print(json.dumps(
+            {"error": "Usage: python extract_metadata.py <path_to_nifti>"}))
         sys.exit(1)
 
     input_path = sys.argv[1]
@@ -53,7 +56,7 @@ if __name__ == "__main__":
     try:
         # Extract metadata directly from local file
         extracted_metadata = extract_nifti_metadata(input_path)
-        
+
         # Output the metadata in JSON format with no whitespace for faster parsing
         print(json.dumps(extracted_metadata))
     except Exception as e:
