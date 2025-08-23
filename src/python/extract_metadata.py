@@ -26,8 +26,8 @@ def extract_nifti_metadata(nifti_path):
         metadata = {
             "datatype": data_dtype,
             "dimensions": {
-                "width": int(shape[0]) if len(shape) > 0 else 0,
-                "height": int(shape[1]) if len(shape) > 1 else 0,
+                "width": int(shape[1]) if len(shape) > 1 else 0,
+                "height": int(shape[0]) if len(shape) > 0 else 0,
                 "slices": int(shape[2]) if len(shape) > 2 else 0,
                 "frames": int(shape[3]) if len(shape) > 3 else 0
             },
