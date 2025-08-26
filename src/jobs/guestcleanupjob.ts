@@ -61,10 +61,7 @@ export async function scheduleGuestCleanup(): Promise<void> {
     const cronExpression = process.env.GUEST_CLEANUP_CRON_SCHEDULE || '0 3 * * *'; // Default to daily at 3:00 AM
     const cronDescription = cronstrue.toString(cronExpression, { throwExceptionOnParseError: true });
     // Log the cron schedule description
-    cron.schedule(cronExpression, cleanupInactiveGuests, {
-        scheduled: true,
-        timezone: "Asia/Singapore" // Example timezone
-    });
+    cron.schedule(cronExpression, cleanupInactiveGuests);
     logger.info(`${serviceLocation}: Scheduled to run daily ${cronDescription} (${cronExpression})`);
 
     // Optional: Run once on startup after a delay
