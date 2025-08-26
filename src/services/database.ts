@@ -807,10 +807,19 @@ const createProject = async (
     }
     // Check that voxelSize inputs are more than 0 if provided
     if (voxelsize) {
-      const voxelNumericInputs = [voxelsize.x, voxelsize.y, voxelsize.z, voxelsize.t].filter(input => (input ?? 0) <= 0);
-      if (voxelNumericInputs.length > 0) {
-        logger.warn(`${serviceLocation}: Invalid voxel size input parameters for project creation: ${voxelNumericInputs.join(", ")}`);
-        return { success: false, operation, message: `Invalid voxel size input parameters for project creation.` };
+      // Only validate that x and y are positive (required spatial dimensions)
+      // z and t can be 0 for 2D images or single frame data
+      const requiredVoxelInputs = [voxelsize.x, voxelsize.y].filter(input => (input ?? 0) <= 0);
+      const optionalVoxelInputs = [voxelsize.z, voxelsize.t].filter(input => input !== undefined && input < 0);
+      
+      if (requiredVoxelInputs.length > 0) {
+        logger.warn(`${serviceLocation}: Invalid required voxel size input parameters (x, y) for project creation: ${requiredVoxelInputs.join(", ")}`);
+        return { success: false, operation, message: `Invalid required voxel size input parameters for project creation.` };
+      }
+      
+      if (optionalVoxelInputs.length > 0) {
+        logger.warn(`${serviceLocation}: Invalid optional voxel size input parameters (z, t) for project creation: ${optionalVoxelInputs.join(", ")}`);
+        return { success: false, operation, message: `Invalid optional voxel size input parameters for project creation.` };
       }
     }
 

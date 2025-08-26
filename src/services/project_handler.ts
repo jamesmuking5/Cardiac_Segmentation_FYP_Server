@@ -220,10 +220,10 @@ export const saveFileAndPushToS3 = async (req: Request, res: Response) => {
           frames: niftiMetadata.dimensions.frames ?? 0,
         },
         voxelsize: {
-          x: niftiMetadata.voxelsize.x ?? 0,
-          y: niftiMetadata.voxelsize.y ?? 0,
-          z: niftiMetadata.voxelsize.z ?? 0,
-          t: niftiMetadata.voxelsize.t ?? 0,
+          x: niftiMetadata.voxelsize.x ?? 1.0,  // Default to 1.0mm if not provided (required field)
+          y: niftiMetadata.voxelsize.y ?? 1.0,  // Default to 1.0mm if not provided (required field)
+          ...(niftiMetadata.voxelsize.z && niftiMetadata.voxelsize.z > 0 ? { z: niftiMetadata.voxelsize.z } : {}),
+          ...(niftiMetadata.voxelsize.t && niftiMetadata.voxelsize.t > 0 ? { t: niftiMetadata.voxelsize.t } : {}),
         },
       };
 
