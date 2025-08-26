@@ -1,3 +1,4 @@
-ignoredBuiltDependencies:
+onlyBuiltDependencies:
   - bcrypt
   - mongodb-memory-server
+  - unrs-resolver
