@@ -39,32 +39,44 @@ export const handleUserSaveUnsave = async (userId: string, isSaved: boolean): Pr
         logger.info(`${serviceLocation}: Deleting unsaved project ${project._id} and its associated data.`);
 
         // Step 2.1: Delete the S3 files for this specific project
+        let s3CleanupSuccess = true;
+        const s3Failures = [];
+
         if (project.originalfilepath) {
           const originalKey = extractS3KeyFromUrl(project.originalfilepath);
           if (originalKey) {
             const success = await deleteFromS3(originalKey);
             if (!success) {
-              logger.warn(`${serviceLocation}: Failed to delete original S3 file for project ${project._id}: ${originalKey}`);
+              s3CleanupSuccess = false;
+              s3Failures.push(`original file: ${originalKey}`);
+              logger.error(`${serviceLocation}: Failed to delete original S3 file for project ${project._id}: ${originalKey}`);
             }
           }
         }
-        
+
         if (project.extractedfolderpath) {
           const extractedKey = extractS3KeyFromUrl(project.extractedfolderpath);
           if (extractedKey) {
             const success = await deleteFromS3(extractedKey);
             if (!success) {
-              logger.warn(`${serviceLocation}: Failed to delete extracted S3 file for project ${project._id}: ${extractedKey}`);
+              s3CleanupSuccess = false;
+              s3Failures.push(`extracted files: ${extractedKey}`);
+              logger.error(`${serviceLocation}: Failed to delete extracted S3 file for project ${project._id}: ${extractedKey}`);
             }
           }
         }
 
-        // Step 2.2: Delete the project (cascade deletes segmentation masks)
-        const deleteResult = await deleteProject(project._id.toString());
-        if (deleteResult.success) {
-          logger.info(`${serviceLocation}: Successfully deleted project ${project._id}.`);
+        // Step 2.2: Only delete the project if S3 cleanup was successful
+        if (s3CleanupSuccess) {
+          const deleteResult = await deleteProject(project._id.toString());
+          if (deleteResult.success) {
+            logger.info(`${serviceLocation}: Successfully deleted project ${project._id} and its S3 files.`);
+          } else {
+            logger.error(`${serviceLocation}: S3 cleanup succeeded but failed to delete project ${project._id} from database: ${deleteResult.message}`);
+          }
         } else {
-          logger.warn(`${serviceLocation}: Failed to delete project ${project._id}: ${deleteResult.message}`);
+          logger.error(`${serviceLocation}: Skipping database deletion for project ${project._id} due to S3 cleanup failures: ${s3Failures.join(', ')}`);
+          logger.warn(`${serviceLocation}: Project ${project._id} remains in database to prevent orphaned S3 files. Manual cleanup may be required.`);
         }
       }
     }
