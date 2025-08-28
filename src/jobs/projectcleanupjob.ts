@@ -1,5 +1,5 @@
 import { projectModel, projectSegmentationMaskModel, deleteProject } from "../services/database";
-import { cleanupUserS3Storage } from "../services/s3_handler";
+import { cleanupUserS3Storage, deleteFromS3, extractS3KeyFromUrl } from "../services/s3_handler";
 import logger from "../services/logger";
 
 /**
@@ -31,14 +31,33 @@ export const handleUserSaveUnsave = async (userId: string, isSaved: boolean): Pr
         // Update `isSaved` to true for the project and its segmentation masks
         project.isSaved = true;
         await projectModel.updateOne({ _id: project._id }, { $set: { isSaved: true } });
+        // Also update all associated segmentation masks to isSaved = true (which has no effect currently in the new frontend)
         await projectSegmentationMaskModel.updateMany({ projectid: project._id }, { $set: { isSaved: true } });
         logger.info(`${serviceLocation}: Marked project ${project._id} and its segmentation masks as saved.`);
       } else if (!project.isSaved) {
         // If `isSaved = false`, delete the project and its associated data
         logger.info(`${serviceLocation}: Deleting unsaved project ${project._id} and its associated data.`);
 
-        // Step 2.1: Cleanup S3 files for the project
-        await cleanupUserS3Storage(userId);
+        // Step 2.1: Delete the S3 files for this specific project
+        if (project.originalfilepath) {
+          const originalKey = extractS3KeyFromUrl(project.originalfilepath);
+          if (originalKey) {
+            const success = await deleteFromS3(originalKey);
+            if (!success) {
+              logger.warn(`${serviceLocation}: Failed to delete original S3 file for project ${project._id}: ${originalKey}`);
+            }
+          }
+        }
+        
+        if (project.extractedfolderpath) {
+          const extractedKey = extractS3KeyFromUrl(project.extractedfolderpath);
+          if (extractedKey) {
+            const success = await deleteFromS3(extractedKey);
+            if (!success) {
+              logger.warn(`${serviceLocation}: Failed to delete extracted S3 file for project ${project._id}: ${extractedKey}`);
+            }
+          }
+        }
 
         // Step 2.2: Delete the project (cascade deletes segmentation masks)
         const deleteResult = await deleteProject(project._id.toString());
