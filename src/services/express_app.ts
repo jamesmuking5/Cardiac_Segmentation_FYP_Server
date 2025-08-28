@@ -9,7 +9,8 @@ import webhookRoute from '../routes/webhook_routes';
 import debugRoute from '../routes/debug_routes';
 import segmentationRoutes from '../routes/segmentation_routes';
 import gpuStatusRoute from '../routes/gpu_status';
-import adminToolsRoute from '../routes/admin_tools'
+import adminToolsRoute from '../routes/admin_tools';
+import sampleNiftiRoute from '../routes/sample_nifti';
 import logger from './logger';
 import cors from 'cors';
 import path from 'path';
@@ -137,6 +138,9 @@ app.use('/status', gpuStatusRoute); // Mount GPU status routes
 
 // Admin Tool Routes
 app.use('/admintools', adminToolsRoute);
+
+// Sample NIfTI Routes
+app.use('/sample-nifti', sampleNiftiRoute);
 
 // Return simple server status when accessing the root path
 app.get('/', (req: Request, res: Response) => {
