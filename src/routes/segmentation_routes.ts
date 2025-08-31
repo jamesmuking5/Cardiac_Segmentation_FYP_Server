@@ -711,6 +711,11 @@ router.get("/export-project-data/:projectId", isAuth, async (req: Request, res: 
         if (!finalS3Key) {
             throw new Error(`Could not extract S3 key from the uploaded export URL: ${exportS3Url}`);
         }
+        
+        // Get file size for debugging before cleanup
+        const fileStat = await fs.stat(localOutputSegmentationNiftiPath);
+        logger.info(`${serviceLocationExport}: NIfTI file created with size: ${fileStat.size} bytes`);
+        
         const presignedExportUrl = await generatePresignedGetUrl(s3BucketName!, finalS3Key, 3600);
 
         if (!presignedExportUrl) {
@@ -725,7 +730,9 @@ router.get("/export-project-data/:projectId", isAuth, async (req: Request, res: 
             projectName: project.name,
             exportPackageUrl: presignedExportUrl,
             exportPackageUrlExpiresAt: Date.now() + (3600 * 1000),
-            exportContentType: "application/gzip"
+            exportContentType: "application/gzip",
+            fileSizeBytes: fileStat.size,
+            suggestedFilename: suggestedNiftiFilename
         });
 
     } catch (error) {
