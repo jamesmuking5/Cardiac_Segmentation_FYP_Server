@@ -90,7 +90,7 @@ router.get("/segmentation-results/:projectId", isAuth, async (req: Request, res:
             });
         }
         logger.info(`${serviceLocation}: Successfully fetched ${result.projectsegmentationmasks.length} segmentation mask(s) for project ID ${projectId}.`);
-        return res.status(200).json({success:true, segmentations: result.projectsegmentationmasks });
+        return res.status(200).json({ success: true, segmentations: result.projectsegmentationmasks });
     } catch (error) {
         LogError(error as Error, serviceLocation, `Unexpected error fetching segmentation masks for project ${projectId}`);
         return res.status(500).json({ message: "An unexpected error occurred while fetching segmentation masks." });
@@ -603,6 +603,19 @@ router.get("/export-project-data/:projectId", isAuth, async (req: Request, res: 
         return res.status(400).json({ success: false, message: "Project ID is required." });
     }
 
+    // If project does not have segmentation mask, throw error 
+    const hasMasksResult = await readProjectSegmentationMask(projectId);
+    // Check if masks actually exist - reject export if no masks available
+    if (!hasMasksResult.projectsegmentationmasks || hasMasksResult.projectsegmentationmasks.length === 0) {
+        logger.warn(`${serviceLocationExport}: No segmentation masks found for project ${projectId}. Export requires completed segmentation.`);
+        return res.status(400).json({
+            success: false,
+            message: "Export requires completed segmentation masks. Please complete segmentation before exporting."
+        });
+    }
+
+    logger.info(`${serviceLocationExport}: Found ${hasMasksResult.projectsegmentationmasks.length} segmentation mask(s) for project ${projectId}. Proceeding with export.`);
+
     try {
         await fs.ensureDir(baseTempDir);
 
@@ -637,22 +650,21 @@ router.get("/export-project-data/:projectId", isAuth, async (req: Request, res: 
         await downloadFromS3(s3BucketName, originalNiftiS3Key, tempOriginalNiftiPath);
 
         // 3. Read All Segmentation Masks and create segmentations.json
+        // Note: We already validated masks exist in the early check above
         const segmentationMasksResult = await readProjectSegmentationMask(projectId);
         let segmentationsToProcess: IProjectSegmentationMask[] = [];
-        if (segmentationMasksResult.success && segmentationMasksResult.projectsegmentationmasks && segmentationMasksResult.projectsegmentationmasks.length > 0) {
-            // Prioritize the mask that is NOT an AI output (manual/edited mask)
-            const manualMask = segmentationMasksResult.projectsegmentationmasks.find(mask => mask.isMedSAMOutput === false);
-            if (manualMask) {
-                logger.info(`${serviceLocationExport}: Found manual segmentation mask (isMedSAMOutput: false) for project ${projectId}. Using it for export.`);
-                segmentationsToProcess = [manualMask];
-            } else {
-                // Fallback to the first available mask if no manual mask is found
-                logger.warn(`${serviceLocationExport}: No manual segmentation mask (isMedSAMOutput: false) found for project ${projectId}. Defaulting to the first available segmentation mask.`);
-                segmentationsToProcess = [segmentationMasksResult.projectsegmentationmasks[0]];
-            }
+
+        // Prioritize the mask that is NOT an AI output (manual/edited mask)
+        const manualMask = segmentationMasksResult.projectsegmentationmasks!.find(mask => mask.isMedSAMOutput === false);
+        if (manualMask) {
+            logger.info(`${serviceLocationExport}: Found manual segmentation mask (isMedSAMOutput: false) for project ${projectId}. Using it for export.`);
+            segmentationsToProcess = [manualMask];
         } else {
-            logger.warn(`${serviceLocationExport}: No segmentation data found for project ${projectId}. Export will result in an empty NIfTI (matching original geometry).`);
+            // Fallback to the first available mask if no manual mask is found
+            logger.info(`${serviceLocationExport}: No manual segmentation mask found for project ${projectId}. Using the first available AI segmentation mask.`);
+            segmentationsToProcess = [segmentationMasksResult.projectsegmentationmasks![0]];
         }
+
         await fs.writeJson(segmentationsJsonPath, segmentationsToProcess, { spaces: 2 });
         logger.info(`${serviceLocationExport}: Created segmentations.json for project ${projectId} at ${segmentationsJsonPath}`);
 
@@ -711,11 +723,11 @@ router.get("/export-project-data/:projectId", isAuth, async (req: Request, res: 
         if (!finalS3Key) {
             throw new Error(`Could not extract S3 key from the uploaded export URL: ${exportS3Url}`);
         }
-        
+
         // Get file size for debugging before cleanup
         const fileStat = await fs.stat(localOutputSegmentationNiftiPath);
         logger.info(`${serviceLocationExport}: NIfTI file created with size: ${fileStat.size} bytes`);
-        
+
         const presignedExportUrl = await generatePresignedGetUrl(s3BucketName!, finalS3Key, 3600);
 
         if (!presignedExportUrl) {
