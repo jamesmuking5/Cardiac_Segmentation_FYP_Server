@@ -627,6 +627,8 @@ const projectSchema = new Schema<IProject>({
   dimensions: { type: projectDimensionSchema, required: true }, // Dimensions of the image (e.g., width, height, slices, frames)
   // Voxel size (future proofing for 3D segmentation)
   voxelsize: { type: projectVoxelsizeSchema, required: false }, // Voxel size of the image (e.g., x, y, z, t dimensions) - check for errors in the future (stored in nifti as pixdim = [?, 0.5, 0.5, 1.0, 2.0, 0, 0, 0])
+  // Affine transformation matrix (4x4) from NIfTI header for export functionality
+  affineMatrix: { type: [[Number]], required: false }, // 4x4 affine transformation matrix from NIfTI header (optional, for avoiding re-downloads during export)
 }, { timestamps: true }); // Automatically add createdAt and updatedAt timestamps
 // Hooks for pre-save and pre-delete operations (must be before the model creation)
 // Add validation to ensure userid exists before saving the project
@@ -775,6 +777,7 @@ const createProject = async (
   datatype: FileDataType, // Data type of the image (e.g., uint8, float32) - should be detected by server
   dimensions: { width: number; height: number; slices: number; frames?: number },
   voxelsize?: { x: number; y: number; z?: number; t?: number }, // Optional physical voxel dimensions (e.g., x, y, z, t dimensions) - should be detected by server
+  affineMatrix?: number[][], // Optional 4x4 affine transformation matrix from NIfTI header
 ): Promise<ProjectCrudResult> => {
   const operation = CRUDOperation.CREATE;
   try {
@@ -811,12 +814,12 @@ const createProject = async (
       // z and t can be 0 for 2D images or single frame data
       const requiredVoxelInputs = [voxelsize.x, voxelsize.y].filter(input => (input ?? 0) <= 0);
       const optionalVoxelInputs = [voxelsize.z, voxelsize.t].filter(input => input !== undefined && input < 0);
-      
+
       if (requiredVoxelInputs.length > 0) {
         logger.warn(`${serviceLocation}: Invalid required voxel size input parameters (x, y) for project creation: ${requiredVoxelInputs.join(", ")}`);
         return { success: false, operation, message: `Invalid required voxel size input parameters for project creation.` };
       }
-      
+
       if (optionalVoxelInputs.length > 0) {
         logger.warn(`${serviceLocation}: Invalid optional voxel size input parameters (z, t) for project creation: ${optionalVoxelInputs.join(", ")}`);
         return { success: false, operation, message: `Invalid optional voxel size input parameters for project creation.` };
@@ -862,6 +865,7 @@ const createProject = async (
       datatype: datatype,
       dimensions: dimensions,
       voxelsize: voxelsize, // Optional
+      affineMatrix: affineMatrix, // Optional 4x4 affine transformation matrix
     });
     // Save the new project to the database
     await newProject.save();
@@ -1694,6 +1698,6 @@ const updateGPUHost = async (updates: Partial<IGPUHost>): Promise<GPUHostCrudRes
 // Using ES modules instead of CommonJS which is module.exports = {connectToDatabase, User};
 // ONLY unit tests should use userModel, fileModel directly, otherwise use the created functions to create users/files.
 export {
-  connectToDatabase, userModel, createUser, readUser, updateUser, deleteUser, authenticateUser, UserRole, IUser, IUserSafe, UserCrudResult, CRUDOperation, IUserDocument, IProject, IProjectSegmentationMask, projectModel, projectSegmentationMaskModel, createProject, readProject, updateProject, deleteProject, createProjectSegmentationMask, readProjectSegmentationMask, updateProjectSegmentationMask, deleteProjectSegmentationMask, jobModel, createJob, readJob, updateJob, deleteJob, JobStatus, IJob, IJobDocument, IProjectSegmentationMaskDocument, ProjectSegmentationMaskCrudResult, ProjectCrudResult,
+  connectToDatabase, userModel, createUser, readUser, updateUser, deleteUser, authenticateUser, UserRole, IUser, IUserSafe, UserCrudResult, CRUDOperation, IUserDocument, IProject, IProjectDocument, IProjectSegmentationMask, projectModel, projectSegmentationMaskModel, createProject, readProject, updateProject, deleteProject, createProjectSegmentationMask, readProjectSegmentationMask, updateProjectSegmentationMask, deleteProjectSegmentationMask, jobModel, createJob, readJob, updateJob, deleteJob, JobStatus, IJob, IJobDocument, IProjectSegmentationMaskDocument, ProjectSegmentationMaskCrudResult, ProjectCrudResult,
   readGPUHost, updateGPUHost, seedGPUHost, gpuHostModel, GPUHostCrudResult, IGPUHost, IGPUHostDocument
 };

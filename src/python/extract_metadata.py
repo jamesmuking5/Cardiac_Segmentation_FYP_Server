@@ -32,11 +32,17 @@ def extract_nifti_metadata(nifti_path):
                 "frames": int(shape[3]) if len(shape) > 3 else 0
             },
             "voxelsize": {
-                "x": float(zooms[0]) if len(zooms) > 0 and zooms[0] > 0 else 1.0,  # Default to 1.0mm for missing spatial dimensions
-                "y": float(zooms[1]) if len(zooms) > 1 and zooms[1] > 0 else 1.0,  # Default to 1.0mm for missing spatial dimensions
-                "z": float(zooms[2]) if len(zooms) > 2 and zooms[2] > 0 else None,  # None for missing z dimension
-                "t": float(zooms[3]) if len(zooms) > 3 and zooms[3] > 0 else None   # None for missing temporal dimension
-            }
+                # Default to 1.0mm for missing spatial dimensions
+                "x": float(zooms[0]) if len(zooms) > 0 and zooms[0] > 0 else 1.0,
+                # Default to 1.0mm for missing spatial dimensions
+                "y": float(zooms[1]) if len(zooms) > 1 and zooms[1] > 0 else 1.0,
+                # None for missing z dimension
+                "z": float(zooms[2]) if len(zooms) > 2 and zooms[2] > 0 else None,
+                # None for missing temporal dimension
+                "t": float(zooms[3]) if len(zooms) > 3 and zooms[3] > 0 else None
+            },
+            # Convert numpy array to nested list for JSON serialization
+            "affineMatrix": img.affine.tolist()
         }
 
         return metadata

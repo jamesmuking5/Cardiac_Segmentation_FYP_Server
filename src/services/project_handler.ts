@@ -225,6 +225,7 @@ export const saveFileAndPushToS3 = async (req: Request, res: Response) => {
           ...(niftiMetadata.voxelsize.z && niftiMetadata.voxelsize.z > 0 ? { z: niftiMetadata.voxelsize.z } : {}),
           ...(niftiMetadata.voxelsize.t && niftiMetadata.voxelsize.t > 0 ? { t: niftiMetadata.voxelsize.t } : {}),
         },
+        affineMatrix: niftiMetadata.affineMatrix && niftiMetadata.affineMatrix.length > 0 ? niftiMetadata.affineMatrix : undefined,
       };
 
       const result = await createProject(
@@ -243,6 +244,7 @@ export const saveFileAndPushToS3 = async (req: Request, res: Response) => {
         project.datatype,
         project.dimensions,
         project.voxelsize,
+        project.affineMatrix,
       );
 
       if (!result.success) {
