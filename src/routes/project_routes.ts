@@ -52,6 +52,7 @@ router.get(
             filetype: project.filetype,
             dimensions: project.dimensions,
             voxelsize: project.voxelsize,
+            affineMatrix: project.affineMatrix,
             createdAt: project.createdAt,
             updatedAt: project.updatedAt,
           },
@@ -188,6 +189,7 @@ router.get(
             filetype: project.filetype,
             dimensions: project.dimensions,
             voxelsize: project.voxelsize,
+            affineMatrix: project.affineMatrix,
             createdAt: project.createdAt,
             updatedAt: project.updatedAt,
           };
@@ -244,6 +246,7 @@ router.get(
                     filesize: project.filesize,
                     filetype: project.filetype,
                     dimensions: project.dimensions,
+                    affineMatrix: project.affineMatrix,
                     createdAt: project.createdAt,
                     updatedAt: project.updatedAt,
                   }))
