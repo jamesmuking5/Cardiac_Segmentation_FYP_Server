@@ -129,6 +129,7 @@ export enum FileDataType {
  * @property {number} voxelsize.y - The size in the y-dimension.
  * @property {number} voxelsize.z - The size in the z-dimension (optional).
  * @property {number} voxelsize.t - The size in the t-dimension (optional).
+ * @property {number[][]} [affineMatrix] - The 4x4 affine transformation matrix from the NIfTI header (optional, added for export functionality).
  */
 export interface IProject {
   // Identifiers
@@ -161,6 +162,11 @@ export interface IProject {
    * From NIfTI pixdim = [?, 0.5, 0.5, 1.0, 2.0, 0, 0, 0], first ? and last 3 zeroes are not used,
    * but the 4 numbers are in mm, mm, mm and seconds. */
   voxelsize?: { x: number; y: number; z?: number; t?: number };
+
+  /** 4x4 affine transformation matrix from NIfTI header.
+   * This matrix defines the spatial relationship between voxel coordinates and world coordinates.
+   * Added for export functionality to avoid re-downloading files. */
+  affineMatrix?: number[][];
 
   // Based on mongoose timestamp
   createdAt?: Date; // Creation date of the project

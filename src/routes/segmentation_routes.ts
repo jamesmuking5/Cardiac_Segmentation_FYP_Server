@@ -594,7 +594,6 @@ router.get("/export-project-data/:projectId", isAuth, async (req: Request, res: 
     const tempExportId = uuidv4();
     const baseTempDir = path.join(__dirname, '..', 'temp_exports', tempExportId);
     const segmentationsJsonPath = path.join(baseTempDir, 'segmentations.json');
-    const tempOriginalNiftiPath = path.join(baseTempDir, `original_${tempExportId}.nii.gz`);
     const localOutputSegmentationNiftiPath = path.join(baseTempDir, `segmentation_output_${tempExportId}.nii.gz`);
 
     logger.info(`${serviceLocationExport}: Request to export NIfTI segmentation for project ${projectId} by user ${userId}. Temp ID: ${tempExportId}`);
@@ -634,22 +633,7 @@ router.get("/export-project-data/:projectId", isAuth, async (req: Request, res: 
         const planeHeightForRLE = project.dimensions.height;
         const planeWidthForRLE = project.dimensions.width;
 
-
-        // 2. Download Original NIfTI file (needed for header/affine by Python script)
-        const s3BucketName = process.env.AWS_BUCKET_NAME;
-        if (!project.originalfilepath || !s3BucketName) {
-            logger.error(`${serviceLocationExport}: Original NIfTI file path (project.originalfilepath) or S3 bucket name is missing for project ${projectId}.`);
-            return res.status(500).json({ success: false, message: "Configuration error: Missing original NIfTI path or S3 bucket." });
-        }
-        const originalNiftiS3Key = extractS3KeyFromUrl(project.originalfilepath);
-        if (!originalNiftiS3Key) {
-            logger.error(`${serviceLocationExport}: Could not extract S3 key from originalfilepath: ${project.originalfilepath}`);
-            return res.status(500).json({ success: false, message: "Configuration error: Invalid original NIfTI S3 URL." });
-        }
-        logger.info(`${serviceLocationExport}: Downloading original NIfTI ${originalNiftiS3Key} to ${tempOriginalNiftiPath}`);
-        await downloadFromS3(s3BucketName, originalNiftiS3Key, tempOriginalNiftiPath);
-
-        // 3. Read All Segmentation Masks and create segmentations.json
+        // 2. Read All Segmentation Masks and create segmentations.json
         // Note: We already validated masks exist in the early check above
         const segmentationMasksResult = await readProjectSegmentationMask(projectId);
         let segmentationsToProcess: IProjectSegmentationMask[] = [];
@@ -669,8 +653,50 @@ router.get("/export-project-data/:projectId", isAuth, async (req: Request, res: 
         logger.info(`${serviceLocationExport}: Created segmentations.json for project ${projectId} at ${segmentationsJsonPath}`);
 
         // 4. Call Python script to create the segmentation NIfTI
-        const pythonScriptPath = path.join(__dirname, '..', '..', 'src', 'python', 'create_nifti_from_segmentations.py');
-        const pythonCommand = `python "${pythonScriptPath}" "${segmentationsJsonPath}" "${tempOriginalNiftiPath}" "${localOutputSegmentationNiftiPath}" "${planeHeightForRLE}" "${planeWidthForRLE}"`;
+        // Check if we have stored affine matrix to avoid downloading original file
+        let pythonScriptPath: string;
+        let pythonCommand: string;
+        
+        if (project.affineMatrix && Array.isArray(project.affineMatrix) && project.affineMatrix.length > 0) {
+            // Use stored affine matrix approach (no download needed)
+            logger.info(`${serviceLocationExport}: Using stored affine matrix for project ${projectId} - no download required.`);
+            
+            pythonScriptPath = path.join(__dirname, '..', '..', 'src', 'python', 'create_nifti_with_stored_affine.py');
+            
+            // Write JSON arguments to temporary files to avoid command line escaping issues
+            const affineMatrixFile = path.join(baseTempDir, 'affine_matrix.json');
+            const dimensionsFile = path.join(baseTempDir, 'dimensions.json');
+            
+            await fs.writeJson(affineMatrixFile, project.affineMatrix);
+            await fs.writeJson(dimensionsFile, project.dimensions);
+            
+            const datatype = project.datatype || 'uint8';
+            
+            pythonCommand = `python "${pythonScriptPath}" "${segmentationsJsonPath}" "${localOutputSegmentationNiftiPath}" "${affineMatrixFile}" "${dimensionsFile}" "${datatype}" "${planeHeightForRLE}" "${planeWidthForRLE}"`;
+        } else {
+            // Fallback to original approach (download and extract from file)
+            logger.info(`${serviceLocationExport}: No stored affine matrix found for project ${projectId}. Using original file download approach.`);
+            
+            // Download original file first
+            const tempOriginalNiftiPath = path.join(baseTempDir, `original_${tempExportId}.nii.gz`);
+            const s3BucketName = process.env.AWS_BUCKET_NAME;
+            if (!project.originalfilepath || !s3BucketName) {
+                logger.error(`${serviceLocationExport}: Original NIfTI file path or S3 bucket name missing for project ${projectId}.`);
+                return res.status(500).json({ success: false, message: "Configuration error: Missing original NIfTI path or S3 bucket." });
+            }
+            
+            const originalNiftiS3Key = extractS3KeyFromUrl(project.originalfilepath);
+            if (!originalNiftiS3Key) {
+                logger.error(`${serviceLocationExport}: Could not extract S3 key from originalfilepath: ${project.originalfilepath}`);
+                return res.status(500).json({ success: false, message: "Configuration error: Invalid original NIfTI S3 URL." });
+            }
+            
+            logger.info(`${serviceLocationExport}: Downloading original NIfTI ${originalNiftiS3Key} to ${tempOriginalNiftiPath}`);
+            await downloadFromS3(s3BucketName, originalNiftiS3Key, tempOriginalNiftiPath);
+            
+            pythonScriptPath = path.join(__dirname, '..', '..', 'src', 'python', 'create_nifti_from_segmentations.py');
+            pythonCommand = `python "${pythonScriptPath}" "${segmentationsJsonPath}" "${tempOriginalNiftiPath}" "${localOutputSegmentationNiftiPath}" "${planeHeightForRLE}" "${planeWidthForRLE}"`;
+        }
 
         logger.info(`${serviceLocationExport}: Executing Python script: ${pythonCommand}`);
         await new Promise<void>((resolve, reject) => {
@@ -728,7 +754,12 @@ router.get("/export-project-data/:projectId", isAuth, async (req: Request, res: 
         const fileStat = await fs.stat(localOutputSegmentationNiftiPath);
         logger.info(`${serviceLocationExport}: NIfTI file created with size: ${fileStat.size} bytes`);
 
-        const presignedExportUrl = await generatePresignedGetUrl(s3BucketName!, finalS3Key, 3600);
+        const s3BucketName = process.env.AWS_BUCKET_NAME;
+        if (!s3BucketName) {
+            throw new Error("AWS_BUCKET_NAME environment variable is not set");
+        }
+        
+        const presignedExportUrl = await generatePresignedGetUrl(s3BucketName, finalS3Key, 3600);
 
         if (!presignedExportUrl) {
             throw new Error("Failed to generate presigned URL for the segmentation NIfTI.");

@@ -25,6 +25,7 @@ import { app } from './services/express_app'; // Import the configured Express a
 import LogError from './utils/error_logger'; // Import error logging utility
 import { connectToDatabase } from './services/database'; // Import DB connection function
 import { initAndRefreshAuth, stopTokenRefresh } from './services/gpu_auth_client'; // Import GPU auth client functions
+import { isMigrationNeeded, runAffineMigration } from './scripts/affine_matrix_migration'; // Import migration functions
 
 // Get serving host and port from environment variables
 const HOST = process.env.HOST || 'localhost'; // Default to localhost if not set
@@ -48,6 +49,20 @@ const PORT = parseInt(process.env.PORT || '3000', 10);
 
     // NOW initialize GPU Server Authentication (after database is connected)
     await initAndRefreshAuth();
+
+    // Run database migration for affine matrix if needed
+    logger.info(`${serviceLocation}: Checking if affine matrix migration is needed...`);
+    if (await isMigrationNeeded()) {
+      logger.info(`${serviceLocation}: Running affine matrix migration...`);
+      try {
+        await runAffineMigration();
+        logger.info(`${serviceLocation}: Affine matrix migration completed successfully.`);
+      } catch (migrationError) {
+        logger.warn(`${serviceLocation}: Affine matrix migration failed, but continuing startup:`, migrationError);
+      }
+    } else {
+      logger.info(`${serviceLocation}: No affine matrix migration needed.`);
+    }
 
     // Start the Express server listener and assign to the server variable
     server = app.listen(PORT, HOST, () => { // Now PORT is definitely a number

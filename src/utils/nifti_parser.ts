@@ -30,6 +30,7 @@ export interface INiftiMetadata {
         z: number | null; // Voxel size in the z-direction (mm)
         t: number | null; // Time resolution, if applicable (e.g., seconds per frame)
     };
+    affineMatrix: number[][]; // 4x4 affine transformation matrix from NIfTI header
 }
 
 /**
@@ -66,6 +67,7 @@ export async function extractNiftiMetadata(niftiPath: string): Promise<INiftiMet
             z: null,
             t: null,
             },
+            affineMatrix: [], // Empty array as fallback for affine matrix
         };
     }
   }
