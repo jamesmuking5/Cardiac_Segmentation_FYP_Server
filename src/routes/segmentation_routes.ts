@@ -9,7 +9,8 @@ import {
     readProject,
     jobModel,
     userModel,
-    JobStatus
+    JobStatus,
+    projectSegmentationMaskModel
 } from "../services/database";
 import { isAuth, isAuthAndAdmin, isAuthAndNotGuest } from "../services/passportjs";
 import LogError from "../utils/error_logger";
@@ -789,6 +790,108 @@ router.get("/export-project-data/:projectId", isAuth, async (req: Request, res: 
             logger.info(`${serviceLocationExport}: Cleaning up temporary export directory ${baseTempDir} for project ${projectId}`);
             await fs.remove(baseTempDir);
         }
+    }
+});
+
+// Batch endpoint for checking segmentation status of multiple projects
+router.post("/batch-segmentation-status", isAuth, async (req: Request, res: Response) => {
+    const { projectIds } = req.body;
+    const userId = req.user?._id;
+    
+    logger.info(`${serviceLocation}: Batch segmentation status check for ${projectIds?.length || 0} projects by user ${req.user?.username}`);
+    
+    if (!userId) {
+        logger.warn(`${serviceLocation}: User ID not found in request.`);
+        return res.status(401).json({ 
+            success: false, 
+            message: "Authentication required." 
+        });
+    }
+    
+    if (!projectIds || !Array.isArray(projectIds) || projectIds.length === 0) {
+        logger.warn(`${serviceLocation}: Invalid or empty projectIds array in batch segmentation status request.`);
+        return res.status(400).json({ 
+            success: false, 
+            message: "projectIds array is required and must not be empty." 
+        });
+    }
+
+    // Limit batch size to prevent abuse
+    if (projectIds.length > 50) {
+        logger.warn(`${serviceLocation}: Batch size too large: ${projectIds.length} projects requested.`);
+        return res.status(400).json({ 
+            success: false, 
+            message: "Batch size limited to 50 projects per request." 
+        });
+    }
+
+    try {
+        // 1. Verify user owns all requested projects
+        const userProjectsResult = await readProject(undefined, userId.toString());
+        if (!userProjectsResult.success || !userProjectsResult.projects) {
+            logger.error(`${serviceLocation}: Failed to fetch user projects for batch status check.`);
+            return res.status(500).json({ 
+                success: false, 
+                message: "Failed to verify project ownership." 
+            });
+        }
+
+        const userProjectIds = userProjectsResult.projects.map((p: IProjectDocument) => (p._id as string).toString());
+        const unauthorizedProjects = projectIds.filter((id: string) => !userProjectIds.includes(id));
+        
+        if (unauthorizedProjects.length > 0) {
+            logger.warn(`${serviceLocation}: User ${userId} attempted to check segmentation status for unauthorized projects: ${unauthorizedProjects.join(', ')}`);
+            return res.status(403).json({ 
+                success: false, 
+                message: "Access denied to some requested projects." 
+            });
+        }
+
+        // 2. Batch query segmentation masks using MongoDB aggregation
+        const segmentationResults = await projectSegmentationMaskModel.aggregate([
+            {
+                $match: { 
+                    projectid: { $in: projectIds }
+                }
+            },
+            {
+                $group: {
+                    _id: "$projectid",
+                    maskCount: { $sum: 1 },
+                    hasMasks: { $sum: { $cond: [{ $gt: ["$frames", []] }, 1, 0] } }
+                }
+            }
+        ]);
+
+        // 3. Build response object with status for each project
+        const statusMap: Record<string, { hasMasks: boolean; maskCount: number }> = {};
+        
+        // Initialize all projects as having no masks
+        projectIds.forEach((projectId: string) => {
+            statusMap[projectId] = { hasMasks: false, maskCount: 0 };
+        });
+        
+        // Update with actual results
+        segmentationResults.forEach((result: { _id: string; maskCount: number; hasMasks: number }) => {
+            statusMap[result._id] = {
+                hasMasks: result.hasMasks > 0,
+                maskCount: result.maskCount
+            };
+        });
+
+        logger.info(`${serviceLocation}: Successfully processed batch segmentation status for ${projectIds.length} projects. Found masks for ${segmentationResults.length} projects.`);
+        
+        return res.status(200).json({
+            success: true,
+            statuses: statusMap
+        });
+
+    } catch (error: unknown) {
+        LogError(error as Error, serviceLocation, `Error in batch segmentation status check for user ${userId}`);
+        return res.status(500).json({ 
+            success: false, 
+            message: "An error occurred while checking segmentation status." 
+        });
     }
 });
 
