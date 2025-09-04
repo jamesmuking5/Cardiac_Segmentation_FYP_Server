@@ -657,27 +657,27 @@ router.get("/export-project-data/:projectId", isAuth, async (req: Request, res: 
         // Check if we have stored affine matrix to avoid downloading original file
         let pythonScriptPath: string;
         let pythonCommand: string;
-        
+
         if (project.affineMatrix && Array.isArray(project.affineMatrix) && project.affineMatrix.length > 0) {
             // Use stored affine matrix approach (no download needed)
             logger.info(`${serviceLocationExport}: Using stored affine matrix for project ${projectId} - no download required.`);
-            
+
             pythonScriptPath = path.join(__dirname, '..', '..', 'src', 'python', 'create_nifti_with_stored_affine.py');
-            
+
             // Write JSON arguments to temporary files to avoid command line escaping issues
             const affineMatrixFile = path.join(baseTempDir, 'affine_matrix.json');
             const dimensionsFile = path.join(baseTempDir, 'dimensions.json');
-            
+
             await fs.writeJson(affineMatrixFile, project.affineMatrix);
             await fs.writeJson(dimensionsFile, project.dimensions);
-            
+
             const datatype = project.datatype || 'uint8';
-            
+
             pythonCommand = `python "${pythonScriptPath}" "${segmentationsJsonPath}" "${localOutputSegmentationNiftiPath}" "${affineMatrixFile}" "${dimensionsFile}" "${datatype}" "${planeHeightForRLE}" "${planeWidthForRLE}"`;
         } else {
             // Fallback to original approach (download and extract from file)
             logger.info(`${serviceLocationExport}: No stored affine matrix found for project ${projectId}. Using original file download approach.`);
-            
+
             // Download original file first
             const tempOriginalNiftiPath = path.join(baseTempDir, `original_${tempExportId}.nii.gz`);
             const s3BucketName = process.env.AWS_BUCKET_NAME;
@@ -685,16 +685,16 @@ router.get("/export-project-data/:projectId", isAuth, async (req: Request, res: 
                 logger.error(`${serviceLocationExport}: Original NIfTI file path or S3 bucket name missing for project ${projectId}.`);
                 return res.status(500).json({ success: false, message: "Configuration error: Missing original NIfTI path or S3 bucket." });
             }
-            
+
             const originalNiftiS3Key = extractS3KeyFromUrl(project.originalfilepath);
             if (!originalNiftiS3Key) {
                 logger.error(`${serviceLocationExport}: Could not extract S3 key from originalfilepath: ${project.originalfilepath}`);
                 return res.status(500).json({ success: false, message: "Configuration error: Invalid original NIfTI S3 URL." });
             }
-            
+
             logger.info(`${serviceLocationExport}: Downloading original NIfTI ${originalNiftiS3Key} to ${tempOriginalNiftiPath}`);
             await downloadFromS3(s3BucketName, originalNiftiS3Key, tempOriginalNiftiPath);
-            
+
             pythonScriptPath = path.join(__dirname, '..', '..', 'src', 'python', 'create_nifti_from_segmentations.py');
             pythonCommand = `python "${pythonScriptPath}" "${segmentationsJsonPath}" "${tempOriginalNiftiPath}" "${localOutputSegmentationNiftiPath}" "${planeHeightForRLE}" "${planeWidthForRLE}"`;
         }
@@ -759,7 +759,7 @@ router.get("/export-project-data/:projectId", isAuth, async (req: Request, res: 
         if (!s3BucketName) {
             throw new Error("AWS_BUCKET_NAME environment variable is not set");
         }
-        
+
         const presignedExportUrl = await generatePresignedGetUrl(s3BucketName, finalS3Key, 3600);
 
         if (!presignedExportUrl) {
@@ -797,31 +797,31 @@ router.get("/export-project-data/:projectId", isAuth, async (req: Request, res: 
 router.post("/batch-segmentation-status", isAuth, async (req: Request, res: Response) => {
     const { projectIds } = req.body;
     const userId = req.user?._id;
-    
+
     logger.info(`${serviceLocation}: Batch segmentation status check for ${projectIds?.length || 0} projects by user ${req.user?.username}`);
-    
+
     if (!userId) {
         logger.warn(`${serviceLocation}: User ID not found in request.`);
-        return res.status(401).json({ 
-            success: false, 
-            message: "Authentication required." 
+        return res.status(401).json({
+            success: false,
+            message: "Authentication required."
         });
     }
-    
+
     if (!projectIds || !Array.isArray(projectIds) || projectIds.length === 0) {
         logger.warn(`${serviceLocation}: Invalid or empty projectIds array in batch segmentation status request.`);
-        return res.status(400).json({ 
-            success: false, 
-            message: "projectIds array is required and must not be empty." 
+        return res.status(400).json({
+            success: false,
+            message: "projectIds array is required and must not be empty."
         });
     }
 
     // Limit batch size to prevent abuse
     if (projectIds.length > 50) {
         logger.warn(`${serviceLocation}: Batch size too large: ${projectIds.length} projects requested.`);
-        return res.status(400).json({ 
-            success: false, 
-            message: "Batch size limited to 50 projects per request." 
+        return res.status(400).json({
+            success: false,
+            message: "Batch size limited to 50 projects per request."
         });
     }
 
@@ -830,27 +830,27 @@ router.post("/batch-segmentation-status", isAuth, async (req: Request, res: Resp
         const userProjectsResult = await readProject(undefined, userId.toString());
         if (!userProjectsResult.success || !userProjectsResult.projects) {
             logger.error(`${serviceLocation}: Failed to fetch user projects for batch status check.`);
-            return res.status(500).json({ 
-                success: false, 
-                message: "Failed to verify project ownership." 
+            return res.status(500).json({
+                success: false,
+                message: "Failed to verify project ownership."
             });
         }
 
         const userProjectIds = userProjectsResult.projects.map((p: IProjectDocument) => (p._id as string).toString());
         const unauthorizedProjects = projectIds.filter((id: string) => !userProjectIds.includes(id));
-        
+
         if (unauthorizedProjects.length > 0) {
             logger.warn(`${serviceLocation}: User ${userId} attempted to check segmentation status for unauthorized projects: ${unauthorizedProjects.join(', ')}`);
-            return res.status(403).json({ 
-                success: false, 
-                message: "Access denied to some requested projects." 
+            return res.status(403).json({
+                success: false,
+                message: "Access denied to some requested projects."
             });
         }
 
         // 2. Batch query segmentation masks using MongoDB aggregation
         const segmentationResults = await projectSegmentationMaskModel.aggregate([
             {
-                $match: { 
+                $match: {
                     projectid: { $in: projectIds }
                 }
             },
@@ -865,12 +865,12 @@ router.post("/batch-segmentation-status", isAuth, async (req: Request, res: Resp
 
         // 3. Build response object with status for each project
         const statusMap: Record<string, { hasMasks: boolean; maskCount: number }> = {};
-        
+
         // Initialize all projects as having no masks
         projectIds.forEach((projectId: string) => {
             statusMap[projectId] = { hasMasks: false, maskCount: 0 };
         });
-        
+
         // Update with actual results
         segmentationResults.forEach((result: { _id: string; maskCount: number; hasMasks: number }) => {
             statusMap[result._id] = {
@@ -880,7 +880,7 @@ router.post("/batch-segmentation-status", isAuth, async (req: Request, res: Resp
         });
 
         logger.info(`${serviceLocation}: Successfully processed batch segmentation status for ${projectIds.length} projects. Found masks for ${segmentationResults.length} projects.`);
-        
+
         return res.status(200).json({
             success: true,
             statuses: statusMap
@@ -888,9 +888,9 @@ router.post("/batch-segmentation-status", isAuth, async (req: Request, res: Resp
 
     } catch (error: unknown) {
         LogError(error as Error, serviceLocation, `Error in batch segmentation status check for user ${userId}`);
-        return res.status(500).json({ 
-            success: false, 
-            message: "An error occurred while checking segmentation status." 
+        return res.status(500).json({
+            success: false,
+            message: "An error occurred while checking segmentation status."
         });
     }
 });
