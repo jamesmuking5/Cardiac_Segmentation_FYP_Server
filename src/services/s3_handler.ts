@@ -326,11 +326,11 @@ export const uploadMaskToS3 = async (
   }
 
   // Define the S3 key prefix internally
-  const internalS3KeyPrefix = "seg_mask/";
-  // If you wanted to include userId: const internalS3KeyPrefix = `seg_mask/${userId}/`;
+  const segMaskS3KeyPrefix = "seg_mask/";
+  // If you wanted to include userId: const segMaskS3KeyPrefix = `seg_mask/${userId}/`;
 
   // Construct the full S3 key using the internal prefix
-  const s3Key = `${internalS3KeyPrefix}${fileId}${fileExtension}`;
+  const s3Key = `${segMaskS3KeyPrefix}${fileId}${fileExtension}`;
 
   const putObjectParams: PutObjectCommandInput = {
     Bucket: bucketName,
