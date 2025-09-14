@@ -797,7 +797,7 @@ const cardiacMetricsSchema = new Schema({
 const projectReconstructionSchema = new Schema<IProjectReconstructionDocument>({
   // Identifiers
   projectid: { type: String, required: true }, // MongoDB Project ID of the project to which the reconstruction belongs
-  segmentationMaskId: { type: String, required: false }, // Optional MongoDB Segmentation Mask ID used for reconstruction
+  maskId: { type: String, required: true }, // MongoDB Segmentation Mask ID used for reconstruction
   
   // User inputs
   name: { type: String, required: true }, // Name of the reconstruction
@@ -837,15 +837,13 @@ projectReconstructionSchema.pre('save', async function (next) {
     throw new Error('Referenced project does not exist');
   }
   
-  // If segmentationMaskId is provided, validate it exists and belongs to the same project
-  if (this.segmentationMaskId) {
-    const maskExists = await projectSegmentationMaskModel.findOne({ 
-      _id: this.segmentationMaskId,
-      projectid: this.projectid 
-    });
-    if (!maskExists) {
-      throw new Error('Referenced segmentation mask does not exist or does not belong to the same project');
-    }
+  // Validate that maskId exists and belongs to the same project (maskId is now required)
+  const maskExists = await projectSegmentationMaskModel.findOne({ 
+    _id: this.maskId,
+    projectid: this.projectid 
+  });
+  if (!maskExists) {
+    throw new Error('Referenced segmentation mask does not exist or does not belong to the same project');
   }
   
   // Validate reconstruction data consistency
@@ -898,9 +896,10 @@ projectReconstructionSchema.pre('save', async function (next) {
 // Create the model with proper typing
 const projectReconstructionModel = model<IProjectReconstructionDocument, Model<IProjectReconstructionDocument>>("Project3DReconstruction", projectReconstructionSchema);
 
-// Add reconstruction indexes after model creation
-projectReconstructionSchema.index({ projectid: 1 }); // Index on project ID for performance
-projectReconstructionSchema.index({ projectid: 1, name: 1 }, { unique: true }); // Unique index on project ID and name
+// Add reconstruction indexes BEFORE model creation for better performance
+projectReconstructionSchema.index({ maskId: 1 }); // Index on mask ID for performance
+projectReconstructionSchema.index({ projectid: 1, maskId: 1 }); // Compound index for project-mask queries (also covers projectid-only queries)
+projectReconstructionSchema.index({ projectid: 1, name: 1 }, { unique: true }); // Unique index on project ID and name (also covers projectid-only queries)
 
 /**
  * Creates a new project record in the database.
@@ -1583,8 +1582,8 @@ const deleteProjectSegmentationMask = async (maskid: string): Promise<ProjectSeg
 /**
  * Creates a new 3D reconstruction record in the database.
  * Validates the provided data, including checking for the existence of the referenced project ID,
- * optional segmentation mask ID, ensuring string inputs are not empty, numeric inputs are valid,
- * and that the segmentation mask belongs to the same project if provided.
+ * required segmentation mask ID, ensuring string inputs are not empty, numeric inputs are valid,
+ * and that the segmentation mask belongs to the same project.
  * 
  * @async
  * @function createProjectReconstruction
@@ -1611,22 +1610,20 @@ const createProjectReconstruction = async (
       return { success: false, operation, message: `Project ID ${projectid} does not exist.` };
     }
 
-    // 2. Check if segmentationMaskId is provided and validate it
-    if (recon.segmentationMaskId) {
-      const maskExists = await projectSegmentationMaskModel.findOne({ 
-        _id: recon.segmentationMaskId
-      });
-      
-      if (!maskExists) {
-        logger.warn(`${serviceLocation}: Segmentation mask ID ${recon.segmentationMaskId} does not exist.`);
-        return { success: false, operation, message: `Segmentation mask ID ${recon.segmentationMaskId} does not exist.` };
-      }
-      
-      // 3. Ensure the mask's projectId matches the reconstruction's projectId
-      if (maskExists.projectid !== recon.projectid) {
-        logger.warn(`${serviceLocation}: Segmentation mask ${recon.segmentationMaskId} does not belong to project ${recon.projectid}. Mask belongs to project ${maskExists.projectid}.`);
-        return { success: false, operation, message: `Segmentation mask ${recon.segmentationMaskId} does not belong to project ${recon.projectid}. Mask belongs to project ${maskExists.projectid}.` };
-      }
+    // 2. Validate that the maskId exists and belongs to the same project
+    const maskExists = await projectSegmentationMaskModel.findOne({ 
+      _id: recon.maskId
+    });
+    
+    if (!maskExists) {
+      logger.warn(`${serviceLocation}: Segmentation mask ID ${recon.maskId} does not exist.`);
+      return { success: false, operation, message: `Segmentation mask ID ${recon.maskId} does not exist.` };
+    }
+    
+    // 3. Ensure the mask's projectId matches the reconstruction's projectId
+    if (maskExists.projectid !== recon.projectid) {
+      logger.warn(`${serviceLocation}: Segmentation mask ${recon.maskId} does not belong to project ${recon.projectid}. Mask belongs to project ${maskExists.projectid}.`);
+      return { success: false, operation, message: `Segmentation mask ${recon.maskId} does not belong to project ${recon.projectid}. Mask belongs to project ${maskExists.projectid}.` };
     }
 
     // 4. Check for name uniqueness within the project 
@@ -1643,6 +1640,7 @@ const createProjectReconstruction = async (
     // 5. Validate required string inputs
     const requiredStringInputs = [
       recon.projectid,
+      recon.maskId,
       recon.name,
       recon.filename,
       recon.filehash,
@@ -1712,15 +1710,18 @@ const createProjectReconstruction = async (
 };
 
 /**
- * Reads 3D reconstruction(s) from the database based on project ID and optional reconstruction ID.
+ * Reads 3D reconstruction(s) from the database based on project ID and optional reconstruction ID or mask ID.
  * Validates input parameters and performs filtered queries based on the provided criteria.
- * If a specific reconstruction ID is provided, returns a single reconstruction.
- * If only project ID is provided, returns all reconstructions for that project.
+ * This function supports multiple query patterns:
+ * - Single reconstruction by ID (when both projectid and reconstructionid are provided)
+ * - All reconstructions for a project (when only projectid is provided)
+ * - All reconstructions for a specific project and mask combination (when projectid and maskid are provided)
  * 
  * @async
  * @function readProjectReconstruction
  * @param {string} projectid - The project ID to search for reconstructions. Must be a valid MongoDB ObjectId string.
  * @param {string} [reconstructionid] - Optional specific reconstruction ID to find a single reconstruction.
+ * @param {string} [maskid] - Optional mask ID to filter reconstructions for a specific mask.
  * @returns {Promise<ProjectReconstructionCrudResult>} A promise resolving to a ProjectReconstructionCrudResult object.
  * - On success (single reconstruction found): `{ success: true, operation: READ, projectreconstruction: IProjectReconstructionDocument }`.
  * - On success (multiple reconstructions found): `{ success: true, operation: READ, projectreconstructions: IProjectReconstructionDocument[] }`.
@@ -1730,7 +1731,7 @@ const createProjectReconstruction = async (
  * - On database error: `{ success: false, operation: READ, message: "Error reading project reconstructions." }`.
  */
 const readProjectReconstruction = async (
-  projectid: string, reconstructionid?: string
+  projectid: string, reconstructionid?: string, maskid?: string
 ): Promise<ProjectReconstructionCrudResult> => {
   const operation = CRUDOperation.READ;
   try {
@@ -1760,15 +1761,23 @@ const readProjectReconstruction = async (
       logger.info(`${serviceLocation}: Reconstruction ${reconstructionid} found for project ${projectid}.`);
       return { success: true, operation, projectreconstruction: reconstruction };
     } else {
-      // Find all reconstructions for project 
-      const reconstructions = await projectReconstructionModel.find({ projectid });
-      
-      if (reconstructions.length === 0) {
-        logger.info(`${serviceLocation}: No reconstructions found for project ${projectid}.`);
-        return { success: true, operation, projectreconstructions: [], message: `No reconstructions found for project ${projectid}.` };
+      // Build query based on provided parameters
+      const query: any = { projectid };
+      if (maskid) {
+        query.maskId = maskid;
       }
       
-      logger.info(`${serviceLocation}: Found ${reconstructions.length} reconstruction(s) for project ${projectid}.`);
+      // Find reconstructions based on query
+      const reconstructions = await projectReconstructionModel.find(query);
+      
+      if (reconstructions.length === 0) {
+        const searchDesc = maskid ? `project ${projectid} and mask ${maskid}` : `project ${projectid}`;
+        logger.info(`${serviceLocation}: No reconstructions found for ${searchDesc}.`);
+        return { success: true, operation, projectreconstructions: [], message: `No reconstructions found for ${searchDesc}.` };
+      }
+      
+      const searchDesc = maskid ? `project ${projectid} and mask ${maskid}` : `project ${projectid}`;
+      logger.info(`${serviceLocation}: Found ${reconstructions.length} reconstruction(s) for ${searchDesc}.`);
       return { success: true, operation, projectreconstructions: reconstructions };
     }
   } catch (error: unknown) {

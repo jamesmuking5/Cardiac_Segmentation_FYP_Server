@@ -297,7 +297,7 @@ export enum MeshFormat {
  * This interface is used to store the 3D reconstruction results after AI model inference.
  * @interface IProjectReconstruction
  * @property {string} projectid - The unique MongoDB project ID of the project to which the 3D reconstruction belongs.
- * @property {string} [segmentationMaskId] - The MongoDB SegmentationMask ID that this reconstruction was generated from (optional).
+ * @property {string} maskId - The MongoDB SegmentationMask ID that this reconstruction was generated from (required).
  * @property {string} name - The name of the 3D reconstruction.
  * @property {string} [description] - A description of the 3D reconstruction (optional).
  * @property {boolean} isSaved - Indicates if the 3D reconstruction should be saved.
@@ -348,7 +348,7 @@ export interface IProjectReconstruction {
   // Identifiers
   _id?: any; // Allow _id to be compatible with the transformed object for new reconstructions
   projectid: string; // MongoDB Project ID of the project to which the 3D reconstruction belongs
-  segmentationMaskId?: string; // MongoDB SegmentationMask ID that this reconstruction was generated from (optional - null for direct AI reconstruction)
+  maskId: string; // MongoDB SegmentationMask ID that this reconstruction was generated from
   
   // User inputs
   name: string; // Name of the 3D reconstruction
