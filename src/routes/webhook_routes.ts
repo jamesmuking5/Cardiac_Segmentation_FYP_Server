@@ -5,6 +5,7 @@ import {
   readJob,
   createProjectSegmentationMask,
   createProjectReconstruction,
+  readProject,
 } from "../services/database"; // Import database function to update job status
 import {
   JobStatus,
@@ -18,6 +19,7 @@ import {
 } from "../types/database_types"; // Import JobStatus enum and IJob type
 import LogError from "../utils/error_logger";
 import { v4 as uuidv4 } from "uuid"; // For generating new _id for the manual mask
+import { convertNpzToObjTempFile, cleanupMeshTempFiles } from "../services/mesh_processor";
 
 const serviceLocation = "InferenceCallback(Webhook)";
 const router = express.Router();
@@ -522,12 +524,65 @@ router.post("/gpu-reconstruction-callback", async (req: Request, res: Response) 
         `${serviceLocation}: Valid mesh data received for job ${gpuJobId}. Size: ${gpuResult.mesh_file_size || 'unknown'} bytes, Format: ${gpuResult.mesh_format || 'npz'}`
       );
 
-      // Create reconstruction record with simplified structure
+      // Get project details for userId and filehash
+      let userId: string | undefined;
+      let filehash: string | undefined;
+      let frameIndex: number = 0; // Default frame for 4D reconstruction
+      
+      const projectResult = await readProject(projectId);
+      if (projectResult.success && projectResult.project) {
+        userId = projectResult.project.userid;
+        filehash = projectResult.project.filehash;
+        logger.info(`${serviceLocation}: Retrieved project details for job ${gpuJobId} - userId: ${userId}, filehash: ${filehash?.substring(0, 10)}...`);
+      } else {
+        logger.warn(`${serviceLocation}: Could not retrieve project details for job ${gpuJobId}, project ${projectId}. Using fallback naming.`);
+      }
+
+      // Process NPZ mesh data to OBJ format using temporary files
+      let objContent: string | undefined;
+      let objFilePath: string | undefined;
+      
+      try {
+        logger.info(`${serviceLocation}: Starting NPZ to OBJ conversion for job ${gpuJobId}`);
+        
+        const conversionResult = await convertNpzToObjTempFile(
+          gpuResult.mesh_data,
+          gpuJobId,
+          userId,
+          filehash,
+          frameIndex
+        );
+        
+        if (conversionResult.success && conversionResult.objContent) {
+          objContent = conversionResult.objContent;
+          objFilePath = conversionResult.objFilePath;
+          
+          logger.info(`${serviceLocation}: Successfully converted NPZ to OBJ for job ${gpuJobId}. OBJ size: ${objContent.length} chars, Processing time: ${conversionResult.stats?.processingTime}ms`);
+          
+          // TODO: Upload OBJ content to S3 here
+          // const s3UploadResult = await uploadObjToS3(objContent, projectId, gpuJobId);
+          
+        } else {
+          logger.error(`${serviceLocation}: NPZ to OBJ conversion failed for job ${gpuJobId}: ${conversionResult.error}`);
+          // Continue with reconstruction record creation even if conversion fails
+        }
+        
+      } catch (conversionError) {
+        logger.error(`${serviceLocation}: Error during mesh conversion for job ${gpuJobId}:`, conversionError);
+        // Continue with reconstruction record creation even if conversion fails
+      }
+
+      // Create reconstruction record with mesh information
       const reconstructionName = currentJob.segmentationName || `4D Reconstruction - Job ${gpuJobId.substring(0, 8)}`;
       const reconstructionDescription = currentJob.segmentationDescription || `4D myocardium reconstruction from job ${gpuJobId}`;
       
-      // Will be converted to OBJ format before S3 upload
-      const objFilename = `${projectId}_reconstruction_${gpuJobId.substring(0, 8)}.obj`;
+      // Generate structured filename based on available data
+      let objFilename: string;
+      if (userId && filehash) {
+        objFilename = `${userId}_${filehash}_${frameIndex}.obj`;
+      } else {
+        objFilename = `${projectId}_reconstruction_${gpuJobId.substring(0, 8)}.obj`;
+      }
       
       const reconstructionData: Partial<IProjectReconstruction> = {
         projectid: projectId,
@@ -577,6 +632,15 @@ router.post("/gpu-reconstruction-callback", async (req: Request, res: Response) 
         logger.error(
           `${serviceLocation}: Failed to create reconstruction record for job ${gpuJobId}: ${createResult.message}`
         );
+      }
+
+      // Cleanup temporary files after processing
+      try {
+        await cleanupMeshTempFiles(gpuJobId);
+        logger.info(`${serviceLocation}: Cleaned up temporary mesh files for job ${gpuJobId}`);
+      } catch (cleanupError) {
+        logger.warn(`${serviceLocation}: Failed to cleanup temporary mesh files for job ${gpuJobId}:`, cleanupError);
+        // Don't fail the webhook response due to cleanup issues
       }
     }
 
