@@ -13,7 +13,7 @@ const serviceLocation = "Database"; // Service location for error logging
 // Import Types
 import { IUser, IUserDocument, IUserSafe, UserRole, CRUDOperation, UserCrudResult, IProjectDocument, IProjectSegmentationMaskDocument, segmentationSource } from "../types/database_types"; // Import the user types
 import { FileType, FileDataType, ComponentBoundingBoxesClass, IProject, IProjectSegmentationMask, ProjectCrudResult, ProjectSegmentationMaskCrudResult } from "../types/database_types"; // Import the project types
-import { IProjectReconstruction, IProjectReconstructionDocument, ProjectReconstructionCrudResult, ReconstructionSource, MeshFormat } from "../types/database_types"; // Import the project reconstruction types
+import { IProjectReconstruction, IProjectReconstructionDocument, ProjectReconstructionCrudResult, MeshFormat } from "../types/database_types"; // Import the project reconstruction types
 import { JobStatus, IJob, IJobDocument, JobCrudResult } from "../types/database_types"; // Import the job types
 import { IGPUHost, IGPUHostDocument, GPUHostCrudResult } from "../types/database_types"; // Import the GPU host types
 
@@ -793,7 +793,7 @@ const cardiacMetricsSchema = new Schema({
   cardiacOutput: { type: Number, required: false }, // Cardiac output measurement
 }, { _id: false }); // Disable automatic creation of an _id field for this subdocument
 
-// Create Project 3D Reconstruction schema (Nest Depth: 0)
+// Create simplified Project 4D Reconstruction schema for AI SDF-based reconstruction
 const projectReconstructionSchema = new Schema<IProjectReconstructionDocument>({
   // Identifiers
   projectid: { type: String, required: true }, // MongoDB Project ID of the project to which the reconstruction belongs
@@ -804,29 +804,29 @@ const projectReconstructionSchema = new Schema<IProjectReconstructionDocument>({
   description: { type: String, required: false }, // Description of the reconstruction
   isSaved: { type: Boolean, required: true, default: false }, // Indicates if the reconstruction is saved
   isAIGenerated: { type: Boolean, required: true, default: false }, // Indicates if the reconstruction is AI generated
-  reconstructionSource: { type: String, required: true, enum: Object.values(ReconstructionSource) }, // Source method of reconstruction
-  meshFormat: { type: String, required: true, enum: Object.values(MeshFormat) }, // Format of the mesh files
+  meshFormat: { type: String, required: true, enum: Object.values(MeshFormat) }, // Format of the mesh file
   
   // File properties
   filename: { type: String, required: true }, // Server-generated unique filename
-  filesize: { type: Number, required: true }, // Size of the reconstruction files in bytes
-  filehash: { type: String, required: true }, // Hash of the reconstruction for integrity verification
+  filesize: { type: Number, required: true }, // Size of the reconstruction file in bytes
+  filehash: { type: String, required: true }, // Hash of the reconstruction file for integrity verification
   
   // Location tracking
   basepath: { type: String, required: true }, // Base path for the reconstruction storage (e.g., S3 bucket URL)
-  reconstructionfolderpath: { type: String, required: true }, // Folder path for the reconstruction files (e.g., S3 bucket URL)
+  reconstructionfolderpath: { type: String, required: true }, // Folder path for the reconstruction file (e.g., S3 bucket URL)
   
-  // 3D Volume (optional)
-  reconstructedVolume: { type: reconstructedVolumeSchema, required: false }, // Optional reconstructed volume data
-  
-  // 3D Meshes (complex nested structure)
-  reconstructedMeshes: { type: reconstructedMeshesSchema, required: true }, // Required reconstructed meshes data
-  
-  // Combined mesh (optional)
-  combinedMesh: { type: combinedMeshSchema, required: false }, // Optional combined mesh data
-  
-  // Cardiac metrics (optional)
-  cardiacMetrics: { type: cardiacMetricsSchema, required: false }, // Optional cardiac measurements
+  // 4D Reconstruction Mesh - single mesh file from AI SDF model
+  reconstructedMesh: {
+    path: { type: String, required: true }, // S3 path to the mesh file
+    filename: { type: String, required: true }, // Mesh filename (e.g., projectid_reconstructionid_4d.npz)
+    filesize: { type: Number, required: true }, // Size of mesh file in bytes
+    hash: { type: String, required: true }, // SHA256 hash of mesh file
+    format: { type: String, required: true }, // Mesh file format (npz, obj, glb)
+    meshData: { type: String, required: false }, // Base64 encoded mesh data from GPU callback (optional)
+    reconstructionTime: { type: Number, required: false }, // Time taken for reconstruction in seconds (optional)
+    numIterations: { type: Number, required: false }, // Number of iterations used in SDF reconstruction (optional)
+    resolution: { type: Number, required: false }, // Resolution of the reconstruction grid (optional)
+  },
 }, { timestamps: true }); // Automatically add createdAt and updatedAt timestamps
 
 // Hooks for pre-save and pre-delete operations (must be before the model creation)
@@ -846,47 +846,20 @@ projectReconstructionSchema.pre('save', async function (next) {
     throw new Error('Referenced segmentation mask does not exist or does not belong to the same project');
   }
   
-  // Validate reconstruction data consistency
-  if (this.reconstructedMeshes && this.reconstructedMeshes.frames) {
-    // Ensure frame indexes are unique and consecutive starting from 0
-    const frameIndexes = this.reconstructedMeshes.frames.map(f => f.frameindex);
-    const uniqueIndexes = [...new Set(frameIndexes)];
-    
-    // Check for duplicates
-    if (frameIndexes.length !== uniqueIndexes.length) {
-      throw new Error('Duplicate frame indexes found in reconstruction');
-    }
-    
-    // Check that frame indexes are consecutive starting from 0
-    if (uniqueIndexes.length > 0) {
-      uniqueIndexes.sort((a, b) => a - b); // Sort numerically
-      const minIndex = uniqueIndexes[0];
-      const maxIndex = uniqueIndexes[uniqueIndexes.length - 1];
-      
-      if (minIndex !== 0) {
-        throw new Error('Frame indexes must start from 0');
-      }
-      
-      // Verify consecutive sequence (0, 1, 2, 3, ...)
-      for (let i = 0; i < uniqueIndexes.length; i++) {
-        if (uniqueIndexes[i] !== i) {
-          throw new Error(`Frame indexes must be consecutive. Expected ${i}, found ${uniqueIndexes[i]}`);
-        }
+  // Validate reconstruction mesh data consistency
+  if (this.reconstructedMesh) {
+    // Validate required mesh properties
+    const requiredStringFields = ['path', 'filename', 'hash', 'format'];
+    for (const field of requiredStringFields) {
+      if (!this.reconstructedMesh[field as keyof typeof this.reconstructedMesh] || 
+          typeof this.reconstructedMesh[field as keyof typeof this.reconstructedMesh] !== 'string') {
+        throw new Error(`reconstructedMesh.${field} is required and must be a non-empty string`);
       }
     }
     
-    // Validate that each frame has at least one component
-    for (const frame of this.reconstructedMeshes.frames) {
-      if (!frame.components || frame.components.length === 0) {
-        throw new Error(`Frame ${frame.frameindex} must have at least one component`);
-      }
-      
-      // Validate component confidence scores
-      for (const component of frame.components) {
-        if (component.confidence < 0 || component.confidence > 1) {
-          throw new Error(`Component confidence must be between 0 and 1. Found: ${component.confidence}`);
-        }
-      }
+    // Validate filesize
+    if (typeof this.reconstructedMesh.filesize !== 'number' || this.reconstructedMesh.filesize < 0) {
+      throw new Error('reconstructedMesh.filesize must be a non-negative number');
     }
   }
   
@@ -1646,7 +1619,6 @@ const createProjectReconstruction = async (
       recon.filehash,
       recon.basepath,
       recon.reconstructionfolderpath,
-      recon.reconstructionSource,
       recon.meshFormat
     ];
     
@@ -1671,25 +1643,31 @@ const createProjectReconstruction = async (
     }
 
     // 8. Validate enum fields 
-    if (!Object.values(ReconstructionSource).includes(recon.reconstructionSource)) {
-      logger.warn(`${serviceLocation}: Invalid reconstructionSource: ${recon.reconstructionSource}. Valid values are: ${Object.values(ReconstructionSource).join(", ")}`);
-      return { success: false, operation, message: `Invalid reconstructionSource: ${recon.reconstructionSource}. Valid values are: ${Object.values(ReconstructionSource).join(", ")}` };
-    }
-
     if (!Object.values(MeshFormat).includes(recon.meshFormat)) {
       logger.warn(`${serviceLocation}: Invalid meshFormat: ${recon.meshFormat}. Valid values are: ${Object.values(MeshFormat).join(", ")}`);
       return { success: false, operation, message: `Invalid meshFormat: ${recon.meshFormat}. Valid values are: ${Object.values(MeshFormat).join(", ")}` };
     }
 
-    // 9. Basic reconstructedMeshes structure validation 
-    if (!recon.reconstructedMeshes || typeof recon.reconstructedMeshes !== 'object') {
-      logger.warn(`${serviceLocation}: Invalid input parameters for project reconstruction creation: reconstructedMeshes is required and must be an object.`);
-      return { success: false, operation, message: `Invalid input parameters for project reconstruction creation: reconstructedMeshes is required and must be an object.` };
+    // 9. Validate reconstructedMesh structure 
+    if (!recon.reconstructedMesh || typeof recon.reconstructedMesh !== 'object') {
+      logger.warn(`${serviceLocation}: Invalid input parameters for project reconstruction creation: reconstructedMesh is required and must be an object.`);
+      return { success: false, operation, message: `Invalid input parameters for project reconstruction creation: reconstructedMesh is required and must be an object.` };
     }
 
-    if (!recon.reconstructedMeshes.frames || !Array.isArray(recon.reconstructedMeshes.frames) || recon.reconstructedMeshes.frames.length === 0) {
-      logger.warn(`${serviceLocation}: Invalid input parameters for project reconstruction creation: frames array must be populated with at least one frame.`);
-      return { success: false, operation, message: `Invalid input parameters for project reconstruction creation: frames array must be populated with at least one frame.` };
+    // Validate required mesh properties
+    const requiredMeshStringFields: (keyof typeof recon.reconstructedMesh)[] = ['path', 'filename', 'hash', 'format'];
+    for (const field of requiredMeshStringFields) {
+      const value = recon.reconstructedMesh[field];
+      if (!value || typeof value !== 'string' || (value as string).trim() === '') {
+        logger.warn(`${serviceLocation}: Invalid reconstructedMesh.${field}: must be a non-empty string`);
+        return { success: false, operation, message: `Invalid reconstructedMesh.${field}: must be a non-empty string` };
+      }
+    }
+
+    // Validate required mesh filesize
+    if (typeof recon.reconstructedMesh.filesize !== 'number' || isNaN(recon.reconstructedMesh.filesize) || recon.reconstructedMesh.filesize < 0) {
+      logger.warn(`${serviceLocation}: Invalid reconstructedMesh.filesize: must be a non-negative number`);
+      return { success: false, operation, message: `Invalid reconstructedMesh.filesize: must be a non-negative number` };
     }
 
     // 10. Create and save the new reconstruction 
@@ -1842,68 +1820,12 @@ const updateProjectReconstruction = async (
       reconstruction.filesize = updates.filesize;
     }
 
-    if (updates.reconstructionSource !== undefined) {
-      reconstruction.reconstructionSource = updates.reconstructionSource;
-    }
-
     if (updates.meshFormat !== undefined) {
       reconstruction.meshFormat = updates.meshFormat;
     }
 
-    if (updates.reconstructedMeshes) {
-      if (!updates.reconstructedMeshes.frames || !Array.isArray(updates.reconstructedMeshes.frames) || updates.reconstructedMeshes.frames.length === 0) {
-        return { success: false, operation, message: "Reconstructed meshes frames array must contain at least one frame." };
-      }
-
-      // Validate frame indices
-      const invalidFrameIndices = updates.reconstructedMeshes.frames.filter(frame =>
-        frame.frameindex === undefined || typeof frame.frameindex !== 'number' || frame.frameindex < 0
-      );
-      if (invalidFrameIndices.length > 0) {
-        const indices = invalidFrameIndices.map(f => f.frameindex).join(", ");
-        return { success: false, operation, message: `Invalid frame indices: [${indices}]. Frame index must be a non-negative number.` };
-      }
-
-      // Validate components for each frame
-      const framesWithEmptyComponents = updates.reconstructedMeshes.frames.filter(frame =>
-        !frame.components || !Array.isArray(frame.components) || frame.components.length === 0
-      );
-      if (framesWithEmptyComponents.length > 0) {
-        const indices = framesWithEmptyComponents.map(f => f.frameindex).join(", ");
-        return { success: false, operation, message: `Frames with indices [${indices}] must have at least one component.` };
-      }
-
-      // Deep component validation
-      for (const frame of updates.reconstructedMeshes.frames) {
-        for (const component of frame.components) {
-          // Validate confidence scores
-          if (component.confidence < 0 || component.confidence > 1) {
-            const offendingLocation = `frame ${frame.frameindex}, component class ${component.class}`;
-            const messageDetail = `Component confidence must be between 0 and 1. Received: ${component.confidence}`;
-            logger.warn(`${serviceLocation}: Invalid input for project reconstruction update: ${messageDetail} in ${offendingLocation}.`);
-            return {
-              success: false,
-              operation,
-              message: `Invalid input for project reconstruction update: ${messageDetail} in ${offendingLocation}.`
-            };
-          }
-
-          // Validate required component fields 
-          if (!component.meshPath || typeof component.meshPath !== 'string' || component.meshPath.trim() === '') {
-            const offendingLocation = `frame ${frame.frameindex}, component class ${component.class}`;
-            logger.warn(`${serviceLocation}: Invalid component meshPath for project reconstruction update in ${offendingLocation}.`);
-            return { success: false, operation, message: `Invalid component meshPath for project reconstruction update in ${offendingLocation}.` };
-          }
-
-          if (!component.filename || typeof component.filename !== 'string' || component.filename.trim() === '') {
-            const offendingLocation = `frame ${frame.frameindex}, component class ${component.class}`;
-            logger.warn(`${serviceLocation}: Invalid component filename for project reconstruction update in ${offendingLocation}.`);
-            return { success: false, operation, message: `Invalid component filename for project reconstruction update in ${offendingLocation}.` };
-          }
-        }
-      }
-
-      reconstruction.reconstructedMeshes = updates.reconstructedMeshes;
+    if (updates.reconstructedMesh) {
+      reconstruction.reconstructedMesh = updates.reconstructedMesh;
     }
 
     await reconstruction.save();
@@ -2279,7 +2201,7 @@ const updateGPUHost = async (updates: Partial<IGPUHost>): Promise<GPUHostCrudRes
 export {
   connectToDatabase, userModel, createUser, readUser, updateUser, deleteUser, authenticateUser, UserRole, IUser, IUserSafe, UserCrudResult, CRUDOperation, IUserDocument, IProject, IProjectDocument, IProjectSegmentationMask, projectModel, projectSegmentationMaskModel, createProject, readProject, updateProject, deleteProject, createProjectSegmentationMask, readProjectSegmentationMask, updateProjectSegmentationMask, deleteProjectSegmentationMask, 
   // Project Reconstruction exports
-  IProjectReconstruction, IProjectReconstructionDocument, ProjectReconstructionCrudResult, ReconstructionSource, MeshFormat, projectReconstructionModel, createProjectReconstruction, readProjectReconstruction, updateProjectReconstruction, deleteProjectReconstruction,
+  IProjectReconstruction, IProjectReconstructionDocument, ProjectReconstructionCrudResult, MeshFormat, projectReconstructionModel, createProjectReconstruction, readProjectReconstruction, updateProjectReconstruction, deleteProjectReconstruction,
   // Job and GPU Host exports
   jobModel, createJob, readJob, updateJob, deleteJob, JobStatus, IJob, IJobDocument, IProjectSegmentationMaskDocument, ProjectSegmentationMaskCrudResult, ProjectCrudResult,
   readGPUHost, updateGPUHost, seedGPUHost, gpuHostModel, GPUHostCrudResult, IGPUHost, IGPUHostDocument
