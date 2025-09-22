@@ -14,7 +14,6 @@ import {
   IJob,
   IProjectSegmentationMaskDocument,
   IProjectReconstruction,
-  ReconstructionSource,
   MeshFormat,
 } from "../types/database_types"; // Import JobStatus enum and IJob type
 import LogError from "../utils/error_logger";
@@ -493,7 +492,7 @@ router.post("/gpu-reconstruction-callback", async (req: Request, res: Response) 
         `${serviceLocation}: Processing 4D reconstruction mesh results for job ${gpuJobId}, project ${projectId}.`
       );
 
-      // Validate mesh data presence
+      // Validate mesh data presence and format
       if (!gpuResult.mesh_data || typeof gpuResult.mesh_data !== "string") {
         logger.error(
           `${serviceLocation}: Missing or invalid mesh_data in callback for job ${gpuJobId}`
@@ -503,17 +502,33 @@ router.post("/gpu-reconstruction-callback", async (req: Request, res: Response) 
         });
       }
 
+      // Validate mesh data is valid Base64
+      try {
+        if (!/^[A-Za-z0-9+/]*={0,2}$/.test(gpuResult.mesh_data)) {
+          throw new Error("Invalid Base64 format");
+        }
+        // Test decode to ensure it's valid Base64 data
+        Buffer.from(gpuResult.mesh_data, 'base64');
+      } catch (error) {
+        logger.error(
+          `${serviceLocation}: Invalid Base64 mesh_data in callback for job ${gpuJobId}: ${error}`
+        );
+        return res.status(400).json({ 
+          message: "Invalid Base64 mesh_data in reconstruction callback" 
+        });
+      }
+
       logger.info(
-        `${serviceLocation}: Mesh data received for job ${gpuJobId}. Size: ${gpuResult.mesh_file_size || 'unknown'} bytes, Format: ${gpuResult.mesh_format || 'npz'}`
+        `${serviceLocation}: Valid mesh data received for job ${gpuJobId}. Size: ${gpuResult.mesh_file_size || 'unknown'} bytes, Format: ${gpuResult.mesh_format || 'npz'}`
       );
 
-      // Create reconstruction record with mesh data embedded (following segmentation pattern)
+      // Create reconstruction record with simplified structure
       const reconstructionName = currentJob.segmentationName || `4D Reconstruction - Job ${gpuJobId.substring(0, 8)}`;
       const reconstructionDescription = currentJob.segmentationDescription || `4D myocardium reconstruction from job ${gpuJobId}`;
       
-      const meshFilename = gpuResult.mesh_filename || `${projectId}_reconstruction_${gpuJobId.substring(0, 8)}.${gpuResult.mesh_format || 'npz'}`;
+      // Will be converted to OBJ format before S3 upload
+      const objFilename = `${projectId}_reconstruction_${gpuJobId.substring(0, 8)}.obj`;
       
-      // Create reconstruction object with mesh data 
       const reconstructionData: Partial<IProjectReconstruction> = {
         projectid: projectId,
         maskId: projectId, // TODO: Get actual maskId from job context when available
@@ -521,46 +536,27 @@ router.post("/gpu-reconstruction-callback", async (req: Request, res: Response) 
         description: reconstructionDescription,
         isSaved: false,
         isAIGenerated: true,
-        reconstructionSource: ReconstructionSource.AI_SDF_MODEL,
-        meshFormat: MeshFormat.GLB, // Will be converted from NPZ later
-        filename: meshFilename,
-        filesize: gpuResult.mesh_file_size || 0,
-        filehash: "pending", // Will be calculated during S3 upload process
-        basepath: "pending", // Will be set during S3 upload process
-        reconstructionfolderpath: "pending", // Will be set during S3 upload process
-        reconstructedMeshes: {
-          meshfolderpath: "pending", // Will be set during S3 upload process
-          frames: [
-            {
-              frameindex: 0,
-              framereconstructed: true,
-              framefolderpath: "pending", // Will be set during S3 upload process
-              components: [
-                {
-                  class: ComponentBoundingBoxesClass.MYO, // Default to myocardium
-                  meshPath: "pending", // Will be set during S3 upload process
-                  filename: meshFilename,
-                  filesize: gpuResult.mesh_file_size || 0,
-                  hash: "pending", // Will be calculated during file processing
-                  confidence: 1.0,
-                  measurements: {
-                    volume: undefined,
-                    surfaceArea: undefined,
-                    wallThickness: undefined,
-                  },
-                },
-              ],
-            },
-          ],
+        reconstructedMesh: {
+          path: "pending", // Will be populated with S3 URL after NPZ->OBJ conversion and upload
+          filename: objFilename,
+          filesize: 0, // Will be calculated after OBJ conversion
+          hash: "pending", // Will be calculated during OBJ conversion and S3 upload
+          format: "obj", // Final format after conversion from NPZ
+          reconstructionTime: gpuResult.reconstruction_time,
+          numIterations: gpuResult.num_iterations,
+          resolution: gpuResult.resolution,
         },
       };
 
-      // Store mesh data in job result for later processing (similar to segmentation RLE data)
+      // Store mesh data in job result for NPZ->OBJ conversion processing
+      // Workflow: GPU -> Webhook -> Job Result (with Base64 NPZ data) -> Background NPZ decode -> OBJ conversion -> S3 upload
       const updateResultWithMesh = await updateJob(gpuJobId, {
         ...jobUpdatePayload,
         result: JSON.stringify({
           ...gpuResult,
-          mesh_data_stored: true, // Flag to indicate mesh data is available for processing
+          mesh_data_stored: true, // Flag to indicate NPZ mesh data is available for processing
+          reconstruction_created: true, // Flag to indicate reconstruction record exists
+          conversion_required: "npz_to_obj", // Flag to indicate conversion workflow needed
         }),
       });
 
@@ -570,12 +566,12 @@ router.post("/gpu-reconstruction-callback", async (req: Request, res: Response) 
         );
       }
 
-      // Create reconstruction record in database (similar to createProjectSegmentationMask)
+      // Create reconstruction record in database
       const createResult = await createProjectReconstruction(reconstructionData as IProjectReconstruction);
 
       if (createResult.success && createResult.projectreconstruction) {
         logger.info(
-          `${serviceLocation}: Successfully created reconstruction ${createResult.projectreconstruction._id} for project ${projectId} from job ${gpuJobId}`
+          `${serviceLocation}: Successfully created reconstruction ${createResult.projectreconstruction._id} for project ${projectId} from job ${gpuJobId}.`
         );
       } else {
         logger.error(
