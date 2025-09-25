@@ -25,12 +25,12 @@ router.post("/start-reconstruction/:projectId",
     injectGpuAuthToken,
     async (req: Request, res: Response) => {
         const { projectId } = req.params;
-        const { reconstructionName, reconstructionDescription, parameters } = req.body;
+        const { reconstructionName, reconstructionDescription, parameters, ed_frame } = req.body;
         
-        logger.info(`${serviceLocation}: Received start 4D reconstruction request for project ${projectId} by user ${req.user?.username} with id ${req.user?._id}`);
+        logger.info(`${serviceLocation}: Received start 4D reconstruction request for project ${projectId} with ed_frame ${ed_frame} by user ${req.user?.username} with id ${req.user?._id}`);
         
         try {
-            const result = await startReconstruction(projectId, req.user, reconstructionName, reconstructionDescription, parameters);
+            const result = await startReconstruction(projectId, req.user, reconstructionName, reconstructionDescription, parameters, ed_frame);
             if (result.success) {
                 res.status(200).json({ message: result.message, uuid: result.uuid });
             } else {

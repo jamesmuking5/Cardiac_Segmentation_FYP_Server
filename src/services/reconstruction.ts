@@ -18,6 +18,7 @@ const sendReconstructionRequestToCloudGpu = async (
         url: string;  
         uuid: string;
         callback_url: string;
+        ed_frame: number;
         num_iterations?: number;  
         resolution?: number;
         debug_save?: boolean;    
@@ -90,8 +91,8 @@ const sendReconstructionRequestToCloudGpu = async (
     }
 };
 
-export const startReconstruction = async (projectId: string, user?: IUserSafe, reconstructionName?: string, reconstructionDescription?: string, parameters?: any): Promise<{ success: boolean; message: string; uuid?: string }> => {
-    logger.info(`${serviceLocation}: Received start 4D reconstruction request for project ${projectId} by user ${user?.username} with id ${user?._id}`);
+export const startReconstruction = async (projectId: string, user?: IUserSafe, reconstructionName?: string, reconstructionDescription?: string, parameters?: any, ed_frame?: number): Promise<{ success: boolean; message: string; uuid?: string }> => {
+    logger.info(`${serviceLocation}: Received start 4D reconstruction request for project ${projectId} with ed_frame ${ed_frame} by user ${user?.username} with id ${user?._id}`);
     
     const gpuAuthToken = getCurrentToken();
     if (!gpuAuthToken) {
@@ -126,6 +127,20 @@ export const startReconstruction = async (projectId: string, user?: IUserSafe, r
             return { success: false, message: "Access denied to this project" };
         }
 
+        // Validate ed_frame parameter if provided
+        if (ed_frame !== undefined) {
+            if (!Number.isInteger(ed_frame) || ed_frame < 1) {
+                logger.warn(`${serviceLocation}: Invalid ed_frame value ${ed_frame} for project ${projectId}. Must be a positive integer >= 1.`);
+                return { success: false, message: `Invalid end-diastole frame number: ${ed_frame}. Must be a positive integer >= 1.` };
+            }
+            
+            // Optional: Validate against actual project frame count if available
+            if (projectData.dimensions?.frames && ed_frame > projectData.dimensions.frames) {
+                logger.warn(`${serviceLocation}: ed_frame ${ed_frame} exceeds project ${projectId} frame count of ${projectData.dimensions.frames}.`);
+                return { success: false, message: `End-diastole frame ${ed_frame} exceeds project frame count of ${projectData.dimensions.frames}.` };
+            }
+        }
+
         // Extract S3 object key from the originalfilepath URL for NIfTI file 
         const niftiS3Url = projectData.originalfilepath;
         let objectKeyForNifti: string;
@@ -157,9 +172,10 @@ export const startReconstruction = async (projectId: string, user?: IUserSafe, r
 
         // Prepare reconstruction request payload - match GPU server schema
         const reconstructionPayload = {
-            url: dataUrlForGpu,  // Changed from niftiUrl to dataUrlForGpu to match inference.ts pattern
+            url: dataUrlForGpu,  // Presigned URL for segmentation data
             uuid: jobUuid,
             callback_url: `${callback_url}/webhook/gpu-reconstruction-callback`,
+            ed_frame: ed_frame || 1,  // End-diastole frame number (default to 1)
             num_iterations: parameters?.num_iterations || 50,  // Flattened parameters
             resolution: parameters?.resolution || 128,
             debug_save: parameters?.debug_save || parameters?.debug || false,  // Support both debug and debug_save
@@ -167,7 +183,7 @@ export const startReconstruction = async (projectId: string, user?: IUserSafe, r
         };
 
         // The logger in sendReconstructionRequestToCloudGpu will log the full payload.
-        logger.info(`${serviceLocation}: Prepared reconstruction data for project ${projectId}, UUID ${jobUuid}. NIfTI S3 Key: ${objectKeyForNifti}. Callback URL being sent: ${reconstructionPayload.callback_url}`);
+        logger.info(`${serviceLocation}: Prepared reconstruction data for project ${projectId}, UUID ${jobUuid}, ed_frame ${reconstructionPayload.ed_frame}. NIfTI S3 Key: ${objectKeyForNifti}. Callback URL: ${reconstructionPayload.callback_url}`);
 
         // Send reconstruction request to GPU server BEFORE creating job record
         const reconstructionResult = await sendReconstructionRequestToCloudGpu(reconstructionPayload, gpuAuthToken);
