@@ -802,6 +802,7 @@ const projectReconstructionSchema = new Schema<IProjectReconstructionDocument>({
   // User inputs
   name: { type: String, required: true }, // Name of the reconstruction
   description: { type: String, required: false }, // Description of the reconstruction
+  ed_frame: { type: Number, required: true, default: 1 }, // End-diastole frame number for reconstruction
   isSaved: { type: Boolean, required: true, default: false }, // Indicates if the reconstruction is saved
   isAIGenerated: { type: Boolean, required: true, default: false }, // Indicates if the reconstruction is AI generated
   meshFormat: { type: String, required: true, enum: Object.values(MeshFormat) }, // Format of the mesh file

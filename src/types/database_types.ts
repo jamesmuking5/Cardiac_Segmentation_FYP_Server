@@ -290,6 +290,7 @@ export enum MeshFormat {
  * @property {string} maskId - The MongoDB SegmentationMask ID that this reconstruction was generated from (required).
  * @property {string} name - The name of the 4D reconstruction.
  * @property {string} [description] - A description of the 4D reconstruction (optional).
+ * @property {number} ed_frame - The end-diastole frame number for reconstruction (default: 1).
  * @property {boolean} isSaved - Indicates if the 4D reconstruction should be saved.
  * @property {boolean} isAIGenerated - Indicates if the reconstruction is AI-generated (should not delete if it's AI output).
  * @property {MeshFormat} meshFormat - The format of the 4D mesh file (npz, obj, glb, etc.).
@@ -318,6 +319,7 @@ export interface IProjectReconstruction {
   // User inputs
   name: string; // Name of the 4D reconstruction
   description?: string; // Description of the 4D reconstruction
+  ed_frame: number; // End-diastole frame number for reconstruction (default: 1)
   isSaved: boolean; // Indicates if the 4D reconstruction is saved in the database
   isAIGenerated: boolean; // Indicates if the reconstruction is AI-generated (should not delete if it's AI output)
   meshFormat: MeshFormat; // Format of the 4D mesh file
