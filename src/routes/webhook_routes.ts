@@ -1,4 +1,6 @@
 import express, { Request, Response, NextFunction } from "express";
+import fs from "fs/promises";
+import crypto from "crypto";
 import logger from "../services/logger"; // Import Winston Logger
 import {
   updateJob,
@@ -19,7 +21,7 @@ import {
 } from "../types/database_types"; // Import JobStatus enum and IJob type
 import LogError from "../utils/error_logger";
 import { v4 as uuidv4 } from "uuid"; // For generating new _id for the manual mask
-import { convertNpzToObjTempFile, cleanupMeshTempFiles } from "../services/mesh_processor";
+import { gpuObjUploadFilter } from "../middleware/uploadmiddleware";
 
 const serviceLocation = "InferenceCallback(Webhook)";
 const router = express.Router();
@@ -384,12 +386,16 @@ router.post("/gpu-callback", async (req: Request, res: Response) => {
   }
 });
 
-router.post("/gpu-reconstruction-callback", async (req: Request, res: Response) => {
+router.post("/gpu-reconstruction-callback", gpuObjUploadFilter, async (req: Request, res: Response) => {
+  const uploadedFiles = req.files as Express.Multer.File[];
+  
   logger.info(
     `${serviceLocation}: Received 4D reconstruction callback from Cloud GPU. Headers:`,
     req.headers,
-    "Body keys:",
-    Object.keys(req.body)
+    "Body fields:",
+    Object.keys(req.body),
+    "Files received:",
+    uploadedFiles?.length || 0
   );
 
   const gpuJobId = req.headers["x-job-id"] as string | undefined;
@@ -494,40 +500,34 @@ router.post("/gpu-reconstruction-callback", async (req: Request, res: Response) 
         `${serviceLocation}: Processing 4D reconstruction mesh results for job ${gpuJobId}, project ${projectId}.`
       );
 
-      // Validate mesh data presence and format
-      if (!gpuResult.mesh_data || typeof gpuResult.mesh_data !== "string") {
+      // Validate uploaded OBJ files presence
+      if (!uploadedFiles || uploadedFiles.length === 0) {
         logger.error(
-          `${serviceLocation}: Missing or invalid mesh_data in callback for job ${gpuJobId}`
+          `${serviceLocation}: No OBJ files received in multipart callback for job ${gpuJobId}`
         );
         return res.status(400).json({ 
-          message: "Missing or invalid mesh_data in reconstruction callback" 
+          message: "No OBJ files received in reconstruction callback" 
         });
       }
 
-      // Validate mesh data is valid Base64
-      try {
-        if (!/^[A-Za-z0-9+/]*={0,2}$/.test(gpuResult.mesh_data)) {
-          throw new Error("Invalid Base64 format");
-        }
-        // Test decode to ensure it's valid Base64 data
-        Buffer.from(gpuResult.mesh_data, 'base64');
-      } catch (error) {
+      // Validate all uploaded files are OBJ format
+      const invalidFiles = uploadedFiles.filter(file => !file.originalname.toLowerCase().endsWith('.obj'));
+      if (invalidFiles.length > 0) {
         logger.error(
-          `${serviceLocation}: Invalid Base64 mesh_data in callback for job ${gpuJobId}: ${error}`
+          `${serviceLocation}: Invalid file formats received for job ${gpuJobId}. Expected .obj files, Received: ${invalidFiles.map(f => f.originalname).join(', ')}`
         );
         return res.status(400).json({ 
-          message: "Invalid Base64 mesh_data in reconstruction callback" 
+          message: `Invalid file formats. Expected .obj files, Received: ${invalidFiles.map(f => f.originalname).join(', ')}` 
         });
       }
 
       logger.info(
-        `${serviceLocation}: Valid mesh data received for job ${gpuJobId}. Size: ${gpuResult.mesh_file_size || 'unknown'} bytes, Format: ${gpuResult.mesh_format || 'npz'}`
+        `${serviceLocation}: Valid OBJ files received for job ${gpuJobId}. File count: ${uploadedFiles.length}, Total size: ${uploadedFiles.reduce((sum, f) => sum + f.size, 0)} bytes`
       );
 
       // Get project details for userId and filehash
       let userId: string | undefined;
       let filehash: string | undefined;
-      let frameIndex: number = 0; // Default frame for 4D reconstruction
       
       const projectResult = await readProject(projectId);
       if (projectResult.success && projectResult.project) {
@@ -538,80 +538,117 @@ router.post("/gpu-reconstruction-callback", async (req: Request, res: Response) 
         logger.warn(`${serviceLocation}: Could not retrieve project details for job ${gpuJobId}, project ${projectId}. Using fallback naming.`);
       }
 
-      // Process NPZ mesh data to OBJ format using temporary files
-      let objContent: string | undefined;
-      let objFilePath: string | undefined;
+      // Process uploaded OBJ files from GPU server
+      const processedObjFiles: Array<{
+        filename: string;
+        originalName: string;
+        tempPath: string;
+        size: number;
+        frameIndex?: number;
+      }> = [];
       
       try {
-        logger.info(`${serviceLocation}: Starting NPZ to OBJ conversion for job ${gpuJobId}`);
+        logger.info(`${serviceLocation}: Processing ${uploadedFiles.length} OBJ files for job ${gpuJobId}`);
         
-        const conversionResult = await convertNpzToObjTempFile(
-          gpuResult.mesh_data,
-          gpuJobId,
-          userId,
-          filehash,
-          frameIndex
-        );
-        
-        if (conversionResult.success && conversionResult.objContent) {
-          objContent = conversionResult.objContent;
-          objFilePath = conversionResult.objFilePath;
+        for (const file of uploadedFiles) {
+          // Extract frame index from filename if present (e.g., frame_001.obj, heart_frame_2.obj)
+          const frameMatch = file.originalname.match(/frame[_-]?(\d+)/i);
+          const frameIndex = frameMatch ? parseInt(frameMatch[1], 10) : undefined;
           
-          logger.info(`${serviceLocation}: Successfully converted NPZ to OBJ for job ${gpuJobId}. OBJ size: ${objContent.length} chars, Processing time: ${conversionResult.stats?.processingTime}ms`);
+          processedObjFiles.push({
+            filename: file.filename, // Multer generated filename
+            originalName: file.originalname, // Original filename from GPU
+            tempPath: file.path, // Full path to temporary file
+            size: file.size,
+            frameIndex: frameIndex,
+          });
           
-          // TODO: Upload OBJ content to S3 here
-          // const s3UploadResult = await uploadObjToS3(objContent, projectId, gpuJobId);
-          
-        } else {
-          logger.error(`${serviceLocation}: NPZ to OBJ conversion failed for job ${gpuJobId}: ${conversionResult.error}`);
-          // Continue with reconstruction record creation even if conversion fails
+          logger.info(`${serviceLocation}: Processed OBJ file ${file.originalname} (${file.size} bytes) ${frameIndex !== undefined ? `for frame ${frameIndex}` : 'with no frame info'}`);
         }
         
-      } catch (conversionError) {
-        logger.error(`${serviceLocation}: Error during mesh conversion for job ${gpuJobId}:`, conversionError);
-        // Continue with reconstruction record creation even if conversion fails
+        logger.info(`${serviceLocation}: Successfully processed ${processedObjFiles.length} OBJ files for job ${gpuJobId}`);
+        
+        // TODO: Upload OBJ files to S3 here
+        // for (const objFile of processedObjFiles) {
+        //   const s3UploadResult = await uploadObjToS3(objFile.tempPath, projectId, gpuJobId, objFile.frameIndex);
+        // }
+        
+      } catch (processingError) {
+        logger.error(`${serviceLocation}: Error during OBJ file processing for job ${gpuJobId}:`, processingError);
+        // Continue with reconstruction record creation even if some processing fails
       }
 
-      // Create reconstruction record with mesh information
+      // Create reconstruction record with multiple OBJ files information
       const reconstructionName = currentJob.segmentationName || `4D Reconstruction - Job ${gpuJobId.substring(0, 8)}`;
-      const reconstructionDescription = currentJob.segmentationDescription || `4D myocardium reconstruction from job ${gpuJobId}`;
+      const reconstructionDescription = currentJob.segmentationDescription || `4D myocardium reconstruction from job ${gpuJobId} with ${processedObjFiles.length} frames`;
       
-      // Generate structured filename based on available data
-      let objFilename: string;
+      // For multiple files, we'll create a single reconstruction record that represents the entire 4D result
+      // The primary mesh file will be the first one, but we'll store info about all files in the result
+      const primaryObjFile = processedObjFiles[0];
+      
+      // Generate structured filename for the primary file
+      let primaryObjFilename: string;
       if (userId && filehash) {
-        objFilename = `${userId}_${filehash}_${frameIndex}.obj`;
+        primaryObjFilename = `${userId}_${filehash}_multiframe.obj`;
       } else {
-        objFilename = `${projectId}_reconstruction_${gpuJobId.substring(0, 8)}.obj`;
+        primaryObjFilename = `${projectId}_reconstruction_${gpuJobId.substring(0, 8)}_multiframe.obj`;
       }
       
+      // Generate temporary hash for the combined files (will be updated after S3 upload)
+      const tempCombinedHash = crypto
+        .createHash('sha256')
+        .update(processedObjFiles.map(f => f.originalName).join(''))
+        .digest('hex')
+        .substring(0, 16);
+
       const reconstructionData: Partial<IProjectReconstruction> = {
         projectid: projectId,
         maskId: projectId, // TODO: Get actual maskId from job context when available
         name: reconstructionName,
         description: reconstructionDescription,
+        ed_frame: gpuResult.ed_frame || 1, // End-diastole frame from GPU result
         isSaved: false,
         isAIGenerated: true,
+        meshFormat: MeshFormat.OBJ, // Use the enum value
+        filename: primaryObjFilename,
+        filesize: processedObjFiles.reduce((sum, file) => sum + file.size, 0), // Total size of all files
+        filehash: tempCombinedHash, // Temporary hash, will be updated after S3 upload
+        basepath: ``, // S3 base path
+        reconstructionfolderpath: ``, // S3 folder path
         reconstructedMesh: {
-          path: "pending", // Will be populated with S3 URL after NPZ->OBJ conversion and upload
-          filename: objFilename,
-          filesize: 0, // Will be calculated after OBJ conversion
-          hash: "pending", // Will be calculated during OBJ conversion and S3 upload
-          format: "obj", // Final format after conversion from NPZ
+          path: ``, // S3 path for primary mesh, remove when bundle the obj into tar
+          filename: primaryObjFilename,
+          filesize: primaryObjFile.size,
+          hash: tempCombinedHash, // Will be updated with actual file hash after S3 upload
+          format: "obj",
           reconstructionTime: gpuResult.reconstruction_time,
           numIterations: gpuResult.num_iterations,
           resolution: gpuResult.resolution,
+          // Store information about all OBJ files in a custom field
+          meshData: JSON.stringify({
+            totalFiles: processedObjFiles.length,
+            tempFiles: processedObjFiles.map(file => file.tempPath), // Include temp paths for S3 upload
+            files: processedObjFiles.map(file => ({
+              originalName: file.originalName,
+              size: file.size,
+              frameIndex: file.frameIndex,
+              s3Key: `reconstructions/${projectId}/${gpuJobId}/${file.originalName}` // Expected S3 key
+            }))
+          })
         },
       };
 
-      // Store mesh data in job result for NPZ->OBJ conversion processing
-      // Workflow: GPU -> Webhook -> Job Result (with Base64 NPZ data) -> Background NPZ decode -> OBJ conversion -> S3 upload
+      // Store OBJ file information in job result
+      // Workflow: GPU -> Webhook (multipart OBJ files) -> Job Result -> S3 upload
       const updateResultWithMesh = await updateJob(gpuJobId, {
         ...jobUpdatePayload,
         result: JSON.stringify({
           ...gpuResult,
-          mesh_data_stored: true, // Flag to indicate NPZ mesh data is available for processing
+          obj_files_received: true, // Flag to indicate OBJ files are available for S3 upload
           reconstruction_created: true, // Flag to indicate reconstruction record exists
-          conversion_required: "npz_to_obj", // Flag to indicate conversion workflow needed
+          files_count: processedObjFiles.length,
+          total_size: processedObjFiles.reduce((sum, file) => sum + file.size, 0),
+          temp_files: processedObjFiles.map(file => file.tempPath), // Store temp file paths for cleanup
         }),
       });
 
@@ -634,12 +671,19 @@ router.post("/gpu-reconstruction-callback", async (req: Request, res: Response) 
         );
       }
 
-      // Cleanup temporary files after processing
+      // Cleanup uploaded temporary OBJ files after processing
       try {
-        await cleanupMeshTempFiles(gpuJobId);
-        logger.info(`${serviceLocation}: Cleaned up temporary mesh files for job ${gpuJobId}`);
+        for (const objFile of processedObjFiles) {
+          try {
+            await fs.unlink(objFile.tempPath);
+            logger.debug(`${serviceLocation}: Cleaned up temporary OBJ file: ${objFile.tempPath}`);
+          } catch (fileError) {
+            logger.warn(`${serviceLocation}: Failed to delete temporary file ${objFile.tempPath}:`, fileError);
+          }
+        }
+        logger.info(`${serviceLocation}: Cleaned up ${processedObjFiles.length} temporary OBJ files for job ${gpuJobId}`);
       } catch (cleanupError) {
-        logger.warn(`${serviceLocation}: Failed to cleanup temporary mesh files for job ${gpuJobId}:`, cleanupError);
+        logger.warn(`${serviceLocation}: Failed to cleanup temporary OBJ files for job ${gpuJobId}:`, cleanupError);
         // Don't fail the webhook response due to cleanup issues
       }
     }
