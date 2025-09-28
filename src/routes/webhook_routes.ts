@@ -416,11 +416,14 @@ router.post("/gpu-reconstruction-callback", gpuObjUploadFilter, async (req: Requ
   try {
     callbackMetadata = req.body.metadata ? JSON.parse(req.body.metadata) : req.body;
   } catch (e) {
-    logger.error(`${serviceLocation}: Failed to parse Cloud GPU metadata:`, e);
+    logger.error(`${serviceLocation}: Failed to parse Cloud GPU metadata for job ${gpuJobId}:`, e);
     return res.status(400).json({ message: "Invalid callback metadata format" });
   }
 
   try {
+    // Log detailed request information for debugging 500 errors
+    logger.info(`${serviceLocation}: Detailed callback request for job ${gpuJobId} - Metadata keys: ${Object.keys(callbackMetadata).join(', ')}, File names: ${uploadedFiles?.map(f => f.originalname).join(', ') || 'none'}`);
+    
     // Process reconstruction using the service layer
     const result = await processReconstructionCallback(gpuJobId, uploadedFiles, callbackMetadata);
     
@@ -431,20 +434,30 @@ router.post("/gpu-reconstruction-callback", gpuObjUploadFilter, async (req: Requ
         reconstructionId: result.reconstructionId 
       });
     } else {
-      logger.error(`${serviceLocation}: Failed to process reconstruction callback for job ${gpuJobId}: ${result.message}`);
+      logger.error(`${serviceLocation}: Failed to process reconstruction callback for job ${gpuJobId}: ${result.message}${result.error ? ` - Error: ${result.error}` : ''}`);
       return res.status(500).json({ 
         message: result.message,
         error: result.error 
       });
     }
   } catch (error) {
+    // Enhanced error logging for 500 errors
+    logger.error(`${serviceLocation}: CRITICAL ERROR in reconstruction callback for job ${gpuJobId}:`, {
+      error: error,
+      stack: (error as Error).stack,
+      message: (error as Error).message,
+      uploadedFilesCount: uploadedFiles?.length || 0,
+      callbackMetadataKeys: callbackMetadata ? Object.keys(callbackMetadata) : 'none'
+    });
+    
     LogError(
       error as Error,
       serviceLocation,
       `Unexpected error processing reconstruction callback for job ${gpuJobId}`
     );
     return res.status(500).json({ 
-      message: "Unexpected error occurred while processing reconstruction callback" 
+      message: "Unexpected error occurred while processing reconstruction callback",
+      error: (error as Error).message
     });
   }
 });
