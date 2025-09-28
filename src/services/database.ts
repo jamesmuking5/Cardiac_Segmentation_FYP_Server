@@ -735,69 +735,11 @@ const projectSegmentationMaskModel = model<IProjectSegmentationMask, Model<IProj
 projectSegmentationMaskSchema.index({ projectid: 1 }); // Index on project ID for segmentation masks
 
 // Project Reconstruction Collection
-// Create reconstruction component measurements schema (Nest Depth: 4)
-const reconstructionComponentMeasurementsSchema = new Schema({
-  volume: { type: Number, required: false }, // Volume measurement in cubic units
-  surfaceArea: { type: Number, required: false }, // Surface area measurement in square units
-  wallThickness: { type: Number, required: false }, // Wall thickness measurement in linear units
-}, { _id: false }); // Disable automatic creation of an _id field for this subdocument
-
-// Create reconstruction mesh component schema (Nest Depth: 3)
-const reconstructionMeshComponentSchema = new Schema({
-  class: { type: String, required: true, enum: Object.values(ComponentBoundingBoxesClass) }, // Class of the component (rv, myo, lvc)
-  meshPath: { type: String, required: true }, // Path to the mesh file (e.g., S3 bucket URL)
-  filename: { type: String, required: true }, // Filename of the mesh file
-  filesize: { type: Number, required: true }, // Size of the mesh file in bytes
-  hash: { type: String, required: true }, // Hash of the mesh file for integrity verification
-  confidence: { type: Number, required: true, min: 0, max: 1 }, // Confidence score of the reconstruction (0-1)
-  measurements: { type: reconstructionComponentMeasurementsSchema, required: false }, // Optional measurements for the component
-}, { _id: false }); // Disable automatic creation of an _id field for this subdocument
-
-// Create reconstruction frame schema (Nest Depth: 2)
-const reconstructionFrameSchema = new Schema({
-  frameindex: { type: Number, required: true }, // Index of the frame (0-based)
-  framereconstructed: { type: Boolean, required: true, default: false }, // Indicates if the frame is reconstructed
-  framefolderpath: { type: String, required: true }, // Path to the frame folder (e.g., S3 bucket URL)
-  components: [{ type: reconstructionMeshComponentSchema, required: false }], // Array of mesh components for the frame
-}, { _id: false }); // Disable automatic creation of an _id field for this subdocument
-
-// Create reconstructed meshes schema (Nest Depth: 1)
-const reconstructedMeshesSchema = new Schema({
-  meshfolderpath: { type: String, required: true }, // Base path for all mesh folders (e.g., S3 bucket URL)
-  frames: [{ type: reconstructionFrameSchema, required: true }], // Array of frames for the reconstruction
-}, { _id: false }); // Disable automatic creation of an _id field for this subdocument
-
-// Create reconstructed volume schema (Nest Depth: 1)
-const reconstructedVolumeSchema = new Schema({
-  path: { type: String, required: false }, // Path to the volume file (e.g., S3 bucket URL)
-  filename: { type: String, required: false }, // Filename of the volume file
-  filesize: { type: Number, required: false }, // Size of the volume file in bytes
-  hash: { type: String, required: false }, // Hash of the volume file for integrity verification
-  timestamp: { type: Date, required: false }, // Timestamp when the volume was generated
-}, { _id: false }); // Disable automatic creation of an _id field for this subdocument
-
-// Create combined mesh schema (Nest Depth: 1)
-const combinedMeshSchema = new Schema({
-  path: { type: String, required: false }, // Path to the combined mesh file (e.g., S3 bucket URL)
-  filename: { type: String, required: false }, // Filename of the combined mesh file
-  filesize: { type: Number, required: false }, // Size of the combined mesh file in bytes
-  hash: { type: String, required: false }, // Hash of the combined mesh file for integrity verification
-  folderpath: { type: String, required: false }, // Folder path for the combined mesh (e.g., S3 bucket URL)
-}, { _id: false }); // Disable automatic creation of an _id field for this subdocument
-
-// Create cardiac metrics schema (Nest Depth: 1)
-const cardiacMetricsSchema = new Schema({
-  endDiastolicVolume: { type: Number, required: false }, // End diastolic volume measurement
-  endSystolicVolume: { type: Number, required: false }, // End systolic volume measurement
-  heartRate: { type: Number, required: false }, // Heart rate measurement in beats per minute
-  cardiacOutput: { type: Number, required: false }, // Cardiac output measurement
-}, { _id: false }); // Disable automatic creation of an _id field for this subdocument
-
 // Create simplified Project 4D Reconstruction schema for AI SDF-based reconstruction
 const projectReconstructionSchema = new Schema<IProjectReconstructionDocument>({
   // Identifiers
   projectid: { type: String, required: true }, // MongoDB Project ID of the project to which the reconstruction belongs
-  maskId: { type: String, required: true }, // MongoDB Segmentation Mask ID used for reconstruction
+  maskId: { type: String, required: false }, // MongoDB Segmentation Mask ID used for reconstruction (optional for GPU-generated reconstructions)
   
   // User inputs
   name: { type: String, required: true }, // Name of the reconstruction
@@ -838,13 +780,15 @@ projectReconstructionSchema.pre('save', async function (next) {
     throw new Error('Referenced project does not exist');
   }
   
-  // Validate that maskId exists and belongs to the same project (maskId is now required)
-  const maskExists = await projectSegmentationMaskModel.findOne({ 
-    _id: this.maskId,
-    projectid: this.projectid 
-  });
-  if (!maskExists) {
-    throw new Error('Referenced segmentation mask does not exist or does not belong to the same project');
+  // Validate that maskId exists and belongs to the same project (only if maskId is provided)
+  if (this.maskId) {
+    const maskExists = await projectSegmentationMaskModel.findOne({ 
+      _id: this.maskId,
+      projectid: this.projectid 
+    });
+    if (!maskExists) {
+      throw new Error('Referenced segmentation mask does not exist or does not belong to the same project');
+    }
   }
   
   // Validate reconstruction mesh data consistency
@@ -868,7 +812,7 @@ projectReconstructionSchema.pre('save', async function (next) {
 });
 
 // Create the model with proper typing
-const projectReconstructionModel = model<IProjectReconstructionDocument, Model<IProjectReconstructionDocument>>("Project3DReconstruction", projectReconstructionSchema);
+const projectReconstructionModel = model<IProjectReconstructionDocument, Model<IProjectReconstructionDocument>>("4D reconstructions", projectReconstructionSchema);
 
 // Add reconstruction indexes BEFORE model creation for better performance
 projectReconstructionSchema.index({ maskId: 1 }); // Index on mask ID for performance
@@ -1584,23 +1528,25 @@ const createProjectReconstruction = async (
       return { success: false, operation, message: `Project ID ${projectid} does not exist.` };
     }
 
-    // 2. Validate that the maskId exists and belongs to the same project
-    const maskExists = await projectSegmentationMaskModel.findOne({ 
-      _id: recon.maskId
-    });
-    
-    if (!maskExists) {
-      logger.warn(`${serviceLocation}: Segmentation mask ID ${recon.maskId} does not exist.`);
-      return { success: false, operation, message: `Segmentation mask ID ${recon.maskId} does not exist.` };
-    }
-    
-    // 3. Ensure the mask's projectId matches the reconstruction's projectId
-    if (maskExists.projectid !== recon.projectid) {
-      logger.warn(`${serviceLocation}: Segmentation mask ${recon.maskId} does not belong to project ${recon.projectid}. Mask belongs to project ${maskExists.projectid}.`);
-      return { success: false, operation, message: `Segmentation mask ${recon.maskId} does not belong to project ${recon.projectid}. Mask belongs to project ${maskExists.projectid}.` };
+    // 2. Validate that the maskId exists and belongs to the same project (only if maskId is provided)
+    if (recon.maskId) {
+      const maskExists = await projectSegmentationMaskModel.findOne({ 
+        _id: recon.maskId
+      });
+      
+      if (!maskExists) {
+        logger.warn(`${serviceLocation}: Segmentation mask ID ${recon.maskId} does not exist.`);
+        return { success: false, operation, message: `Segmentation mask ID ${recon.maskId} does not exist.` };
+      }
+      
+      // Ensure the mask's projectId matches the reconstruction's projectId
+      if (maskExists.projectid !== recon.projectid) {
+        logger.warn(`${serviceLocation}: Segmentation mask ${recon.maskId} does not belong to project ${recon.projectid}. Mask belongs to project ${maskExists.projectid}.`);
+        return { success: false, operation, message: `Segmentation mask ${recon.maskId} does not belong to project ${recon.projectid}. Mask belongs to project ${maskExists.projectid}.` };
+      }
     }
 
-    // 4. Check for name uniqueness within the project 
+    // 3. Check for name uniqueness within the project 
     const reconstructionNameExists = await projectReconstructionModel.exists({ 
       name: recon.name, 
       projectid: recon.projectid 

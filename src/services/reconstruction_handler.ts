@@ -316,7 +316,6 @@ async function createReconstructionRecord(
     
     const reconstructionData: Partial<IProjectReconstruction> = {
       projectid: projectId,
-      maskId: projectId,
       name: reconstructionName,
       description: reconstructionDescription,
       ed_frame: edFrameIndex + 1,
