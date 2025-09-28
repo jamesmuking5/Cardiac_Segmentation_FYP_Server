@@ -175,7 +175,7 @@ export const startReconstruction = async (projectId: string, user?: IUserSafe, r
         const reconstructionPayload = {
             url: dataUrlForGpu,  // Presigned URL for segmentation data
             uuid: jobUuid,
-            callback_url: `${callback_url}/webhook/gpu-reconstruction-callback`,
+            callback_url: callback_url,  
             ed_frame_index: (ed_frame || 1) - 1,  // Convert 1-based ed_frame to 0-based ed_frame_index for GPU
             num_iterations: parameters?.num_iterations || 50,  // Flattened parameters
             resolution: parameters?.resolution || 128,
