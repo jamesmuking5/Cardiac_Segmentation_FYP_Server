@@ -52,6 +52,7 @@ export async function processReconstructionCallback(
     const { status, result: gpuResult, error: gpuErrorDetail } = callbackMetadata;
 
     if (status !== "completed" && status !== "success") {
+      logger.warn(`${serviceLocation}: GPU job ${gpuJobId} not successful - status: ${status}, error: ${gpuErrorDetail}`);
       return {
         success: false,
         message: `GPU job completed with status: ${status}`,
@@ -62,6 +63,7 @@ export async function processReconstructionCallback(
     // Validate uploaded OBJ files
     const validationResult = validateObjFiles(uploadedFiles, gpuJobId);
     if (!validationResult.success) {
+      logger.error(`${serviceLocation}: File validation failed for job ${gpuJobId}: ${validationResult.message}`);
       return validationResult;
     }
 
@@ -218,14 +220,16 @@ async function getProjectDetails(gpuJobId: string): Promise<{ userId: string; fi
   
   const projectId = jobResult.job.projectid;
   
-  // Get project details
+  // Get project details - readProject returns projects (plural), not project (singular)
   const projectResult = await readProject(projectId);
-  if (!projectResult.success || !projectResult.project) {
+  if (!projectResult.success || !projectResult.projects || projectResult.projects.length === 0) {
     throw new Error(`Project ${projectId} not found for job ${gpuJobId}`);
   }
 
-  const userId = projectResult.project.userid;
-  const filehash = projectResult.project.filehash;
+  // Get the first project from the results array
+  const project = projectResult.projects[0];
+  const userId = project.userid;
+  const filehash = project.filehash;
 
   if (!userId || !filehash) {
     throw new Error(`Missing userId (${userId}) or filehash (${filehash}) for job ${gpuJobId}`);
@@ -251,17 +255,31 @@ async function createReconstructionTar(
     
     logger.info(`${serviceLocation}: Creating TAR bundle: ${tarFilename} with ${processedFiles.length} OBJ files`);
     
-    // Ensure temp_mesh directory exists
-    await fs.mkdir("src/temp_mesh/", { recursive: true });
+    // Verify all OBJ files exist before creating TAR
+    for (const file of processedFiles) {
+      if (!fsSync.existsSync(file.tempPath)) {
+        throw new Error(`OBJ file not found: ${file.tempPath}`);
+      }
+    }
     
     // Build TAR command with all OBJ files
     const objFileNames = processedFiles.map(f => path.basename(f.tempPath));
     const tarCommand = `tar -cf "${tarPath}" -C "src/temp_mesh/" ${objFileNames.map(name => `"${name}"`).join(' ')}`;
     
     logger.info(`${serviceLocation}: Executing TAR command: ${tarCommand}`);
-    execSync(tarCommand, { stdio: 'pipe' });
+    
+    try {
+      execSync(tarCommand, { stdio: 'pipe' });
+    } catch (cmdError) {
+      logger.error(`${serviceLocation}: TAR command failed for job ${gpuJobId}:`, cmdError);
+      throw new Error(`TAR command execution failed: ${(cmdError as Error).message}`);
+    }
     
     // Get TAR file size and validate
+    if (!fsSync.existsSync(tarPath)) {
+      throw new Error('TAR file was not created');
+    }
+    
     const tarBuffer = await fs.readFile(tarPath);
     const tarSize = tarBuffer.length;
     
@@ -279,7 +297,13 @@ async function createReconstructionTar(
     };
     
   } catch (error) {
-    logger.error(`${serviceLocation}: Failed to create TAR bundle for job ${gpuJobId}:`, error);
+    logger.error(`${serviceLocation}: Failed to create TAR bundle for job ${gpuJobId}:`, {
+      error: error,
+      message: (error as Error).message,
+      stack: (error as Error).stack,
+      processedFilesCount: processedFiles.length,
+      processedFiles: processedFiles.map(f => ({ originalName: f.originalName, tempPath: f.tempPath, exists: fsSync.existsSync(f.tempPath) }))
+    });
     return {
       success: false,
       message: `Failed to create required TAR bundle: ${(error as Error).message}`
