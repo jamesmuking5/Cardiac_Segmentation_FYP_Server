@@ -287,7 +287,7 @@ export enum MeshFormat {
  * Stores a single mesh file generated from segmentation masks via GPU server.
  * @interface IProjectReconstruction
  * @property {string} projectid - The unique MongoDB project ID of the project to which the 4D reconstruction belongs.
- * @property {string} maskId - The MongoDB SegmentationMask ID that this reconstruction was generated from (required).
+ * @property {string} [maskId] - The MongoDB SegmentationMask ID that this reconstruction was generated from (optional for GPU-generated reconstructions).
  * @property {string} name - The name of the 4D reconstruction.
  * @property {string} [description] - A description of the 4D reconstruction (optional).
  * @property {number} ed_frame - The end-diastole frame number for reconstruction (default: 1).
@@ -309,12 +309,14 @@ export enum MeshFormat {
  * @property {number} [reconstructedMesh.reconstructionTime] - Time taken for reconstruction in seconds (optional).
  * @property {number} [reconstructedMesh.numIterations] - Number of iterations used in SDF reconstruction (optional).
  * @property {number} [reconstructedMesh.resolution] - Resolution of the reconstruction grid (optional).
+ * @property {Date} [createdAt] - Timestamp when the reconstruction record was created (automatically managed by Mongoose).
+ * @property {Date} [updatedAt] - Timestamp when the reconstruction record was last updated (automatically managed by Mongoose).
  */
 export interface IProjectReconstruction {
   // Identifiers
   _id?: any; // Allow _id to be compatible with the transformed object for new reconstructions
   projectid: string; // MongoDB Project ID of the project to which the 4D reconstruction belongs
-  maskId: string; // MongoDB SegmentationMask ID that this reconstruction was generated from
+  maskId?: string; // MongoDB SegmentationMask ID that this reconstruction was generated from (optional for GPU-generated reconstructions)
   
   // User inputs
   name: string; // Name of the 4D reconstruction
@@ -345,6 +347,10 @@ export interface IProjectReconstruction {
     numIterations?: number; // Number of iterations used in SDF reconstruction (optional)
     resolution?: number; // Resolution of the reconstruction grid (optional)
   };
+  
+  // Based on mongoose timestamp
+  createdAt?: Date; // Creation timestamp
+  updatedAt?: Date; // Last update timestamp
 }
 
 // 3D Reconstruction Model Interface (single reconstruction document in the database)
