@@ -135,11 +135,19 @@ export const startReconstruction = async (projectId: string, user?: IUserSafe, r
                 return { success: false, message: `Invalid end-diastole frame number: ${ed_frame}. Must be a positive integer >= 1.` };
             }
             
-            // Optional: Validate against actual project frame count if available
+            // Strict validation against actual project frame count
             if (projectData.dimensions?.frames && ed_frame > projectData.dimensions.frames) {
                 logger.warn(`${serviceLocation}: ed_frame ${ed_frame} exceeds project ${projectId} frame count of ${projectData.dimensions.frames}.`);
                 return { success: false, message: `End-diastole frame ${ed_frame} exceeds project frame count of ${projectData.dimensions.frames}.` };
             }
+            
+            // Additional safety check for GPU server bug workaround
+            if (projectData.dimensions?.frames && ed_frame <= projectData.dimensions.frames) {
+                logger.info(`${serviceLocation}: Frame validation passed - ed_frame ${ed_frame} is valid for project with ${projectData.dimensions.frames} total frames`);
+            }
+        } else {
+            // Log default frame usage
+            logger.info(`${serviceLocation}: Using default ed_frame = 1 for project ${projectId} with ${projectData.dimensions?.frames || 'unknown'} total frames`);
         }
 
         // Extract S3 object key from the originalfilepath URL for NIfTI file 
@@ -184,8 +192,12 @@ export const startReconstruction = async (projectId: string, user?: IUserSafe, r
             debug_dir: parameters?.debug_dir || "/tmp/4d_reconstruction_debug"
         };
 
-        // The logger in sendReconstructionRequestToCloudGpu will log the full payload.
-        logger.info(`${serviceLocation}: Prepared reconstruction data for project ${projectId}, UUID ${jobUuid}, ed_frame_index ${reconstructionPayload.ed_frame_index} (converted from ed_frame ${ed_frame || 1}), 4D processing: ${reconstructionPayload.process_all_frames}. NIfTI S3 Key: ${objectKeyForNifti}. Callback URL: ${reconstructionPayload.callback_url}`);
+        // Enhanced logging to debug GPU server frame indexing issue
+        logger.info(`${serviceLocation}: Prepared reconstruction data for project ${projectId}, UUID ${jobUuid}`);
+        logger.info(`${serviceLocation}: Frame parameters - ed_frame input: ${ed_frame || 1}, ed_frame_index sent to GPU: ${reconstructionPayload.ed_frame_index}, project total frames: ${projectData.dimensions?.frames || 'unknown'}`);
+        logger.info(`${serviceLocation}: Project dimensions - width: ${projectData.dimensions?.width}, height: ${projectData.dimensions?.height}, slices: ${projectData.dimensions?.slices}, frames: ${projectData.dimensions?.frames}`);
+        logger.info(`${serviceLocation}: 4D processing enabled: ${reconstructionPayload.process_all_frames}, NIfTI S3 Key: ${objectKeyForNifti}`);
+        logger.info(`${serviceLocation}: GPU payload: ${JSON.stringify(reconstructionPayload, null, 2)}`);
 
         // Send reconstruction request to GPU server BEFORE creating job record
         const reconstructionResult = await sendReconstructionRequestToCloudGpu(reconstructionPayload, gpuAuthToken);

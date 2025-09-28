@@ -156,4 +156,4 @@ export const gpuObjUploadFilter = multer({
     files: 50 // Maximum 50 OBJ files per reconstruction (support multi-frame)
   },
   fileFilter: objFileFilter,
-}).array('obj_files', 50); // Accept array of OBJ files with field name 'obj_files'
+}).any(); // Accept files with any field name from multipart/form-data
