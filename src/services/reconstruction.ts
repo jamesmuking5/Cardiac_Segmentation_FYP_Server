@@ -18,9 +18,10 @@ const sendReconstructionRequestToCloudGpu = async (
         url: string;  
         uuid: string;
         callback_url: string;
-        ed_frame: number;
+        ed_frame_index: number; 
         num_iterations?: number;  
         resolution?: number;
+        process_all_frames?: boolean;
         debug_save?: boolean;    
         debug_dir?: string;
     },
@@ -175,15 +176,16 @@ export const startReconstruction = async (projectId: string, user?: IUserSafe, r
             url: dataUrlForGpu,  // Presigned URL for segmentation data
             uuid: jobUuid,
             callback_url: `${callback_url}/webhook/gpu-reconstruction-callback`,
-            ed_frame: ed_frame || 1,  // End-diastole frame number (default to 1)
+            ed_frame_index: (ed_frame || 1) - 1,  // Convert 1-based ed_frame to 0-based ed_frame_index for GPU
             num_iterations: parameters?.num_iterations || 50,  // Flattened parameters
             resolution: parameters?.resolution || 128,
+            process_all_frames: parameters?.process_all_frames ?? true,  // Enable 4D processing by default
             debug_save: parameters?.debug_save || parameters?.debug || false,  // Support both debug and debug_save
             debug_dir: parameters?.debug_dir || "/tmp/4d_reconstruction_debug"
         };
 
         // The logger in sendReconstructionRequestToCloudGpu will log the full payload.
-        logger.info(`${serviceLocation}: Prepared reconstruction data for project ${projectId}, UUID ${jobUuid}, ed_frame ${reconstructionPayload.ed_frame}. NIfTI S3 Key: ${objectKeyForNifti}. Callback URL: ${reconstructionPayload.callback_url}`);
+        logger.info(`${serviceLocation}: Prepared reconstruction data for project ${projectId}, UUID ${jobUuid}, ed_frame_index ${reconstructionPayload.ed_frame_index} (converted from ed_frame ${ed_frame || 1}), 4D processing: ${reconstructionPayload.process_all_frames}. NIfTI S3 Key: ${objectKeyForNifti}. Callback URL: ${reconstructionPayload.callback_url}`);
 
         // Send reconstruction request to GPU server BEFORE creating job record
         const reconstructionResult = await sendReconstructionRequestToCloudGpu(reconstructionPayload, gpuAuthToken);
