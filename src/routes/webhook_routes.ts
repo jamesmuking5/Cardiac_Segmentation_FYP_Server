@@ -395,8 +395,10 @@ router.post("/gpu-reconstruction-callback", gpuObjUploadFilter, async (req: Requ
   logger.info(
     `${serviceLocation}: Received 4D reconstruction callback from Cloud GPU. Headers:`,
     req.headers,
-    "Body fields:",
+    "Raw Body fields:",
     Object.keys(req.body),
+    "Raw Body values:",
+    req.body,
     "Files received:",
     uploadedFiles?.length || 0
   );
@@ -411,13 +413,37 @@ router.post("/gpu-reconstruction-callback", gpuObjUploadFilter, async (req: Requ
 
   logger.info(`${serviceLocation}: Processing reconstruction callback for job ${gpuJobId}`);
 
-  // Parse callback metadata
+  // Parse callback metadata from multipart form data
   let callbackMetadata;
   try {
-    callbackMetadata = req.body.metadata ? JSON.parse(req.body.metadata) : req.body;
+    // Try different possible field names for the JSON metadata
+    let metadataString;
+    
+    if (req.body.metadata) {
+      metadataString = req.body.metadata;
+    } else if (req.body.json) {
+      metadataString = req.body.json;
+    } else if (req.body.data) {
+      metadataString = req.body.data;
+    } else {
+      // If no specific metadata field, use the entire body
+      logger.info(`${serviceLocation}: No metadata field found, using entire body for job ${gpuJobId}`);
+      callbackMetadata = req.body;
+    }
+    
+    if (metadataString) {
+      if (typeof metadataString === 'string') {
+        callbackMetadata = JSON.parse(metadataString);
+        logger.info(`${serviceLocation}: Successfully parsed JSON metadata from string for job ${gpuJobId}`);
+      } else {
+        callbackMetadata = metadataString;
+        logger.info(`${serviceLocation}: Using metadata object directly for job ${gpuJobId}`);
+      }
+    }
   } catch (e) {
     logger.error(`${serviceLocation}: Failed to parse Cloud GPU metadata for job ${gpuJobId}:`, e);
-    return res.status(400).json({ message: "Invalid callback metadata format" });
+    logger.info(`${serviceLocation}: Attempting to use raw body as fallback for job ${gpuJobId}`);
+    callbackMetadata = req.body;
   }
 
   try {
