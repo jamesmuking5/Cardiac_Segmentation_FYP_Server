@@ -146,7 +146,7 @@ export const generateAISegmentationForReconstruction = async (
 
         // 6. Upload to S3
         const fileStream = fs.createReadStream(localOutputSegmentationNiftiPath);
-        const s3Key = await uploadMaskToS3(
+        const uploadedUrl = await uploadMaskToS3(
             fileStream,
             userId || 'system',
             tempExportId,
@@ -155,10 +155,19 @@ export const generateAISegmentationForReconstruction = async (
             `reconstruction_${projectId}_${tempExportId}.nii.gz`
         );
 
+        // Extract S3 key from the returned URL
+        const s3Key = extractS3KeyFromUrl(uploadedUrl);
+        if (!s3Key) {
+            logger.error(`${serviceLocation}: Failed to extract S3 key from uploaded URL: ${uploadedUrl}`);
+            return { success: false, message: "Failed to extract S3 key after upload." };
+        }
+
         logger.info(`${serviceLocation}: Successfully uploaded reconstruction NIfTI to S3 for project ${projectId}. S3 Key: ${s3Key}`);
 
         // 7. Generate presigned URL (optional, for debugging)
+        logger.info(`${serviceLocation}: Generating presigned URL for S3 key: ${s3Key}`);
         const presignedUrl = await generatePresignedGetUrl(s3BucketName, s3Key, 3600);
+        logger.info(`${serviceLocation}: Generated presigned URL for reconstruction: ${presignedUrl}`);
         
         return {
             success: true,
