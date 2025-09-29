@@ -54,14 +54,14 @@ async function getCurrentInstanceId(): Promise<string> {
     }
 }
 
-// Interface for CPU utilization data
-export interface CpuUtilizationData {
+// Interface for metric data (generic for all metrics)
+export interface MetricData {
     timestamps: string[];
     values: number[];
 }
 
-// Fetch CPU utilization metrics for the current EC2 instance
-export async function getCpuUtilizationMetrics(): Promise<CpuUtilizationData> {
+// Generic function to fetch EC2 metrics from CloudWatch
+async function getEC2Metric(metricName: string, statistic: 'Average' | 'Sum' = 'Average'): Promise<MetricData> {
     try {
         // Get current instance ID
         const instanceId = await getCurrentInstanceId();
@@ -73,7 +73,7 @@ export async function getCpuUtilizationMetrics(): Promise<CpuUtilizationData> {
         // Prepare CloudWatch request
         const params: GetMetricStatisticsCommandInput = {
             Namespace: 'AWS/EC2',
-            MetricName: 'CPUUtilization',
+            MetricName: metricName,
             Dimensions: [
                 {
                     Name: 'InstanceId',
@@ -83,10 +83,10 @@ export async function getCpuUtilizationMetrics(): Promise<CpuUtilizationData> {
             StartTime: startTime,
             EndTime: endTime,
             Period: 300, // 5 minutes in seconds
-            Statistics: ['Average'],
+            Statistics: [statistic],
         };
         
-        logger.info(`${serviceLocation}: Fetching CPU metrics for instance ${instanceId} from ${startTime.toISOString()} to ${endTime.toISOString()}`);
+        logger.info(`${serviceLocation}: Fetching ${metricName} metrics for instance ${instanceId} from ${startTime.toISOString()} to ${endTime.toISOString()}`);
         
         // Execute CloudWatch query
         const client = getCloudWatchClient();
@@ -103,11 +103,14 @@ export async function getCpuUtilizationMetrics(): Promise<CpuUtilizationData> {
             return timeA - timeB;
         });
         
-        // Extract timestamps and values
+        // Extract timestamps and values based on statistic type
         const timestamps = datapoints.map(point => point.Timestamp?.toISOString() || '');
-        const values = datapoints.map(point => Number((point.Average || 0).toFixed(1)));
+        const values = datapoints.map(point => {
+            const value = statistic === 'Average' ? point.Average : point.Sum;
+            return Number((value || 0).toFixed(1));
+        });
         
-        logger.info(`${serviceLocation}: Retrieved ${datapoints.length} CPU utilization datapoints for instance ${instanceId}`);
+        logger.info(`${serviceLocation}: Retrieved ${datapoints.length} ${metricName} datapoints for instance ${instanceId}`);
         
         return {
             timestamps,
@@ -116,7 +119,32 @@ export async function getCpuUtilizationMetrics(): Promise<CpuUtilizationData> {
         
     } catch (error) {
         const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-        logger.error(`${serviceLocation}: Failed to fetch CPU utilization metrics: ${errorMessage}`);
-        throw new Error(`Failed to retrieve CPU utilization metrics: ${errorMessage}`);
+        logger.error(`${serviceLocation}: Failed to fetch ${metricName} metrics: ${errorMessage}`);
+        throw new Error(`Failed to retrieve ${metricName} metrics: ${errorMessage}`);
     }
+}
+
+// Fetch CPU utilization metrics for the current EC2 instance
+export async function getCpuUtilizationMetrics(): Promise<MetricData> {
+    return getEC2Metric('CPUUtilization', 'Average');
+}
+
+// Fetch Network In metrics for the current EC2 instance
+export async function getNetworkInMetrics(): Promise<MetricData> {
+    return getEC2Metric('NetworkIn', 'Sum');
+}
+
+// Fetch Network Out metrics for the current EC2 instance
+export async function getNetworkOutMetrics(): Promise<MetricData> {
+    return getEC2Metric('NetworkOut', 'Sum');
+}
+
+// Fetch Disk Read Bytes metrics for the current EC2 instance
+export async function getDiskReadMetrics(): Promise<MetricData> {
+    return getEC2Metric('DiskReadBytes', 'Sum');
+}
+
+// Fetch Disk Write Bytes metrics for the current EC2 instance
+export async function getDiskWriteMetrics(): Promise<MetricData> {
+    return getEC2Metric('DiskWriteBytes', 'Sum');
 }
