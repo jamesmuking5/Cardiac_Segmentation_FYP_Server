@@ -413,35 +413,61 @@ router.post("/gpu-reconstruction-callback", gpuObjUploadFilter, async (req: Requ
 
   logger.info(`${serviceLocation}: Processing reconstruction callback for job ${gpuJobId}`);
 
-  // Parse callback metadata from multipart form data
+  // Parse callback metadata from multipart form data with enhanced logging
   let callbackMetadata;
   try {
+    // Log raw request details for debugging
+    logger.info(`${serviceLocation}: Raw request body structure for job ${gpuJobId}:`, {
+      bodyKeys: Object.keys(req.body),
+      bodyTypes: Object.keys(req.body).map(key => ({ [key]: typeof req.body[key] })),
+      contentType: req.headers['content-type'],
+      hasFiles: !!(req.files && Array.isArray(req.files) && req.files.length > 0)
+    });
+    
     // Try different possible field names for the JSON metadata
     let metadataString;
     
     if (req.body.metadata) {
       metadataString = req.body.metadata;
+      logger.info(`${serviceLocation}: Found metadata field for job ${gpuJobId}`);
     } else if (req.body.json) {
       metadataString = req.body.json;
+      logger.info(`${serviceLocation}: Found json field for job ${gpuJobId}`);
     } else if (req.body.data) {
       metadataString = req.body.data;
+      logger.info(`${serviceLocation}: Found data field for job ${gpuJobId}`);
+    } else if (req.body.result) {
+      metadataString = req.body.result;
+      logger.info(`${serviceLocation}: Found result field for job ${gpuJobId}`);
     } else {
       // If no specific metadata field, use the entire body
-      logger.info(`${serviceLocation}: No metadata field found, using entire body for job ${gpuJobId}`);
+      logger.info(`${serviceLocation}: No metadata field found, using entire body for job ${gpuJobId}. Body keys: ${Object.keys(req.body).join(', ')}`);
       callbackMetadata = req.body;
     }
     
     if (metadataString) {
       if (typeof metadataString === 'string') {
-        callbackMetadata = JSON.parse(metadataString);
-        logger.info(`${serviceLocation}: Successfully parsed JSON metadata from string for job ${gpuJobId}`);
+        try {
+          callbackMetadata = JSON.parse(metadataString);
+          logger.info(`${serviceLocation}: Successfully parsed JSON metadata from string for job ${gpuJobId}. Parsed keys: ${Object.keys(callbackMetadata).join(', ')}`);
+        } catch (parseError) {
+          logger.error(`${serviceLocation}: JSON parse error for job ${gpuJobId}:`, parseError);
+          logger.info(`${serviceLocation}: Raw metadata string that failed to parse: ${metadataString.substring(0, 500)}...`);
+          throw parseError;
+        }
       } else {
         callbackMetadata = metadataString;
-        logger.info(`${serviceLocation}: Using metadata object directly for job ${gpuJobId}`);
+        logger.info(`${serviceLocation}: Using metadata object directly for job ${gpuJobId}. Object keys: ${Object.keys(callbackMetadata).join(', ')}`);
       }
     }
   } catch (e) {
-    logger.error(`${serviceLocation}: Failed to parse Cloud GPU metadata for job ${gpuJobId}:`, e);
+    logger.error(`${serviceLocation}: CRITICAL ERROR parsing Cloud GPU metadata for job ${gpuJobId}:`, {
+      error: e,
+      message: (e as Error).message,
+      stack: (e as Error).stack,
+      requestBodyKeys: Object.keys(req.body),
+      requestHeaders: req.headers
+    });
     logger.info(`${serviceLocation}: Attempting to use raw body as fallback for job ${gpuJobId}`);
     callbackMetadata = req.body;
   }
@@ -467,23 +493,39 @@ router.post("/gpu-reconstruction-callback", gpuObjUploadFilter, async (req: Requ
       });
     }
   } catch (error) {
-    // Enhanced error logging for 500 errors
-    logger.error(`${serviceLocation}: CRITICAL ERROR in reconstruction callback for job ${gpuJobId}:`, {
+    // Enhanced error logging for 500 errors with full diagnostic info
+    const errorInfo = {
       error: error,
       stack: (error as Error).stack,
       message: (error as Error).message,
+      errorName: (error as Error).name,
       uploadedFilesCount: uploadedFiles?.length || 0,
-      callbackMetadataKeys: callbackMetadata ? Object.keys(callbackMetadata) : 'none'
-    });
+      uploadedFileNames: uploadedFiles?.map(f => f.originalname) || [],
+      callbackMetadataKeys: callbackMetadata ? Object.keys(callbackMetadata) : 'none',
+      callbackMetadata: callbackMetadata,
+      requestBodyKeys: Object.keys(req.body),
+      requestHeaders: req.headers,
+      gpuJobId: gpuJobId,
+      errorLocation: 'reconstruction-callback-main-try-catch'
+    };
+    
+    logger.error(`${serviceLocation}: CRITICAL ERROR in reconstruction callback for job ${gpuJobId}:`, errorInfo);
+    
+    // Check if this is the "index out of bound" error specifically
+    if ((error as Error).message.includes('out of bound') || (error as Error).message.includes('index')) {
+      logger.error(`${serviceLocation}: ARRAY INDEX ERROR detected for job ${gpuJobId}. This suggests GPU result data structure mismatch.`);
+    }
     
     LogError(
       error as Error,
       serviceLocation,
-      `Unexpected error processing reconstruction callback for job ${gpuJobId}`
+      `Unexpected error processing reconstruction callback for job ${gpuJobId} - ${(error as Error).message}`
     );
     return res.status(500).json({ 
       message: "Unexpected error occurred while processing reconstruction callback",
-      error: (error as Error).message
+      error: (error as Error).message,
+      errorType: (error as Error).name,
+      jobId: gpuJobId
     });
   }
 });

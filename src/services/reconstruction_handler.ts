@@ -325,9 +325,31 @@ async function createReconstructionRecord(
   reconstructionFileS3Url: string
 ): Promise<{ success: boolean; message: string; reconstructionId?: string }> {
   try {
-    // Extract GPU metadata
-    const edFrameIndex = gpuResult.ed_frame_index !== undefined ? gpuResult.ed_frame_index : 0;
-    const totalFrames = gpuResult.total_frames || 1;
+    // Extract and validate GPU metadata with bounds checking
+    logger.info(`${serviceLocation}: Raw GPU result for job ${gpuJobId}:`, {
+      keys: Object.keys(gpuResult),
+      ed_frame_index: gpuResult.ed_frame_index,
+      total_frames: gpuResult.total_frames,
+      processedFilesCount: processedFiles.length
+    });
+    
+    const rawEdFrameIndex = gpuResult.ed_frame_index !== undefined ? gpuResult.ed_frame_index : 0;
+    const totalFrames = gpuResult.total_frames || processedFiles.length || 1;
+    
+    // Validate frame index bounds to prevent array index errors
+    let edFrameIndex = rawEdFrameIndex;
+    if (typeof rawEdFrameIndex !== 'number' || rawEdFrameIndex < 0) {
+      logger.warn(`${serviceLocation}: Invalid ed_frame_index ${rawEdFrameIndex} for job ${gpuJobId}. Using default 0.`);
+      edFrameIndex = 0;
+    } else if (processedFiles.length > 0 && rawEdFrameIndex >= processedFiles.length) {
+      logger.warn(`${serviceLocation}: ed_frame_index ${rawEdFrameIndex} exceeds processed files count ${processedFiles.length} for job ${gpuJobId}. Using last valid frame ${processedFiles.length - 1}.`);
+      edFrameIndex = Math.max(0, processedFiles.length - 1);
+    } else if (rawEdFrameIndex >= totalFrames) {
+      logger.warn(`${serviceLocation}: ed_frame_index ${rawEdFrameIndex} exceeds total_frames ${totalFrames} for job ${gpuJobId}. Using last valid frame ${totalFrames - 1}.`);
+      edFrameIndex = Math.max(0, totalFrames - 1);
+    }
+    
+    logger.info(`${serviceLocation}: Validated frame index for job ${gpuJobId} - ED frame: ${edFrameIndex} (was ${rawEdFrameIndex}), Total frames: ${totalFrames}, Processed files: ${processedFiles.length}`);
     
     // Generate reconstruction details
     const reconstructionName = `4D Reconstruction - Job ${gpuJobId.substring(0, 8)}`;
