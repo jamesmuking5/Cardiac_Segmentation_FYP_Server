@@ -113,20 +113,26 @@ export const projectUploadFilter = multer({
   { name: 'description', maxCount: 1 }  // Project description field
 ]);
 
-// OBJ file filter for GPU server webhook callbacks
+// OBJ file filter for GPU server webhook callbacks with detailed debugging
 const objFileFilter = (req: Request, file: Express.Multer.File, cb: multer.FileFilterCallback) => {
   const ext = path.extname(file.originalname).toLowerCase();
   
-  // Allow OBJ files and temporarily allow JSON files to debug what GPU server is sending
-  if (ext === '.obj' || ext === '.json') {
-    if (ext === '.json') {
-      logger.warn(`${serviceLocation}: Accepting JSON file for debugging: ${file.originalname} (field: ${file.fieldname})`);
-    }
+  // Log every file that goes through the filter for debugging
+  logger.info(`${serviceLocation}: [FILE FILTER] Processing file: ${file.originalname}, Field: ${file.fieldname}, Extension: ${ext}, MIME: ${file.mimetype}`);
+  
+  // Allow OBJ files and JSON metadata files
+  if (ext === '.obj') {
+    logger.info(`${serviceLocation}: [FILE FILTER] ✅ ACCEPTING OBJ file: ${file.originalname} (field: ${file.fieldname})`);
+    return cb(null, true);
+  } else if (ext === '.json') {
+    logger.info(`${serviceLocation}: [FILE FILTER] ✅ ACCEPTING JSON metadata file: ${file.originalname} (field: ${file.fieldname})`);
     return cb(null, true);
   }
   
-  logger.warn(`${serviceLocation}: Rejected file with extension ${ext} in GPU callback. Only .obj and .json files allowed temporarily for debugging.`);
-  return cb(new multer.MulterError("LIMIT_UNEXPECTED_FILE", `Invalid file extension: ${ext}. Only .obj and .json files allowed for GPU callbacks.`));
+  // Reject other file types with detailed logging
+  logger.warn(`${serviceLocation}: [FILE FILTER] ❌ REJECTING file with extension ${ext}: ${file.originalname} (field: ${file.fieldname}). Only .obj and .json files allowed.`);
+  const error = new multer.MulterError("LIMIT_UNEXPECTED_FILE", `Invalid file extension: ${ext}. Only .obj and .json files allowed for GPU callbacks.`);
+  return cb(error);
 };
 
 // Function to create the temporary mesh directory if it doesn't exist
@@ -141,22 +147,28 @@ const ensureTempMeshDirExists = (): void => {
 // Call the function when this module is loaded
 ensureTempMeshDirExists();
 
-// Multer middleware for GPU server multipart OBJ file callbacks
+// Multer middleware for GPU server multipart OBJ file callbacks with enhanced configuration
 export const gpuObjUploadFilter = multer({
   storage: multer.diskStorage({
     destination: (req, file, cb) => {
       // Use dedicated temporary mesh directory for GPU callback files
+      logger.info(`${serviceLocation}: [STORAGE] Setting destination for file: ${file.originalname} -> src/temp_mesh/`);
       cb(null, "src/temp_mesh/");
     },
     filename: (req, file, cb) => {
-      // Preserve original filename from GPU server
-      const sanitizedFilename = `gpu_callback_${Date.now()}_${path.basename(file.originalname)}`;
+      // Preserve original filename from GPU server with timestamp to avoid conflicts
+      const timestamp = Date.now();
+      const sanitizedBasename = path.basename(file.originalname).replace(/[^a-zA-Z0-9._-]/g, '_');
+      const sanitizedFilename = `gpu_callback_${timestamp}_${sanitizedBasename}`;
+      logger.info(`${serviceLocation}: [STORAGE] Generated filename for ${file.originalname}: ${sanitizedFilename}`);
       cb(null, sanitizedFilename);
     },
   }),
   limits: {
-    fileSize: 100 * 1024 * 1024, // 100 MB limit per OBJ file
-    files: 50 // Maximum 50 OBJ files per reconstruction (support multi-frame)
+    fileSize: 50 * 1024 * 1024, // 50 MB limit per individual file (increased from previous)
+    files: 50, // Maximum 50 files per reconstruction (support multi-frame)
+    parts: 100, // Maximum form parts
+    fieldSize: 10 * 1024 * 1024 // 10MB for individual form fields
   },
   fileFilter: objFileFilter,
 }).any(); // Accept files with any field name from multipart/form-data

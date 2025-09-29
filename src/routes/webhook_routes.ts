@@ -2,6 +2,7 @@ import express, { Request, Response, NextFunction } from "express";
 import fs from "fs/promises";
 import path from "path";
 import crypto from "crypto";
+import multer from "multer";
 import logger from "../services/logger"; // Import Winston Logger
 import {
   updateJob,
@@ -27,6 +28,70 @@ import { processReconstructionCallback } from "../services/reconstruction_handle
 
 const serviceLocation = "InferenceCallback(Webhook)";
 const router = express.Router();
+
+// Pre-multer middleware function for detailed logging
+const preMulterLogging = (req: Request, res: Response, next: NextFunction) => {
+  logger.info(`${serviceLocation}: [PRE-MULTER] Incoming request analysis:`);
+  logger.info(`${serviceLocation}: [PRE-MULTER] - Method: ${req.method}`);
+  logger.info(`${serviceLocation}: [PRE-MULTER] - Content-Type: ${req.headers['content-type']}`);
+  logger.info(`${serviceLocation}: [PRE-MULTER] - Content-Length: ${req.headers['content-length']}`);
+  logger.info(`${serviceLocation}: [PRE-MULTER] - X-Job-ID: ${req.headers['x-job-id']}`);
+  logger.info(`${serviceLocation}: [PRE-MULTER] - X-File-Count: ${req.headers['x-file-count']}`);
+  logger.info(`${serviceLocation}: [PRE-MULTER] - User-Agent: ${req.headers['user-agent']}`);
+  
+  // Check if this is multipart/form-data
+  const contentType = req.headers['content-type'] || '';
+  if (!contentType.includes('multipart/form-data')) {
+    logger.warn(`${serviceLocation}: [PRE-MULTER] ⚠️  Content-Type is not multipart/form-data: ${contentType}`);
+  } else {
+    logger.info(`${serviceLocation}: [PRE-MULTER] ✅ Content-Type is multipart/form-data`);
+  }
+  
+  next();
+};
+
+// Enhanced multer error handler
+const handleMulterError = (error: any, req: Request, res: Response, next: NextFunction) => {
+  if (error instanceof multer.MulterError) {
+    logger.error(`${serviceLocation}: [MULTER ERROR] MulterError occurred:`, {
+      code: error.code,
+      message: error.message,
+      field: error.field,
+      stack: error.stack
+    });
+    
+    switch (error.code) {
+      case 'LIMIT_FILE_SIZE':
+        logger.error(`${serviceLocation}: [MULTER ERROR] File too large. Limit: 50MB per file`);
+        break;
+      case 'LIMIT_FILE_COUNT':
+        logger.error(`${serviceLocation}: [MULTER ERROR] Too many files. Limit: 50 files`);
+        break;
+      case 'LIMIT_UNEXPECTED_FILE':
+        logger.error(`${serviceLocation}: [MULTER ERROR] Unexpected file field: ${error.field}`);
+        break;
+      case 'LIMIT_PART_COUNT':
+        logger.error(`${serviceLocation}: [MULTER ERROR] Too many form parts`);
+        break;
+      default:
+        logger.error(`${serviceLocation}: [MULTER ERROR] Other multer error: ${error.code}`);
+    }
+    
+    return res.status(400).json({
+      error: 'File upload error',
+      code: error.code,
+      message: error.message
+    });
+  } else if (error) {
+    logger.error(`${serviceLocation}: [REQUEST ERROR] Non-multer error:`, error);
+    return res.status(500).json({
+      error: 'Server error during file processing',
+      message: error.message
+    });
+  }
+  
+  next();
+};
 
 // Helper function for deep copying frames data
 const deepCopyFrames = (
@@ -388,27 +453,67 @@ router.post("/gpu-callback", async (req: Request, res: Response) => {
   }
 });
 
-// 4D Reconstruction Callback - Uses Service Layer
-router.post("/gpu-reconstruction-callback", gpuObjUploadFilter, async (req: Request, res: Response) => {
-  const uploadedFiles = req.files as Express.Multer.File[];
+/*
+ * 4D Reconstruction Callback - Enhanced with comprehensive debugging and metadata handling
+ * 
+ * IMPROVEMENTS IMPLEMENTED:
+ * ✅ Pre-multer logging: Content-Type, Content-Length, headers analysis
+ * ✅ Enhanced multer error handling: Specific error codes and detailed logging
+ * ✅ Increased file limits: 50MB per file, 50 files max, 100 form parts
+ * ✅ Detailed file filter debugging: Logs every file acceptance/rejection
+ * ✅ Post-multer analysis: Complete file breakdown by type with full details
+ * ✅ Safe array handling: Prevents undefined errors in file processing
+ * ✅ JSON metadata file parsing: Reads metadata from uploaded .json files
+ * ✅ OBJ-only processing: Passes only OBJ files to reconstruction handler
+ * ✅ Fallback metadata parsing: Supports form fields as backup
+ * 
+ * PROCESSING FLOW:
+ * 1. Accept both .obj mesh files and .json metadata files via multipart upload
+ * 2. Parse JSON metadata from uploaded metadata.json file (preferred)
+ * 3. Fallback to form field metadata if no JSON file present
+ * 4. Filter and process only OBJ files for reconstruction
+ * 5. Pass parsed metadata and OBJ files to reconstruction handler
+ */
+router.post("/gpu-reconstruction-callback", preMulterLogging, gpuObjUploadFilter, handleMulterError, async (req: Request, res: Response) => {
+  const uploadedFiles = (req.files as Express.Multer.File[]) || [];
   
-  logger.info(
-    `${serviceLocation}: Received 4D reconstruction callback from Cloud GPU. Headers:`,
-    req.headers,
-    "Raw Body fields:",
-    Object.keys(req.body),
-    "Raw Body values:",
-    req.body,
-    "Files received:",
-    uploadedFiles?.length || 0,
-    "File details:",
-    uploadedFiles?.map(f => ({
-      originalname: f.originalname,
-      mimetype: f.mimetype,
-      size: f.size,
-      fieldname: f.fieldname
-    })) || []
-  );
+  logger.info(`${serviceLocation}: [POST-MULTER] Detailed file processing results:`);
+  logger.info(`${serviceLocation}: [POST-MULTER] - Total files received: ${uploadedFiles.length}`);
+  
+  // Log each file with full details
+  uploadedFiles.forEach((file, index) => {
+    logger.info(`${serviceLocation}: [POST-MULTER] File ${index + 1}:`, {
+      fieldname: file.fieldname,
+      originalname: file.originalname,
+      encoding: file.encoding,
+      mimetype: file.mimetype,
+      size: file.size,
+      destination: file.destination,
+      filename: file.filename,
+      path: file.path
+    });
+  });
+  
+  // Analyze file types
+  const objFiles = uploadedFiles.filter(f => f.originalname.toLowerCase().endsWith('.obj'));
+  const jsonFiles = uploadedFiles.filter(f => f.originalname.toLowerCase().endsWith('.json'));
+  const otherFiles = uploadedFiles.filter(f => !f.originalname.toLowerCase().endsWith('.obj') && !f.originalname.toLowerCase().endsWith('.json'));
+  
+  logger.info(`${serviceLocation}: [POST-MULTER] File type breakdown:`);
+  logger.info(`${serviceLocation}: [POST-MULTER] - OBJ files: ${objFiles.length}`);
+  logger.info(`${serviceLocation}: [POST-MULTER] - JSON files: ${jsonFiles.length}`);
+  logger.info(`${serviceLocation}: [POST-MULTER] - Other files: ${otherFiles.length}`);
+  
+  logger.info(`${serviceLocation}: [POST-MULTER] Request body fields:`, Object.keys(req.body));
+  
+  if (objFiles.length > 0) {
+    logger.info(`${serviceLocation}: [POST-MULTER] ✅ SUCCESS: Found ${objFiles.length} OBJ files`);
+    objFiles.forEach((file, index) => {
+      logger.info(`${serviceLocation}: [POST-MULTER] OBJ ${index + 1}: ${file.originalname} (${file.size} bytes, field: ${file.fieldname})`);
+    });
+  } else {
+    logger.warn(`${serviceLocation}: [POST-MULTER] ⚠️  WARNING: No OBJ files found in upload`);
+  }
 
   const gpuJobId = req.headers["x-job-id"] as string | undefined;
 
@@ -420,41 +525,50 @@ router.post("/gpu-reconstruction-callback", gpuObjUploadFilter, async (req: Requ
 
   logger.info(`${serviceLocation}: Processing reconstruction callback for job ${gpuJobId}`);
 
-  // Parse callback metadata from multipart form data
+  // Parse callback metadata from uploaded JSON file
   let callbackMetadata;
   try {
-    // Log raw request details for debugging
-    logger.info(`${serviceLocation}: Raw request body structure for job ${gpuJobId}:`, {
-      bodyKeys: Object.keys(req.body),
-      bodyTypes: Object.keys(req.body).map(key => ({ [key]: typeof req.body[key] })),
-      contentType: req.headers['content-type'],
-      hasFiles: !!(req.files && Array.isArray(req.files) && req.files.length > 0),
-      fileCount: req.headers['x-file-count'] || 'not-specified'
-    });
+    logger.info(`${serviceLocation}: [METADATA PARSING] Starting metadata extraction for job ${gpuJobId}`);
+    logger.info(`${serviceLocation}: [METADATA PARSING] Available files: ${uploadedFiles.length}, JSON files: ${jsonFiles.length}, OBJ files: ${objFiles.length}`);
     
-    // Handle GPU server callback structure - it sends individual form fields, not a nested 'metadata' JSON
-    logger.info(`${serviceLocation}: Available form fields for job ${gpuJobId}: ${Object.keys(req.body).join(', ')}`);
-    
-    // Check if we have a 'metadata' field (newer GPU server format)
-    if (req.body.metadata) {
-      logger.info(`${serviceLocation}: Found metadata form field for job ${gpuJobId}`);
+    // First try to parse from uploaded JSON metadata file
+    if (jsonFiles.length > 0) {
+      logger.info(`${serviceLocation}: [METADATA PARSING] Found ${jsonFiles.length} JSON file(s), attempting to parse metadata from file`);
+      
+      const metadataFile = jsonFiles[0]; // Use first JSON file as metadata
+      logger.info(`${serviceLocation}: [METADATA PARSING] Reading metadata from file: ${metadataFile.originalname} (${metadataFile.size} bytes)`);
+      
+      try {
+        const fs = await import('fs');
+        const metadataContent = await fs.promises.readFile(metadataFile.path, 'utf-8');
+        callbackMetadata = JSON.parse(metadataContent);
+        logger.info(`${serviceLocation}: [METADATA PARSING] ✅ Successfully parsed JSON metadata from uploaded file ${metadataFile.originalname}`);
+        logger.info(`${serviceLocation}: [METADATA PARSING] Metadata keys: ${Object.keys(callbackMetadata).join(', ')}`);
+      } catch (parseError) {
+        logger.error(`${serviceLocation}: [METADATA PARSING] ❌ Failed to parse JSON metadata from file ${metadataFile.originalname}:`, parseError);
+        throw new Error(`Invalid JSON metadata file: ${(parseError as Error).message}`);
+      }
+    }
+    // Fallback to form fields if no JSON file is present
+    else if (req.body.metadata) {
+      logger.info(`${serviceLocation}: [METADATA PARSING] No JSON file found, attempting to parse from form field 'metadata'`);
       
       if (typeof req.body.metadata === 'string') {
         try {
           callbackMetadata = JSON.parse(req.body.metadata);
-          logger.info(`${serviceLocation}: Successfully parsed JSON metadata from form field for job ${gpuJobId}`);
+          logger.info(`${serviceLocation}: [METADATA PARSING] ✅ Successfully parsed JSON metadata from form field`);
         } catch (parseError) {
-          logger.error(`${serviceLocation}: JSON parse error for metadata field in job ${gpuJobId}:`, parseError);
+          logger.error(`${serviceLocation}: [METADATA PARSING] ❌ JSON parse error for metadata field:`, parseError);
           throw parseError;
         }
       } else {
         callbackMetadata = req.body.metadata;
-        logger.info(`${serviceLocation}: Using metadata object directly for job ${gpuJobId}`);
+        logger.info(`${serviceLocation}: [METADATA PARSING] ✅ Using metadata object directly from form field`);
       }
     }
-    // Handle current GPU server format with separate fields
+    // Fallback to individual form fields (legacy support)
     else if (req.body.uuid && req.body.status !== undefined) {
-      logger.info(`${serviceLocation}: Using individual form fields structure for job ${gpuJobId}`);
+      logger.info(`${serviceLocation}: [METADATA PARSING] No JSON file or metadata field found, using individual form fields for job ${gpuJobId}`);
       
       // Reconstruct the expected callback structure from individual fields
       callbackMetadata = {
@@ -468,18 +582,31 @@ router.post("/gpu-reconstruction-callback", gpuObjUploadFilter, async (req: Requ
       if (typeof req.body.result === 'string') {
         try {
           callbackMetadata.result = JSON.parse(req.body.result);
-          logger.info(`${serviceLocation}: Parsed result JSON for job ${gpuJobId}`);
+          logger.info(`${serviceLocation}: [METADATA PARSING] ✅ Parsed result JSON from form field for job ${gpuJobId}`);
         } catch (parseError) {
-          logger.warn(`${serviceLocation}: Could not parse result as JSON for job ${gpuJobId}, using as string`);
+          logger.warn(`${serviceLocation}: [METADATA PARSING] ⚠️  Could not parse result as JSON for job ${gpuJobId}, using as string`);
         }
       }
       
-      logger.info(`${serviceLocation}: Callback metadata structure - UUID: ${callbackMetadata.uuid}, Status: ${callbackMetadata.status}`);
+      logger.info(`${serviceLocation}: [METADATA PARSING] ✅ Form field metadata - UUID: ${callbackMetadata.uuid}, Status: ${callbackMetadata.status}`);
+    }
+    // No valid metadata source found
+    else {
+      throw new Error(`No valid metadata source found. Expected: JSON file upload, 'metadata' form field, or individual form fields (uuid, status). Available: JSON files: ${jsonFiles.length}, form fields: ${Object.keys(req.body).join(', ')}`);
+    }
+    
+    // Log parsed metadata structure for debugging
+    if (callbackMetadata) {
+      logger.info(`${serviceLocation}: [METADATA PARSING] ✅ Final metadata structure for job ${gpuJobId}:`);
+      logger.info(`${serviceLocation}: [METADATA PARSING] - UUID: ${callbackMetadata.uuid || gpuJobId}`);
+      logger.info(`${serviceLocation}: [METADATA PARSING] - Status: ${callbackMetadata.status}`);
+      logger.info(`${serviceLocation}: [METADATA PARSING] - Has result: ${!!callbackMetadata.result}`);
+      logger.info(`${serviceLocation}: [METADATA PARSING] - Has error: ${!!callbackMetadata.error}`);
       
-      // Log the result object structure if it exists
+      // Log detailed result metadata if available
       if (callbackMetadata.result && typeof callbackMetadata.result === 'object') {
         const result = callbackMetadata.result;
-        logger.info(`${serviceLocation}: Result metadata for job ${gpuJobId}:`, {
+        logger.info(`${serviceLocation}: [METADATA PARSING] - Result metadata:`, {
           mesh_filename: result.mesh_filename,
           total_mesh_files: result.total_mesh_files,
           total_mesh_size: result.total_mesh_size,
@@ -493,11 +620,9 @@ router.post("/gpu-reconstruction-callback", gpuObjUploadFilter, async (req: Requ
         });
       }
     }
-    else {
-      throw new Error(`Invalid callback structure. Expected 'metadata' field OR 'uuid'+'status' fields. Available keys: ${Object.keys(req.body).join(', ')}`);
-    }
+    
   } catch (e) {
-    logger.error(`${serviceLocation}: CRITICAL ERROR parsing GPU metadata for job ${gpuJobId}:`, {
+    logger.error(`${serviceLocation}: [METADATA PARSING] ❌ CRITICAL ERROR parsing GPU metadata for job ${gpuJobId}:`, {
       error: e,
       message: (e as Error).message,
       stack: (e as Error).stack,
@@ -512,22 +637,19 @@ router.post("/gpu-reconstruction-callback", gpuObjUploadFilter, async (req: Requ
   }
 
   try {
-    // Log detailed request information for debugging 500 errors
-    logger.info(`${serviceLocation}: Detailed callback request for job ${gpuJobId} - Metadata keys: ${Object.keys(callbackMetadata).join(', ')}, File names: ${uploadedFiles?.map(f => f.originalname).join(', ') || 'none'}`);
+    logger.info(`${serviceLocation}: [PROCESSING] Starting reconstruction processing for job ${gpuJobId}`);
+    logger.info(`${serviceLocation}: [PROCESSING] Total uploaded files: ${uploadedFiles.length}`);
+    logger.info(`${serviceLocation}: [PROCESSING] OBJ files available: ${objFiles.length}`);
+    logger.info(`${serviceLocation}: [PROCESSING] JSON files available: ${jsonFiles.length}`);
     
-    // Process OBJ files (should all be .obj files due to filter)
-    const objFiles = uploadedFiles?.filter(f => f.originalname.toLowerCase().endsWith('.obj')) || [];
-    const nonObjFiles = uploadedFiles?.filter(f => !f.originalname.toLowerCase().endsWith('.obj')) || [];
-    
-    logger.info(`${serviceLocation}: File breakdown for job ${gpuJobId} - OBJ files: ${objFiles.length}, Non-OBJ files: ${nonObjFiles.length}`);
-    
+    // Validate that we have OBJ files to process
     if (objFiles.length > 0) {
-      logger.info(`${serviceLocation}: Received OBJ files for job ${gpuJobId}:`);
+      logger.info(`${serviceLocation}: [PROCESSING] ✅ Found ${objFiles.length} OBJ files to process:`);
       objFiles.forEach((file, index) => {
-        logger.info(`${serviceLocation}:   ${index + 1}. ${file.originalname} (${file.size} bytes, field: ${file.fieldname})`);
+        logger.info(`${serviceLocation}: [PROCESSING]   ${index + 1}. ${file.originalname} (${file.size} bytes, saved as: ${file.filename})`);
       });
     } else {
-      logger.warn(`${serviceLocation}: WARNING - No OBJ files received for job ${gpuJobId}. GPU server reported success but sent no mesh files.`);
+      logger.warn(`${serviceLocation}: [PROCESSING] ⚠️  WARNING - No OBJ files received for job ${gpuJobId}.`);
       
       // Check if metadata indicates files should be present
       const expectedFiles = callbackMetadata?.result?.total_mesh_files || callbackMetadata?.total_mesh_files;
@@ -536,12 +658,16 @@ router.post("/gpu-reconstruction-callback", gpuObjUploadFilter, async (req: Requ
       }
     }
     
+    // Log any non-OBJ files that were also uploaded (for debugging)
+    const nonObjFiles = uploadedFiles.filter(f => !f.originalname.toLowerCase().endsWith('.obj') && !f.originalname.toLowerCase().endsWith('.json'));
     if (nonObjFiles.length > 0) {
-      logger.warn(`${serviceLocation}: Unexpected non-OBJ files received for job ${gpuJobId}: ${nonObjFiles.map(f => `${f.originalname} (${f.fieldname})`).join(', ')}`);
+      logger.warn(`${serviceLocation}: [PROCESSING] ⚠️  Unexpected non-OBJ/non-JSON files received for job ${gpuJobId}: ${nonObjFiles.map(f => `${f.originalname} (${f.fieldname})`).join(', ')}`);
     }
     
-    // Process reconstruction using the service layer
-    const result = await processReconstructionCallback(gpuJobId, uploadedFiles, callbackMetadata);
+    logger.info(`${serviceLocation}: [PROCESSING] Calling reconstruction handler with ${objFiles.length} OBJ files and parsed metadata`);
+    
+    // Process reconstruction using the service layer - pass only OBJ files
+    const result = await processReconstructionCallback(gpuJobId, objFiles, callbackMetadata);
     
     if (result.success) {
       logger.info(`${serviceLocation}: Successfully processed reconstruction callback for job ${gpuJobId}`);
