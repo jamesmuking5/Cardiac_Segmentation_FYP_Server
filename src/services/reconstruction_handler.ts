@@ -47,6 +47,10 @@ export async function processReconstructionCallback(
 ): Promise<ReconstructionCallbackResult> {
   try {
     logger.info(`${serviceLocation}: Processing 4D reconstruction callback for job ${gpuJobId}`);
+    
+    // Safely handle uploadedFiles to prevent undefined errors
+    const safeUploadedFiles = uploadedFiles || [];
+    logger.info(`${serviceLocation}: Received ${safeUploadedFiles.length} files for processing`);
 
     // Extract GPU result data from the metadata structure
     const { status, result: gpuResult, error: gpuErrorDetail } = callbackMetadata;
@@ -74,18 +78,16 @@ export async function processReconstructionCallback(
       return metadataValidation;
     }
 
-    // Validate uploaded OBJ files
-    const validationResult = validateObjFiles(uploadedFiles, gpuJobId);
+    // Validate uploaded OBJ files using safe array
+    const validationResult = validateObjFiles(safeUploadedFiles, gpuJobId);
     if (!validationResult.success) {
       logger.error(`${serviceLocation}: File validation failed for job ${gpuJobId}: ${validationResult.message}`);
       return validationResult;
     }
 
-    // Filter and process only OBJ files (exclude JSON metadata)
-    const objFiles = uploadedFiles.filter(file => 
-      file.originalname.toLowerCase().endsWith('.obj')
-    );
-    const processedFiles = await processObjFiles(objFiles, gpuJobId);
+    // Process the OBJ files (already filtered by webhook route)
+    logger.info(`${serviceLocation}: Processing ${safeUploadedFiles.length} OBJ files (pre-filtered by webhook)`);
+    const processedFiles = await processObjFiles(safeUploadedFiles, gpuJobId);
     
     // Get project details for userId and filehash
     const { userId, filehash, projectId } = await getProjectDetails(gpuJobId);
@@ -219,30 +221,49 @@ function validateMetadata(
 }
 
 /**
- * Validate uploaded OBJ files
+ * Validate uploaded OBJ files with enhanced debugging
  */
 function validateObjFiles(
   uploadedFiles: Express.Multer.File[],
   gpuJobId: string
 ): ReconstructionCallbackResult {
+  // Ensure uploadedFiles is always an array to prevent undefined errors
+  const safeFiles = uploadedFiles || [];
+  
+  logger.info(`${serviceLocation}: [FILE VALIDATION] Starting validation for job ${gpuJobId} with ${safeFiles.length} total files`);
+  
+  // Log details of all received files
+  safeFiles.forEach((file, index) => {
+    logger.info(`${serviceLocation}: [FILE VALIDATION] File ${index + 1}: ${file.originalname} (${file.size} bytes, field: ${file.fieldname}, mime: ${file.mimetype})`);
+  });
+  
   // Filter out non-OBJ files (like JSON metadata) for validation
-  const objFiles = uploadedFiles?.filter(file => 
+  const objFiles = safeFiles.filter(file => 
     file.originalname.toLowerCase().endsWith('.obj')
-  ) || [];
+  );
   
-  const jsonFiles = uploadedFiles?.filter(file => 
+  const jsonFiles = safeFiles.filter(file => 
     file.originalname.toLowerCase().endsWith('.json')
-  ) || [];
+  );
   
-  const otherFiles = uploadedFiles?.filter(file => 
+  const otherFiles = safeFiles.filter(file => 
     !file.originalname.toLowerCase().endsWith('.obj') && 
     !file.originalname.toLowerCase().endsWith('.json')
-  ) || [];
+  );
 
-  logger.info(`${serviceLocation}: File validation for job ${gpuJobId} - OBJ: ${objFiles.length}, JSON: ${jsonFiles.length}, Other: ${otherFiles.length}`);
+  logger.info(`${serviceLocation}: [FILE VALIDATION] File type breakdown for job ${gpuJobId}:`);
+  logger.info(`${serviceLocation}: [FILE VALIDATION] - OBJ files: ${objFiles.length}`);
+  logger.info(`${serviceLocation}: [FILE VALIDATION] - JSON files: ${jsonFiles.length}`);
+  logger.info(`${serviceLocation}: [FILE VALIDATION] - Other files: ${otherFiles.length}`);
 
   if (objFiles.length === 0) {
-    logger.error(`${serviceLocation}: No OBJ files received for job ${gpuJobId}. This indicates the GPU reconstruction may have failed silently or produced no mesh output.`);
+    logger.error(`${serviceLocation}: [FILE VALIDATION] ❌ No OBJ files received for job ${gpuJobId}.`);
+    if (jsonFiles.length > 0) {
+      logger.warn(`${serviceLocation}: [FILE VALIDATION] Found ${jsonFiles.length} JSON file(s) but no OBJ files. This suggests the GPU server sent metadata but failed to send mesh files.`);
+    }
+    if (safeFiles.length === 0) {
+      logger.error(`${serviceLocation}: [FILE VALIDATION] No files received at all. This indicates a complete callback failure or multer processing error.`);
+    }
     return {
       success: false,
       message: "No OBJ mesh files received in reconstruction callback. The reconstruction may have failed to generate mesh output or encountered an error during processing."
@@ -250,14 +271,21 @@ function validateObjFiles(
   }
   
   if (otherFiles.length > 0) {
-    logger.error(`${serviceLocation}: Unexpected file formats for job ${gpuJobId}: ${otherFiles.map(f => f.originalname).join(', ')}`);
+    logger.error(`${serviceLocation}: [FILE VALIDATION] ❌ Unexpected file formats for job ${gpuJobId}: ${otherFiles.map(f => f.originalname).join(', ')}`);
     return {
       success: false,
       message: `Unexpected file formats received. Expected .obj files and optional .json metadata, but received: ${otherFiles.map(f => f.originalname).join(', ')}`
     };
   }
 
-  logger.info(`${serviceLocation}: Valid OBJ files received for job ${gpuJobId}. Count: ${objFiles.length}, Total size: ${objFiles.reduce((sum, f) => sum + f.size, 0)} bytes`);
+  const totalObjSize = objFiles.reduce((sum, f) => sum + f.size, 0);
+  logger.info(`${serviceLocation}: [FILE VALIDATION] ✅ Validation successful for job ${gpuJobId}:`);
+  logger.info(`${serviceLocation}: [FILE VALIDATION] - Valid OBJ files: ${objFiles.length}`);
+  logger.info(`${serviceLocation}: [FILE VALIDATION] - Total OBJ size: ${totalObjSize} bytes`);
+  objFiles.forEach((file, index) => {
+    logger.info(`${serviceLocation}: [FILE VALIDATION] - OBJ ${index + 1}: ${file.originalname} (${file.size} bytes, saved as: ${file.filename})`);
+  });
+  
   return { success: true, message: "Files validated successfully" };
 }
 
