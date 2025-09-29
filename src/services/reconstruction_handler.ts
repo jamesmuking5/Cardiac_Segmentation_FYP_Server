@@ -48,8 +48,11 @@ export async function processReconstructionCallback(
   try {
     logger.info(`${serviceLocation}: Processing 4D reconstruction callback for job ${gpuJobId}`);
 
-    // Extract GPU result data
+    // Extract GPU result data from the metadata structure
     const { status, result: gpuResult, error: gpuErrorDetail } = callbackMetadata;
+    
+    // Log the metadata structure for debugging
+    logger.info(`${serviceLocation}: Processing metadata for job ${gpuJobId} - Status: ${status}, Has result: ${!!gpuResult}, Has error: ${!!gpuErrorDetail}`);
 
     if (status !== "completed" && status !== "success" && status !== "reconstruction_completed") {
       logger.warn(`${serviceLocation}: GPU job ${gpuJobId} not successful - status: ${status}, error: ${gpuErrorDetail}`);
@@ -62,6 +65,15 @@ export async function processReconstructionCallback(
 
     logger.info(`${serviceLocation}: GPU job ${gpuJobId} completed successfully with status: ${status}`);
 
+    // Validate GPU metadata for expected mesh files
+    // Use the result object for validation since that contains the actual reconstruction metadata
+    const validationTarget = gpuResult || callbackMetadata;
+    const metadataValidation = validateMetadata(validationTarget, gpuJobId);
+    if (!metadataValidation.success) {
+      logger.error(`${serviceLocation}: Metadata validation failed for job ${gpuJobId}: ${metadataValidation.message}`);
+      return metadataValidation;
+    }
+
     // Validate uploaded OBJ files
     const validationResult = validateObjFiles(uploadedFiles, gpuJobId);
     if (!validationResult.success) {
@@ -69,8 +81,11 @@ export async function processReconstructionCallback(
       return validationResult;
     }
 
-    // Process OBJ files
-    const processedFiles = await processObjFiles(uploadedFiles, gpuJobId);
+    // Filter and process only OBJ files (exclude JSON metadata)
+    const objFiles = uploadedFiles.filter(file => 
+      file.originalname.toLowerCase().endsWith('.obj')
+    );
+    const processedFiles = await processObjFiles(objFiles, gpuJobId);
     
     // Get project details for userId and filehash
     const { userId, filehash, projectId } = await getProjectDetails(gpuJobId);
@@ -147,33 +162,102 @@ export async function processReconstructionCallback(
 }
 
 /**
+ * Validate GPU callback metadata for expected mesh generation
+ */
+function validateMetadata(
+  metadata: any,
+  gpuJobId: string
+): ReconstructionCallbackResult {
+  try {
+    logger.info(`${serviceLocation}: Validating metadata for job ${gpuJobId}. Available fields: ${Object.keys(metadata || {}).join(', ')}`);
+    
+    // Check if metadata indicates mesh files should be present
+    const totalMeshFiles = metadata?.total_mesh_files;
+    const totalMeshSize = metadata?.total_mesh_size;
+    const meshFormat = metadata?.mesh_format;
+    
+    if (typeof totalMeshFiles === 'number') {
+      if (totalMeshFiles === 0) {
+        logger.warn(`${serviceLocation}: Metadata indicates 0 mesh files generated for job ${gpuJobId}. This suggests the reconstruction process produced no mesh output.`);
+        return {
+          success: false,
+          message: "Reconstruction completed but generated no mesh files. This may indicate insufficient input data or processing failure."
+        };
+      } else if (totalMeshFiles > 0) {
+        logger.info(`${serviceLocation}: Metadata indicates ${totalMeshFiles} mesh files should be present for job ${gpuJobId}`);
+      }
+    }
+    
+    if (typeof totalMeshSize === 'number' && totalMeshSize === 0) {
+      logger.warn(`${serviceLocation}: Metadata indicates 0 total mesh size for job ${gpuJobId}. This suggests empty or invalid mesh generation.`);
+      return {
+        success: false,
+        message: "Reconstruction completed but generated empty mesh files (0 bytes total size)."
+      };
+    }
+    
+    // Check for error messages in metadata
+    const errorMessage = metadata?.error || metadata?.error_message;
+    if (errorMessage) {
+      logger.error(`${serviceLocation}: GPU metadata contains error message for job ${gpuJobId}: ${errorMessage}`);
+      return {
+        success: false,
+        message: `GPU server reported error: ${errorMessage}`
+      };
+    }
+    
+    return { success: true, message: "Metadata validation successful" };
+    
+  } catch (error) {
+    logger.error(`${serviceLocation}: Error validating metadata for job ${gpuJobId}:`, error);
+    return {
+      success: false,
+      message: "Failed to validate metadata structure",
+      error: (error as Error).message
+    };
+  }
+}
+
+/**
  * Validate uploaded OBJ files
  */
 function validateObjFiles(
   uploadedFiles: Express.Multer.File[],
   gpuJobId: string
 ): ReconstructionCallbackResult {
-  if (!uploadedFiles || uploadedFiles.length === 0) {
-    logger.error(`${serviceLocation}: No OBJ files received for job ${gpuJobId}`);
-    return {
-      success: false,
-      message: "No OBJ files received in reconstruction callback"
-    };
-  }
-
-  const invalidFiles = uploadedFiles.filter(file => 
-    !file.originalname.toLowerCase().endsWith('.obj')
-  );
+  // Filter out non-OBJ files (like JSON metadata) for validation
+  const objFiles = uploadedFiles?.filter(file => 
+    file.originalname.toLowerCase().endsWith('.obj')
+  ) || [];
   
-  if (invalidFiles.length > 0) {
-    logger.error(`${serviceLocation}: Invalid file formats for job ${gpuJobId}: ${invalidFiles.map(f => f.originalname).join(', ')}`);
+  const jsonFiles = uploadedFiles?.filter(file => 
+    file.originalname.toLowerCase().endsWith('.json')
+  ) || [];
+  
+  const otherFiles = uploadedFiles?.filter(file => 
+    !file.originalname.toLowerCase().endsWith('.obj') && 
+    !file.originalname.toLowerCase().endsWith('.json')
+  ) || [];
+
+  logger.info(`${serviceLocation}: File validation for job ${gpuJobId} - OBJ: ${objFiles.length}, JSON: ${jsonFiles.length}, Other: ${otherFiles.length}`);
+
+  if (objFiles.length === 0) {
+    logger.error(`${serviceLocation}: No OBJ files received for job ${gpuJobId}. This indicates the GPU reconstruction may have failed silently or produced no mesh output.`);
     return {
       success: false,
-      message: `Invalid file formats. Expected .obj files, received: ${invalidFiles.map(f => f.originalname).join(', ')}`
+      message: "No OBJ mesh files received in reconstruction callback. The reconstruction may have failed to generate mesh output or encountered an error during processing."
+    };
+  }
+  
+  if (otherFiles.length > 0) {
+    logger.error(`${serviceLocation}: Unexpected file formats for job ${gpuJobId}: ${otherFiles.map(f => f.originalname).join(', ')}`);
+    return {
+      success: false,
+      message: `Unexpected file formats received. Expected .obj files and optional .json metadata, but received: ${otherFiles.map(f => f.originalname).join(', ')}`
     };
   }
 
-  logger.info(`${serviceLocation}: Valid OBJ files received for job ${gpuJobId}. Count: ${uploadedFiles.length}, Total size: ${uploadedFiles.reduce((sum, f) => sum + f.size, 0)} bytes`);
+  logger.info(`${serviceLocation}: Valid OBJ files received for job ${gpuJobId}. Count: ${objFiles.length}, Total size: ${objFiles.reduce((sum, f) => sum + f.size, 0)} bytes`);
   return { success: true, message: "Files validated successfully" };
 }
 
