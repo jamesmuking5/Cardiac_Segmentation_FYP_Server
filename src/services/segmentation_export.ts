@@ -100,7 +100,7 @@ export const generateAISegmentationForReconstruction = async (
             await fs.writeJson(affineMatrixFile, project.affineMatrix, { spaces: 2 });
             await fs.writeJson(dimensionsFile, project.dimensions, { spaces: 2 });
 
-            pythonCommand = `python "${pythonScriptPath}" "${segmentationsJsonPath}" "${localOutputSegmentationNiftiPath}" ${planeWidthForRLE} ${planeHeightForRLE} "${affineMatrixFile}" "${dimensionsFile}"`;
+            pythonCommand = `python "${pythonScriptPath}" "${segmentationsJsonPath}" "${localOutputSegmentationNiftiPath}" "${affineMatrixFile}" "${dimensionsFile}" "uint8" ${planeHeightForRLE} ${planeWidthForRLE}`;
         } else {
             // Use download and extract approach (legacy)
             logger.info(`${serviceLocation}: No stored affine matrix found for reconstruction of project ${projectId}. Using download approach.`);
