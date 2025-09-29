@@ -3,13 +3,14 @@
 
 import { IUserSafe, ProjectCrudResult } from "../types/database_types";
 import logger from "./logger";
-import { readProject } from "./database";
+import { readProject, readProjectSegmentationMask } from "./database";
 import { v4 as uuidv4 } from 'uuid';
 import { createJob, IJob, JobStatus, updateJob } from "../services/database";
 import axios from 'axios';
 import { generatePresignedGetUrl } from "../utils/s3_presigned_url";
 import { URL } from 'url';  // ADDED URL import for S3 URL parsing
 import { getFreshGPUServerAddress, getCurrentToken } from "./gpu_auth_client";
+import { generateAISegmentationForReconstruction } from "./segmentation_export";
 
 const serviceLocation = 'Reconstruction';
 
@@ -128,6 +129,15 @@ export const startReconstruction = async (projectId: string, user?: IUserSafe, r
             return { success: false, message: "Access denied to this project" };
         }
 
+        // Validate that project has segmentation masks (required for 4D reconstruction)
+        const hasMasksResult = await readProjectSegmentationMask(projectId);
+        if (!hasMasksResult.projectsegmentationmasks || hasMasksResult.projectsegmentationmasks.length === 0) {
+            logger.warn(`${serviceLocation}: No segmentation masks found for project ${projectId}. 4D reconstruction requires completed segmentation.`);
+            return { success: false, message: "4D reconstruction requires completed segmentation masks. Please complete segmentation before starting reconstruction." };
+        }
+
+        logger.info(`${serviceLocation}: Found ${hasMasksResult.projectsegmentationmasks.length} segmentation mask(s) for project ${projectId}. Proceeding with 4D reconstruction.`);
+
         // Validate ed_frame parameter if provided
         if (ed_frame !== undefined) {
             if (!Number.isInteger(ed_frame) || ed_frame < 1) {
@@ -150,31 +160,25 @@ export const startReconstruction = async (projectId: string, user?: IUserSafe, r
             logger.info(`${serviceLocation}: Using default ed_frame = 1 for project ${projectId} with ${projectData.dimensions?.frames || 'unknown'} total frames`);
         }
 
-        // Extract S3 object key from the originalfilepath URL for NIfTI file 
-        const niftiS3Url = projectData.originalfilepath;
-        let objectKeyForNifti: string;
-        try {
-            const parsedUrl = new URL(niftiS3Url);
-            objectKeyForNifti = parsedUrl.pathname;
-            if (objectKeyForNifti.startsWith('/')) {
-                objectKeyForNifti = objectKeyForNifti.substring(1);
-            }
-        } catch (e: any) {
-            logger.error(`${serviceLocation}: Invalid S3 URL format for NIfTI file: ${niftiS3Url}`, e);
-            return { success: false, message: `Invalid NIfTI file URL format: ${e.message}` };
+        // Generate segmentation NIfTI file directly (no HTTP call needed)
+        logger.info(`${serviceLocation}: Generating segmentation NIfTI for project ${projectId}`);
+        
+        const segmentationResult = await generateAISegmentationForReconstruction(projectId, user?._id);
+        
+        if (!segmentationResult.success || !segmentationResult.s3Key) {
+            logger.error(`${serviceLocation}: Failed to generate segmentation NIfTI for project ${projectId}: ${segmentationResult.message}`);
+            return { success: false, message: `Failed to generate segmentation data: ${segmentationResult.message}` };
         }
 
-        if (!objectKeyForNifti) {
-            logger.error(`${serviceLocation}: Could not extract S3 object key from NIfTI file URL: ${niftiS3Url}`);
-            return { success: false, message: "Failed to determine S3 object key for NIfTI file." };
-        }
-
-        // Get presigned URL for the NIfTI file
-        const dataUrlForGpu = await generatePresignedGetUrl(s3BucketName, objectKeyForNifti, 3600);
+        // Generate fresh presigned URL for the GPU (with longer expiration)
+        const dataUrlForGpu = await generatePresignedGetUrl(s3BucketName, segmentationResult.s3Key, 3600); // 1 hour
+        
         if (!dataUrlForGpu) {
-            logger.error(`${serviceLocation}: Failed to generate presigned S3 URL for project ${projectId}, NIfTI S3 Key: ${objectKeyForNifti}`);
-            return { success: false, message: "Failed to prepare TAR file URL for inference." };
+            logger.error(`${serviceLocation}: Failed to generate presigned URL for segmentation file: ${segmentationResult.s3Key}`);
+            return { success: false, message: "Failed to prepare segmentation file for GPU access." };
         }
+
+        logger.info(`${serviceLocation}: Successfully generated segmentation NIfTI for project ${projectId}. File size: ${segmentationResult.fileSizeBytes} bytes, S3 Key: ${segmentationResult.s3Key}`);
 
         // Generate job UUID
         const jobUuid = uuidv4();
@@ -196,7 +200,7 @@ export const startReconstruction = async (projectId: string, user?: IUserSafe, r
         logger.info(`${serviceLocation}: Prepared reconstruction data for project ${projectId}, UUID ${jobUuid}`);
         logger.info(`${serviceLocation}: Frame parameters - ed_frame input: ${ed_frame || 1}, ed_frame_index sent to GPU: ${reconstructionPayload.ed_frame_index}, project total frames: ${projectData.dimensions?.frames || 'unknown'}`);
         logger.info(`${serviceLocation}: Project dimensions - width: ${projectData.dimensions?.width}, height: ${projectData.dimensions?.height}, slices: ${projectData.dimensions?.slices}, frames: ${projectData.dimensions?.frames}`);
-        logger.info(`${serviceLocation}: 4D processing enabled: ${reconstructionPayload.process_all_frames}, NIfTI S3 Key: ${objectKeyForNifti}`);
+        logger.info(`${serviceLocation}: 4D processing enabled: ${reconstructionPayload.process_all_frames}, using segmentation NIfTI file`);
         logger.info(`${serviceLocation}: GPU payload: ${JSON.stringify(reconstructionPayload, null, 2)}`);
 
         // Send reconstruction request to GPU server BEFORE creating job record
