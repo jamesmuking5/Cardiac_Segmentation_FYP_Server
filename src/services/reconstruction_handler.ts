@@ -74,20 +74,9 @@ export async function processReconstructionCallback(
       return metadataValidation;
     }
 
-    // Extract expected mesh files count from metadata for validation
-    const expectedMeshFiles = validationTarget?.total_mesh_files || validationTarget?.mesh_files_info?.length || 0;
-    
-    // Validate uploaded OBJ files - handle GPU server's dual callback pattern
-    const validationResult = validateObjFiles(uploadedFiles, gpuJobId, expectedMeshFiles);
+    // Validate uploaded OBJ files
+    const validationResult = validateObjFiles(uploadedFiles, gpuJobId);
     if (!validationResult.success) {
-      // Check if this is a metadata-only callback (GPU server fallback pattern)
-      if (uploadedFiles.length === 0 && expectedMeshFiles > 0 && validationTarget?.status === 'reconstruction_completed') {
-        logger.warn(`${serviceLocation}: Detected metadata-only callback for job ${gpuJobId}. GPU server likely failed to send mesh files. Reconstruction metadata indicates success but files are missing.`);
-        return {
-          success: false,
-          message: `GPU reconstruction completed successfully but mesh files were not received via webhook callback. This indicates a file upload failure in the GPU server's multipart callback system. Expected ${expectedMeshFiles} OBJ files but received none. This may be due to network timeouts or file size limits.`
-        };
-      }
       logger.error(`${serviceLocation}: File validation failed for job ${gpuJobId}: ${validationResult.message}`);
       return validationResult;
     }
@@ -230,12 +219,11 @@ function validateMetadata(
 }
 
 /**
- * Validate uploaded OBJ files - Updated to handle GPU server callback pattern
+ * Validate uploaded OBJ files
  */
 function validateObjFiles(
   uploadedFiles: Express.Multer.File[],
-  gpuJobId: string,
-  expectedMeshFiles?: number
+  gpuJobId: string
 ): ReconstructionCallbackResult {
   // Filter out non-OBJ files (like JSON metadata) for validation
   const objFiles = uploadedFiles?.filter(file => 
@@ -251,24 +239,14 @@ function validateObjFiles(
     !file.originalname.toLowerCase().endsWith('.json')
   ) || [];
 
-  logger.info(`${serviceLocation}: File validation for job ${gpuJobId} - OBJ: ${objFiles.length}, JSON: ${jsonFiles.length}, Other: ${otherFiles.length}, Expected: ${expectedMeshFiles || 'unknown'}`);
+  logger.info(`${serviceLocation}: File validation for job ${gpuJobId} - OBJ: ${objFiles.length}, JSON: ${jsonFiles.length}, Other: ${otherFiles.length}`);
 
-  // GPU server sends dual callbacks: first with files (may fail), second with metadata only
-  // If we have no OBJ files, check if this is expected based on callback pattern
   if (objFiles.length === 0) {
-    if (expectedMeshFiles && expectedMeshFiles > 0) {
-      logger.warn(`${serviceLocation}: No OBJ files received for job ${gpuJobId}, but metadata indicates ${expectedMeshFiles} files should exist. This suggests the GPU server's multipart callback failed and fell back to metadata-only callback.`);
-      return {
-        success: false,
-        message: `GPU reconstruction completed but multipart file upload failed. Expected ${expectedMeshFiles} OBJ files but received none. This typically occurs when files are too large for the callback or network timeout occurs.`
-      };
-    } else {
-      logger.warn(`${serviceLocation}: No OBJ files received for job ${gpuJobId}. This may be a metadata-only callback from GPU server.`);
-      return {
-        success: false,
-        message: "No OBJ mesh files received. This may indicate a file upload failure in the GPU server callback or that this is a metadata-only callback."
-      };
-    }
+    logger.error(`${serviceLocation}: No OBJ files received for job ${gpuJobId}. This indicates the GPU reconstruction may have failed silently or produced no mesh output.`);
+    return {
+      success: false,
+      message: "No OBJ mesh files received in reconstruction callback. The reconstruction may have failed to generate mesh output or encountered an error during processing."
+    };
   }
   
   if (otherFiles.length > 0) {
