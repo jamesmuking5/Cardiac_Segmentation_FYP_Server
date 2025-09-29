@@ -51,7 +51,7 @@ export async function processReconstructionCallback(
     // Extract GPU result data
     const { status, result: gpuResult, error: gpuErrorDetail } = callbackMetadata;
 
-    if (status !== "completed" && status !== "success") {
+    if (status !== "completed" && status !== "success" && status !== "reconstruction_completed") {
       logger.warn(`${serviceLocation}: GPU job ${gpuJobId} not successful - status: ${status}, error: ${gpuErrorDetail}`);
       return {
         success: false,
@@ -59,6 +59,8 @@ export async function processReconstructionCallback(
         error: gpuErrorDetail
       };
     }
+
+    logger.info(`${serviceLocation}: GPU job ${gpuJobId} completed successfully with status: ${status}`);
 
     // Validate uploaded OBJ files
     const validationResult = validateObjFiles(uploadedFiles, gpuJobId);
