@@ -432,46 +432,69 @@ router.post("/gpu-reconstruction-callback", gpuObjUploadFilter, async (req: Requ
       fileCount: req.headers['x-file-count'] || 'not-specified'
     });
     
-    // GPU server sends JSON metadata in the 'metadata' form field
-    if (!req.body.metadata) {
-      throw new Error(`Missing 'metadata' form field. Available body keys: ${Object.keys(req.body).join(', ')}`);
-    }
+    // Handle GPU server callback structure - it sends individual form fields, not a nested 'metadata' JSON
+    logger.info(`${serviceLocation}: Available form fields for job ${gpuJobId}: ${Object.keys(req.body).join(', ')}`);
     
-    logger.info(`${serviceLocation}: Found metadata form field for job ${gpuJobId}`);
-    
-    // Parse the JSON metadata
-    if (typeof req.body.metadata === 'string') {
-      try {
-        callbackMetadata = JSON.parse(req.body.metadata);
-        logger.info(`${serviceLocation}: Successfully parsed JSON metadata from form field for job ${gpuJobId}`);
-        logger.info(`${serviceLocation}: Metadata structure - UUID: ${callbackMetadata.uuid}, Status: ${callbackMetadata.status}`);
-        
-        // Log the result object structure if it exists
-        if (callbackMetadata.result && typeof callbackMetadata.result === 'object') {
-          const result = callbackMetadata.result;
-          logger.info(`${serviceLocation}: Result metadata for job ${gpuJobId}:`, {
-            mesh_filename: result.mesh_filename,
-            total_mesh_files: result.total_mesh_files,
-            total_mesh_size: result.total_mesh_size,
-            mesh_format: result.mesh_format,
-            status: result.status,
-            message: result.message,
-            is_4d_input: result.is_4d_input,
-            total_frames: result.total_frames,
-            processed_frames: result.processed_frames,
-            mesh_files_info_count: result.mesh_files_info?.length || 0
-          });
+    // Check if we have a 'metadata' field (newer GPU server format)
+    if (req.body.metadata) {
+      logger.info(`${serviceLocation}: Found metadata form field for job ${gpuJobId}`);
+      
+      if (typeof req.body.metadata === 'string') {
+        try {
+          callbackMetadata = JSON.parse(req.body.metadata);
+          logger.info(`${serviceLocation}: Successfully parsed JSON metadata from form field for job ${gpuJobId}`);
+        } catch (parseError) {
+          logger.error(`${serviceLocation}: JSON parse error for metadata field in job ${gpuJobId}:`, parseError);
+          throw parseError;
         }
-      } catch (parseError) {
-        logger.error(`${serviceLocation}: JSON parse error for metadata field in job ${gpuJobId}:`, parseError);
-        logger.info(`${serviceLocation}: Raw metadata string (first 500 chars): ${req.body.metadata.substring(0, 500)}`);
-        throw parseError;
+      } else {
+        callbackMetadata = req.body.metadata;
+        logger.info(`${serviceLocation}: Using metadata object directly for job ${gpuJobId}`);
       }
-    } else if (typeof req.body.metadata === 'object') {
-      callbackMetadata = req.body.metadata;
-      logger.info(`${serviceLocation}: Using metadata object directly for job ${gpuJobId}`);
-    } else {
-      throw new Error(`Unexpected metadata type: ${typeof req.body.metadata}`);
+    }
+    // Handle current GPU server format with separate fields
+    else if (req.body.uuid && req.body.status !== undefined) {
+      logger.info(`${serviceLocation}: Using individual form fields structure for job ${gpuJobId}`);
+      
+      // Reconstruct the expected callback structure from individual fields
+      callbackMetadata = {
+        uuid: req.body.uuid,
+        status: req.body.status,
+        result: req.body.result,
+        error: req.body.error
+      };
+      
+      // Parse result field if it's a JSON string
+      if (typeof req.body.result === 'string') {
+        try {
+          callbackMetadata.result = JSON.parse(req.body.result);
+          logger.info(`${serviceLocation}: Parsed result JSON for job ${gpuJobId}`);
+        } catch (parseError) {
+          logger.warn(`${serviceLocation}: Could not parse result as JSON for job ${gpuJobId}, using as string`);
+        }
+      }
+      
+      logger.info(`${serviceLocation}: Callback metadata structure - UUID: ${callbackMetadata.uuid}, Status: ${callbackMetadata.status}`);
+      
+      // Log the result object structure if it exists
+      if (callbackMetadata.result && typeof callbackMetadata.result === 'object') {
+        const result = callbackMetadata.result;
+        logger.info(`${serviceLocation}: Result metadata for job ${gpuJobId}:`, {
+          mesh_filename: result.mesh_filename,
+          total_mesh_files: result.total_mesh_files,
+          total_mesh_size: result.total_mesh_size,
+          mesh_format: result.mesh_format,
+          status: result.status,
+          message: result.message,
+          is_4d_input: result.is_4d_input,
+          total_frames: result.total_frames,
+          processed_frames: result.processed_frames,
+          mesh_files_info_count: result.mesh_files_info?.length || 0
+        });
+      }
+    }
+    else {
+      throw new Error(`Invalid callback structure. Expected 'metadata' field OR 'uuid'+'status' fields. Available keys: ${Object.keys(req.body).join(', ')}`);
     }
   } catch (e) {
     logger.error(`${serviceLocation}: CRITICAL ERROR parsing GPU metadata for job ${gpuJobId}:`, {
