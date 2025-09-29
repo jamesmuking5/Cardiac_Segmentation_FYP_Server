@@ -11,7 +11,6 @@ import segmentationRoutes from '../routes/segmentation_routes';
 import gpuStatusRoute from '../routes/gpu_status';
 import adminToolsRoute from '../routes/admin_tools';
 import sampleNiftiRoute from '../routes/sample_nifti';
-import awsAnalyticsRoute from '../routes/aws_analytics';
 import cpuMetricsRoute from '../routes/cpu_metrics';
 import logger from './logger';
 import cors from 'cors';
@@ -141,8 +140,6 @@ app.use('/status', gpuStatusRoute); // Mount GPU status routes
 // Admin Tool Routes
 app.use('/admintools', adminToolsRoute);
 
-// AWS Analytics Routes
-app.use('/', awsAnalyticsRoute);
 
 // CPU Metrics Routes
 app.use('/metrics', cpuMetricsRoute);
