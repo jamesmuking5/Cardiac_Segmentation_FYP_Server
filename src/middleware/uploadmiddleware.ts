@@ -117,13 +117,13 @@ export const projectUploadFilter = multer({
 const objFileFilter = (req: Request, file: Express.Multer.File, cb: multer.FileFilterCallback) => {
   const ext = path.extname(file.originalname).toLowerCase();
   
-  // Allow OBJ files for reconstruction results
+  // Only allow OBJ files - JSON metadata comes as form field, not file
   if (ext === '.obj') {
     return cb(null, true);
   }
   
-  logger.warn(`${serviceLocation}: Rejected file with extension ${ext} in GPU callback. Only .obj files allowed.`);
-  return cb(new multer.MulterError("LIMIT_UNEXPECTED_FILE", `Invalid file extension: ${ext}. Only .obj files allowed for GPU callbacks.`));
+  logger.warn(`${serviceLocation}: Rejected file with extension ${ext} in GPU callback. Only .obj files allowed. JSON metadata should be sent as form field.`);
+  return cb(new multer.MulterError("LIMIT_UNEXPECTED_FILE", `Invalid file extension: ${ext}. Only .obj files allowed for GPU callbacks. JSON metadata should be sent as form field 'metadata'.`));
 };
 
 // Function to create the temporary mesh directory if it doesn't exist

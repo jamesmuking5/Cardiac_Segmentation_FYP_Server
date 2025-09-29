@@ -400,7 +400,14 @@ router.post("/gpu-reconstruction-callback", gpuObjUploadFilter, async (req: Requ
     "Raw Body values:",
     req.body,
     "Files received:",
-    uploadedFiles?.length || 0
+    uploadedFiles?.length || 0,
+    "File details:",
+    uploadedFiles?.map(f => ({
+      originalname: f.originalname,
+      mimetype: f.mimetype,
+      size: f.size,
+      fieldname: f.fieldname
+    })) || []
   );
 
   const gpuJobId = req.headers["x-job-id"] as string | undefined;
@@ -413,7 +420,7 @@ router.post("/gpu-reconstruction-callback", gpuObjUploadFilter, async (req: Requ
 
   logger.info(`${serviceLocation}: Processing reconstruction callback for job ${gpuJobId}`);
 
-  // Parse callback metadata from multipart form data with enhanced logging
+  // Parse callback metadata from multipart form data
   let callbackMetadata;
   try {
     // Log raw request details for debugging
@@ -421,60 +428,94 @@ router.post("/gpu-reconstruction-callback", gpuObjUploadFilter, async (req: Requ
       bodyKeys: Object.keys(req.body),
       bodyTypes: Object.keys(req.body).map(key => ({ [key]: typeof req.body[key] })),
       contentType: req.headers['content-type'],
-      hasFiles: !!(req.files && Array.isArray(req.files) && req.files.length > 0)
+      hasFiles: !!(req.files && Array.isArray(req.files) && req.files.length > 0),
+      fileCount: req.headers['x-file-count'] || 'not-specified'
     });
     
-    // Try different possible field names for the JSON metadata
-    let metadataString;
-    
-    if (req.body.metadata) {
-      metadataString = req.body.metadata;
-      logger.info(`${serviceLocation}: Found metadata field for job ${gpuJobId}`);
-    } else if (req.body.json) {
-      metadataString = req.body.json;
-      logger.info(`${serviceLocation}: Found json field for job ${gpuJobId}`);
-    } else if (req.body.data) {
-      metadataString = req.body.data;
-      logger.info(`${serviceLocation}: Found data field for job ${gpuJobId}`);
-    } else if (req.body.result) {
-      metadataString = req.body.result;
-      logger.info(`${serviceLocation}: Found result field for job ${gpuJobId}`);
-    } else {
-      // If no specific metadata field, use the entire body
-      logger.info(`${serviceLocation}: No metadata field found, using entire body for job ${gpuJobId}. Body keys: ${Object.keys(req.body).join(', ')}`);
-      callbackMetadata = req.body;
+    // GPU server sends JSON metadata in the 'metadata' form field
+    if (!req.body.metadata) {
+      throw new Error(`Missing 'metadata' form field. Available body keys: ${Object.keys(req.body).join(', ')}`);
     }
     
-    if (metadataString) {
-      if (typeof metadataString === 'string') {
-        try {
-          callbackMetadata = JSON.parse(metadataString);
-          logger.info(`${serviceLocation}: Successfully parsed JSON metadata from string for job ${gpuJobId}. Parsed keys: ${Object.keys(callbackMetadata).join(', ')}`);
-        } catch (parseError) {
-          logger.error(`${serviceLocation}: JSON parse error for job ${gpuJobId}:`, parseError);
-          logger.info(`${serviceLocation}: Raw metadata string that failed to parse: ${metadataString.substring(0, 500)}...`);
-          throw parseError;
+    logger.info(`${serviceLocation}: Found metadata form field for job ${gpuJobId}`);
+    
+    // Parse the JSON metadata
+    if (typeof req.body.metadata === 'string') {
+      try {
+        callbackMetadata = JSON.parse(req.body.metadata);
+        logger.info(`${serviceLocation}: Successfully parsed JSON metadata from form field for job ${gpuJobId}`);
+        logger.info(`${serviceLocation}: Metadata structure - UUID: ${callbackMetadata.uuid}, Status: ${callbackMetadata.status}`);
+        
+        // Log the result object structure if it exists
+        if (callbackMetadata.result && typeof callbackMetadata.result === 'object') {
+          const result = callbackMetadata.result;
+          logger.info(`${serviceLocation}: Result metadata for job ${gpuJobId}:`, {
+            mesh_filename: result.mesh_filename,
+            total_mesh_files: result.total_mesh_files,
+            total_mesh_size: result.total_mesh_size,
+            mesh_format: result.mesh_format,
+            status: result.status,
+            message: result.message,
+            is_4d_input: result.is_4d_input,
+            total_frames: result.total_frames,
+            processed_frames: result.processed_frames,
+            mesh_files_info_count: result.mesh_files_info?.length || 0
+          });
         }
-      } else {
-        callbackMetadata = metadataString;
-        logger.info(`${serviceLocation}: Using metadata object directly for job ${gpuJobId}. Object keys: ${Object.keys(callbackMetadata).join(', ')}`);
+      } catch (parseError) {
+        logger.error(`${serviceLocation}: JSON parse error for metadata field in job ${gpuJobId}:`, parseError);
+        logger.info(`${serviceLocation}: Raw metadata string (first 500 chars): ${req.body.metadata.substring(0, 500)}`);
+        throw parseError;
       }
+    } else if (typeof req.body.metadata === 'object') {
+      callbackMetadata = req.body.metadata;
+      logger.info(`${serviceLocation}: Using metadata object directly for job ${gpuJobId}`);
+    } else {
+      throw new Error(`Unexpected metadata type: ${typeof req.body.metadata}`);
     }
   } catch (e) {
-    logger.error(`${serviceLocation}: CRITICAL ERROR parsing Cloud GPU metadata for job ${gpuJobId}:`, {
+    logger.error(`${serviceLocation}: CRITICAL ERROR parsing GPU metadata for job ${gpuJobId}:`, {
       error: e,
       message: (e as Error).message,
       stack: (e as Error).stack,
       requestBodyKeys: Object.keys(req.body),
       requestHeaders: req.headers
     });
-    logger.info(`${serviceLocation}: Attempting to use raw body as fallback for job ${gpuJobId}`);
-    callbackMetadata = req.body;
+    return res.status(400).json({ 
+      message: "Invalid multipart form data structure",
+      error: (e as Error).message,
+      expected: "Form field 'metadata' containing JSON string"
+    });
   }
 
   try {
     // Log detailed request information for debugging 500 errors
     logger.info(`${serviceLocation}: Detailed callback request for job ${gpuJobId} - Metadata keys: ${Object.keys(callbackMetadata).join(', ')}, File names: ${uploadedFiles?.map(f => f.originalname).join(', ') || 'none'}`);
+    
+    // Process OBJ files (should all be .obj files due to filter)
+    const objFiles = uploadedFiles?.filter(f => f.originalname.toLowerCase().endsWith('.obj')) || [];
+    const nonObjFiles = uploadedFiles?.filter(f => !f.originalname.toLowerCase().endsWith('.obj')) || [];
+    
+    logger.info(`${serviceLocation}: File breakdown for job ${gpuJobId} - OBJ files: ${objFiles.length}, Non-OBJ files: ${nonObjFiles.length}`);
+    
+    if (objFiles.length > 0) {
+      logger.info(`${serviceLocation}: Received OBJ files for job ${gpuJobId}:`);
+      objFiles.forEach((file, index) => {
+        logger.info(`${serviceLocation}:   ${index + 1}. ${file.originalname} (${file.size} bytes, field: ${file.fieldname})`);
+      });
+    } else {
+      logger.warn(`${serviceLocation}: WARNING - No OBJ files received for job ${gpuJobId}. GPU server reported success but sent no mesh files.`);
+      
+      // Check if metadata indicates files should be present
+      const expectedFiles = callbackMetadata?.result?.total_mesh_files || callbackMetadata?.total_mesh_files;
+      if (expectedFiles > 0) {
+        logger.error(`${serviceLocation}: Metadata indicates ${expectedFiles} mesh files should be present, but none received for job ${gpuJobId}`);
+      }
+    }
+    
+    if (nonObjFiles.length > 0) {
+      logger.warn(`${serviceLocation}: Unexpected non-OBJ files received for job ${gpuJobId}: ${nonObjFiles.map(f => `${f.originalname} (${f.fieldname})`).join(', ')}`);
+    }
     
     // Process reconstruction using the service layer
     const result = await processReconstructionCallback(gpuJobId, uploadedFiles, callbackMetadata);
