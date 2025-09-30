@@ -109,8 +109,6 @@ router.get("/reconstruction-results/:projectId", isAuth, async (req: Request, re
                     reconstructionId: recon._id,
                     name: recon.name,
                     description: recon.description,
-                    createdAt: recon.createdAt,
-                    updatedAt: recon.updatedAt,
                     isSaved: recon.isSaved,
                     isAIGenerated: recon.isAIGenerated,
                     meshFormat: recon.meshFormat,
@@ -124,7 +122,9 @@ router.get("/reconstruction-results/:projectId", isAuth, async (req: Request, re
                         filename: recon.reconstructedMesh?.filename,
                         filesize: recon.filesize,
                         filehash: recon.filehash
-                    }
+                    },
+                    createdAt: recon.createdAt,
+                    updatedAt: recon.updatedAt,
                 };
             })
         );
