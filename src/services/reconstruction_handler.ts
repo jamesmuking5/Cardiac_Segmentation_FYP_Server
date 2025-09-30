@@ -52,16 +52,14 @@ export async function processReconstructionCallback(
   callbackMetadata: any
 ): Promise<ReconstructionCallbackResult> {
   try {
-    logger.info(`${serviceLocation}: Processing 4D reconstruction callback for job ${gpuJobId}`);
-    
-    // Safely handle uploaded files and extract GPU metadata
+    // Extract GPU metadata and validate status
     const safeUploadedFiles = uploadedFiles || [];
     const { status, result: gpuResult, error: gpuErrorDetail } = callbackMetadata;
     
-    logger.info(`${serviceLocation}: Received ${safeUploadedFiles.length} files with status: ${status}`);
+    logger.info(`${serviceLocation}: Processing reconstruction callback - Job: ${gpuJobId}, Files: ${safeUploadedFiles.length}, Status: ${status}`);
 
     if (status !== "completed" && status !== "success" && status !== "reconstruction_completed") {
-      logger.warn(`${serviceLocation}: GPU job ${gpuJobId} not successful - status: ${status}, error: ${gpuErrorDetail}`);
+      logger.warn(`${serviceLocation}: GPU job ${gpuJobId} failed with status: ${status}`);
       return {
         success: false,
         message: `GPU job completed with status: ${status}`,
@@ -69,9 +67,7 @@ export async function processReconstructionCallback(
       };
     }
 
-    logger.info(`${serviceLocation}: GPU job ${gpuJobId} completed successfully`);
-
-    // Validate GPU metadata contains required reconstruction information
+    // Validate GPU metadata and uploaded files
     const validationTarget = gpuResult || callbackMetadata;
     const metadataValidation = validateMetadata(validationTarget, gpuJobId);
     if (!metadataValidation.success) {
@@ -79,10 +75,9 @@ export async function processReconstructionCallback(
       return metadataValidation;
     }
 
-    // Validate uploaded OBJ mesh files
     const validationResult = validateObjFiles(safeUploadedFiles, gpuJobId);
     if (!validationResult.success) {
-      logger.error(`${serviceLocation}: File validation failed for job ${gpuJobId}: ${validationResult.message}`);
+      logger.error(`${serviceLocation}: File validation failed: ${validationResult.message}`);
       return validationResult;
     }
 
@@ -110,9 +105,9 @@ export async function processReconstructionCallback(
         s3KeyPrefix
       );
       
-      logger.info(`${serviceLocation}: Successfully uploaded reconstruction TAR to S3: ${reconstructionFileS3Url}`);
+      logger.info(`${serviceLocation}: Uploaded reconstruction TAR to S3`);
     } catch (error) {
-      logger.error(`${serviceLocation}: Failed to upload reconstruction TAR to S3:`, error);
+      logger.error(`${serviceLocation}: S3 upload failed: ${(error as Error).message}`);
       return {
         success: false,
         message: `S3 upload failed: ${(error as Error).message}`
@@ -147,16 +142,14 @@ export async function processReconstructionCallback(
         }),
         message: "4D reconstruction processed successfully"
       });
-      logger.info(`${serviceLocation}: Updated job ${gpuJobId} status to COMPLETED`);
     } catch (jobUpdateError) {
-      logger.warn(`${serviceLocation}: Failed to update job ${gpuJobId} status to COMPLETED:`, jobUpdateError);
-      // Don't fail the whole process for job update issues
+      logger.warn(`${serviceLocation}: Failed to update job status: ${(jobUpdateError as Error).message}`);
     }
 
     // Cleanup temporary files
     await cleanupTempFiles(processedFiles, tarResult.tarPath!);
 
-    logger.info(`${serviceLocation}: Successfully processed reconstruction for job ${gpuJobId}`);
+    logger.info(`${serviceLocation}: Reconstruction completed successfully - Job: ${gpuJobId}, ID: ${dbResult.reconstructionId}`);
     return {
       success: true,
       message: "4D reconstruction processed successfully",
@@ -185,30 +178,15 @@ function validateMetadata(
   gpuJobId: string
 ): ReconstructionCallbackResult {
   try {
-    logger.info(`${serviceLocation}: Validating metadata for job ${gpuJobId}. Available fields: ${Object.keys(metadata || {}).join(', ')}`);
-    
     // Check if metadata indicates mesh files should be present
     const totalMeshFiles = metadata?.total_mesh_files;
     const totalMeshSize = metadata?.total_mesh_size;
-    const meshFormat = metadata?.mesh_format;
     
-    if (typeof totalMeshFiles === 'number') {
-      if (totalMeshFiles === 0) {
-        logger.warn(`${serviceLocation}: Metadata indicates 0 mesh files generated for job ${gpuJobId}. This suggests the reconstruction process produced no mesh output.`);
-        return {
-          success: false,
-          message: "Reconstruction completed but generated no mesh files. This may indicate insufficient input data or processing failure."
-        };
-      } else if (totalMeshFiles > 0) {
-        logger.info(`${serviceLocation}: Metadata indicates ${totalMeshFiles} mesh files should be present for job ${gpuJobId}`);
-      }
-    }
-    
-    if (typeof totalMeshSize === 'number' && totalMeshSize === 0) {
-      logger.warn(`${serviceLocation}: Metadata indicates 0 total mesh size for job ${gpuJobId}. This suggests empty or invalid mesh generation.`);
+    if (typeof totalMeshFiles === 'number' && totalMeshFiles === 0) {
+      logger.warn(`${serviceLocation}: No mesh files generated for job ${gpuJobId}`);
       return {
         success: false,
-        message: "Reconstruction completed but generated empty mesh files (0 bytes total size)."
+        message: "Reconstruction completed but generated no mesh files. This may indicate insufficient input data or processing failure."
       };
     }
     
@@ -244,14 +222,7 @@ function validateObjFiles(
   // Ensure uploadedFiles is always an array to prevent undefined errors
   const safeFiles = uploadedFiles || [];
   
-  logger.info(`${serviceLocation}: [FILE VALIDATION] Starting validation for job ${gpuJobId} with ${safeFiles.length} total files`);
-  
-  // Log details of all received files
-  safeFiles.forEach((file, index) => {
-    logger.info(`${serviceLocation}: [FILE VALIDATION] File ${index + 1}: ${file.originalname} (${file.size} bytes, field: ${file.fieldname}, mime: ${file.mimetype})`);
-  });
-  
-  // Filter out non-OBJ files (like JSON metadata) for validation
+  // Filter files by type for validation
   const objFiles = safeFiles.filter(file => 
     file.originalname.toLowerCase().endsWith('.obj')
   );
@@ -265,19 +236,8 @@ function validateObjFiles(
     !file.originalname.toLowerCase().endsWith('.json')
   );
 
-  logger.info(`${serviceLocation}: [FILE VALIDATION] File type breakdown for job ${gpuJobId}:`);
-  logger.info(`${serviceLocation}: [FILE VALIDATION] - OBJ files: ${objFiles.length}`);
-  logger.info(`${serviceLocation}: [FILE VALIDATION] - JSON files: ${jsonFiles.length}`);
-  logger.info(`${serviceLocation}: [FILE VALIDATION] - Other files: ${otherFiles.length}`);
-
   if (objFiles.length === 0) {
-    logger.error(`${serviceLocation}: [FILE VALIDATION] ❌ No OBJ files received for job ${gpuJobId}.`);
-    if (jsonFiles.length > 0) {
-      logger.warn(`${serviceLocation}: [FILE VALIDATION] Found ${jsonFiles.length} JSON file(s) but no OBJ files. This suggests the GPU server sent metadata but failed to send mesh files.`);
-    }
-    if (safeFiles.length === 0) {
-      logger.error(`${serviceLocation}: [FILE VALIDATION] No files received at all. This indicates a complete callback failure or multer processing error.`);
-    }
+    logger.error(`${serviceLocation}: No OBJ files received for job ${gpuJobId}`);
     return {
       success: false,
       message: "No OBJ mesh files received in reconstruction callback. The reconstruction may have failed to generate mesh output or encountered an error during processing."
@@ -285,7 +245,7 @@ function validateObjFiles(
   }
   
   if (otherFiles.length > 0) {
-    logger.error(`${serviceLocation}: [FILE VALIDATION] ❌ Unexpected file formats for job ${gpuJobId}: ${otherFiles.map(f => f.originalname).join(', ')}`);
+    logger.error(`${serviceLocation}: Unexpected file formats for job ${gpuJobId}: ${otherFiles.map(f => f.originalname).join(', ')}`);
     return {
       success: false,
       message: `Unexpected file formats received. Expected .obj files and optional .json metadata, but received: ${otherFiles.map(f => f.originalname).join(', ')}`
@@ -293,12 +253,7 @@ function validateObjFiles(
   }
 
   const totalObjSize = objFiles.reduce((sum, f) => sum + f.size, 0);
-  logger.info(`${serviceLocation}: [FILE VALIDATION] ✅ Validation successful for job ${gpuJobId}:`);
-  logger.info(`${serviceLocation}: [FILE VALIDATION] - Valid OBJ files: ${objFiles.length}`);
-  logger.info(`${serviceLocation}: [FILE VALIDATION] - Total OBJ size: ${totalObjSize} bytes`);
-  objFiles.forEach((file, index) => {
-    logger.info(`${serviceLocation}: [FILE VALIDATION] - OBJ ${index + 1}: ${file.originalname} (${file.size} bytes, saved as: ${file.filename})`);
-  });
+  logger.info(`${serviceLocation}: Validated ${objFiles.length} OBJ files (${Math.round(totalObjSize / 1024 / 1024)} MB total)`);
   
   return { success: true, message: "Files validated successfully" };
 }
@@ -312,8 +267,6 @@ async function processObjFiles(
 ): Promise<ProcessedObjFile[]> {
   const processedFiles: ProcessedObjFile[] = [];
   
-  logger.info(`${serviceLocation}: Processing ${uploadedFiles.length} OBJ files for job ${gpuJobId}`);
-  
   for (const file of uploadedFiles) {
     // Extract frame index from filename if present (e.g., frame_001.obj, heart_frame_2.obj)
     const frameMatch = file.originalname.match(/frame[_-]?(\d+)/i);
@@ -326,11 +279,9 @@ async function processObjFiles(
       size: file.size,
       frameIndex: frameIndex,
     });
-    
-    logger.info(`${serviceLocation}: Processed OBJ file ${file.originalname} (${file.size} bytes)${frameIndex !== undefined ? ` for frame ${frameIndex}` : ' with no frame info'}`);
   }
   
-  logger.info(`${serviceLocation}: Successfully processed ${processedFiles.length} OBJ files for job ${gpuJobId}`);
+  logger.info(`${serviceLocation}: Processed ${processedFiles.length} OBJ files for job ${gpuJobId}`);
   return processedFiles;
 }
 
@@ -376,7 +327,6 @@ async function getProjectDetails(gpuJobId: string): Promise<{ userId: string; fi
     throw new Error(`Missing userId (${userId}) or filehash (${filehash}) for job ${gpuJobId}`);
   }
 
-  logger.info(`${serviceLocation}: Retrieved project details for job ${gpuJobId} (maskId: ${maskId ? 'found' : 'not found'})`);
   return { userId, filehash, projectId, maskId };
 }
 
@@ -394,7 +344,7 @@ async function createReconstructionTar(
     const tarFilename = `${userId}_${filehash}_mesh.tar`;
     const tarPath = path.join("src/temp_mesh/", tarFilename);
     
-    logger.info(`${serviceLocation}: Creating TAR bundle: ${tarFilename} with ${processedFiles.length} OBJ files`);
+    logger.info(`${serviceLocation}: Creating TAR bundle with ${processedFiles.length} OBJ files`);
     
     // Verify all OBJ files exist before creating TAR
     for (const file of processedFiles) {
@@ -406,8 +356,6 @@ async function createReconstructionTar(
     // Build TAR command with all OBJ files
     const objFileNames = processedFiles.map(f => path.basename(f.tempPath));
     const tarCommand = `tar -cf "${tarPath}" -C "src/temp_mesh/" ${objFileNames.map(name => `"${name}"`).join(' ')}`;
-    
-    logger.info(`${serviceLocation}: Executing TAR command: ${tarCommand}`);
     
     try {
       execSync(tarCommand, { stdio: 'pipe' });
@@ -428,7 +376,7 @@ async function createReconstructionTar(
       throw new Error('TAR file created but is empty (0 bytes)');
     }
     
-    logger.info(`${serviceLocation}: TAR bundle created successfully: ${tarFilename} (${tarSize} bytes, using project filehash: ${filehash.substring(0, 16)}...)`);
+    logger.info(`${serviceLocation}: TAR bundle created: ${Math.round(tarSize / 1024 / 1024)} MB`);
     
     return {
       success: true,
@@ -507,7 +455,7 @@ async function createReconstructionRecord(
     
     const reconstructionData: Partial<IProjectReconstruction> = {
       projectid: projectId,
-      maskId: maskId, // Add the segmentation mask ID used for reconstruction
+      maskId: maskId, 
       name: reconstructionName,
       description: reconstructionDescription,
       ed_frame: edFrameIndex + 1,
@@ -534,14 +482,14 @@ async function createReconstructionRecord(
     const createResult = await createProjectReconstruction(reconstructionData as IProjectReconstruction);
 
     if (createResult.success && createResult.projectreconstruction) {
-      logger.info(`${serviceLocation}: Successfully created reconstruction ${createResult.projectreconstruction._id} for project ${projectId}`);
+      logger.info(`${serviceLocation}: Created reconstruction record: ${createResult.projectreconstruction._id}`);
       return {
         success: true,
         message: "Reconstruction record created successfully",
         reconstructionId: createResult.projectreconstruction._id.toString()
       };
     } else {
-      logger.error(`${serviceLocation}: Failed to create reconstruction record for job ${gpuJobId}: ${createResult.message}`);
+      logger.error(`${serviceLocation}: Failed to create reconstruction record: ${createResult.message}`);
       return {
         success: false,
         message: `Failed to create reconstruction record: ${createResult.message}`
@@ -569,9 +517,8 @@ async function cleanupTempFiles(processedFiles: ProcessedObjFile[], tarPath: str
     for (const objFile of processedFiles) {
       try {
         await fs.unlink(objFile.tempPath);
-        logger.debug(`${serviceLocation}: Cleaned up temporary OBJ file: ${objFile.tempPath}`);
       } catch (fileError) {
-        logger.warn(`${serviceLocation}: Failed to delete temporary file ${objFile.tempPath}:`, fileError);
+        logger.warn(`${serviceLocation}: Failed to delete temp file: ${objFile.tempPath}`);
       }
     }
     
@@ -579,15 +526,11 @@ async function cleanupTempFiles(processedFiles: ProcessedObjFile[], tarPath: str
     if (tarPath) {
       try {
         await fs.unlink(tarPath);
-        logger.debug(`${serviceLocation}: Cleaned up TAR bundle: ${tarPath}`);
       } catch (tarError) {
-        logger.warn(`${serviceLocation}: Failed to delete TAR file ${tarPath}:`, tarError);
+        logger.warn(`${serviceLocation}: Failed to delete TAR file: ${tarPath}`);
       }
     }
-    
-    logger.info(`${serviceLocation}: Cleaned up ${processedFiles.length} OBJ files and TAR bundle`);
   } catch (cleanupError) {
-    logger.warn(`${serviceLocation}: Failed to cleanup temporary files:`, cleanupError);
-    // Don't fail the whole process due to cleanup issues
+    logger.warn(`${serviceLocation}: Cleanup failed: ${(cleanupError as Error).message}`);
   }
 }
