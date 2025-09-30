@@ -148,3 +148,294 @@ export async function getDiskReadMetrics(): Promise<MetricData> {
 export async function getDiskWriteMetrics(): Promise<MetricData> {
     return getEC2Metric('DiskWriteBytes', 'Sum');
 }
+
+// Generic function to fetch ECR metrics from CloudWatch
+async function getECRMetric(metricName: string, repositoryName: string, statistic: 'Average' | 'Sum' | 'Maximum' = 'Maximum'): Promise<MetricData> {
+    try {
+        // Validate repository name parameter
+        if (!repositoryName) {
+            throw new Error('Repository name is required for ECR metrics');
+        }
+        
+        // Calculate time range (last 7 days for ECR metrics as they update daily)
+        const endTime = new Date();
+        const startTime = new Date(endTime.getTime() - 7 * 24 * 60 * 60 * 1000); // 7 days ago
+        
+        // Prepare CloudWatch request
+        const params: GetMetricStatisticsCommandInput = {
+            Namespace: 'AWS/ECR',
+            MetricName: metricName,
+            Dimensions: [
+                {
+                    Name: 'RepositoryName',
+                    Value: repositoryName,
+                },
+            ],
+            StartTime: startTime,
+            EndTime: endTime,
+            Period: 86400, // 1 day in seconds
+            Statistics: [statistic],
+        };
+        
+        logger.info(`${serviceLocation}: Fetching ${metricName} metrics for ECR repository ${repositoryName} from ${startTime.toISOString()} to ${endTime.toISOString()}`);
+        
+        // Execute CloudWatch query
+        const client = getCloudWatchClient();
+        const command = new GetMetricStatisticsCommand(params);
+        const response = await client.send(command);
+        
+        // Process response data
+        const datapoints = response.Datapoints || [];
+        
+        // Sort datapoints by timestamp (ascending order)
+        datapoints.sort((a, b) => {
+            const timeA = a.Timestamp?.getTime() || 0;
+            const timeB = b.Timestamp?.getTime() || 0;
+            return timeA - timeB;
+        });
+        
+        // Extract timestamps and values based on statistic type
+        const timestamps = datapoints.map(point => point.Timestamp?.toISOString() || '');
+        const values = datapoints.map(point => {
+            let value: number;
+            switch (statistic) {
+                case 'Average':
+                    value = point.Average || 0;
+                    break;
+                case 'Sum':
+                    value = point.Sum || 0;
+                    break;
+                case 'Maximum':
+                default:
+                    value = point.Maximum || 0;
+                    break;
+            }
+            return Number(value.toFixed(0)); // ECR metrics are typically whole numbers
+        });
+        
+        logger.info(`${serviceLocation}: Retrieved ${datapoints.length} ${metricName} datapoints for ECR repository ${repositoryName}`);
+        
+        return {
+            timestamps,
+            values,
+        };
+        
+    } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+        logger.error(`${serviceLocation}: Failed to fetch ECR ${metricName} metrics for ${repositoryName}: ${errorMessage}`);
+        throw new Error(`Failed to retrieve ECR ${metricName} metrics for ${repositoryName}: ${errorMessage}`);
+    }
+}
+
+// Fetch ECR Repository Size metrics for backend repository
+export async function getEcrBackendRepositorySizeMetrics(): Promise<MetricData> {
+    const repositoryName = process.env.ECR_BACKEND_REPOSITORY_NAME || 'cardiac_segmentation_fyp_server_backend';
+    return getECRMetric('RepositorySizeBytes', repositoryName, 'Maximum');
+}
+
+// Fetch ECR Image Count metrics for backend repository  
+export async function getEcrBackendImageCountMetrics(): Promise<MetricData> {
+    const repositoryName = process.env.ECR_BACKEND_REPOSITORY_NAME || 'cardiac_segmentation_fyp_server_backend';
+    return getECRMetric('ImageCount', repositoryName, 'Maximum');
+}
+
+// Fetch ECR Repository Size metrics for frontend repository
+export async function getEcrFrontendRepositorySizeMetrics(): Promise<MetricData> {
+    const repositoryName = process.env.ECR_FRONTEND_REPOSITORY_NAME || 'cardiac_segmentation_fyp_server_frontend';
+    return getECRMetric('RepositorySizeBytes', repositoryName, 'Maximum');
+}
+
+// Fetch ECR Image Count metrics for frontend repository
+export async function getEcrFrontendImageCountMetrics(): Promise<MetricData> {
+    const repositoryName = process.env.ECR_FRONTEND_REPOSITORY_NAME || 'cardiac_segmentation_fyp_server_frontend';
+    return getECRMetric('ImageCount', repositoryName, 'Maximum');
+}
+
+// Legacy functions for backward compatibility (use backend repository)
+export async function getEcrRepositorySizeMetrics(): Promise<MetricData> {
+    return getEcrBackendRepositorySizeMetrics();
+}
+
+export async function getEcrImageCountMetrics(): Promise<MetricData> {
+    return getEcrBackendImageCountMetrics();
+}
+
+// ===== S3 CloudWatch Metrics =====
+
+// S3 Metrics interface for comprehensive bucket metrics
+export interface S3Metrics {
+    bucketName: string;
+    bucketSizeBytes: MetricData;
+    numberOfObjects: MetricData;
+    allRequests: MetricData;
+    getRequests: MetricData;
+    putRequests: MetricData;
+}
+
+// Generic function to fetch S3 metrics from CloudWatch
+async function getS3Metric(
+    metricName: string, 
+    bucketName: string, 
+    statistic: 'Average' | 'Sum' | 'Maximum' = 'Average',
+    storageType?: string
+): Promise<MetricData> {
+    try {
+        // Validate bucket name parameter
+        if (!bucketName) {
+            throw new Error('Bucket name is required for S3 metrics');
+        }
+        
+        // Calculate time range based on metric type
+        const endTime = new Date();
+        let startTime: Date;
+        let period: number;
+        
+        // S3 storage metrics (BucketSizeBytes, NumberOfObjects) are daily
+        // Request metrics are collected more frequently
+        if (metricName === 'BucketSizeBytes' || metricName === 'NumberOfObjects') {
+            startTime = new Date(endTime.getTime() - 30 * 24 * 60 * 60 * 1000); // 30 days ago
+            period = 86400; // 1 day in seconds
+        } else {
+            startTime = new Date(endTime.getTime() - 7 * 24 * 60 * 60 * 1000); // 7 days ago
+            period = 3600; // 1 hour in seconds
+        }
+        
+        // Prepare dimensions for S3 metrics
+        const dimensions = [
+            {
+                Name: 'BucketName',
+                Value: bucketName,
+            },
+        ];
+        
+        // Add StorageType dimension if provided (for BucketSizeBytes and NumberOfObjects)
+        if (storageType) {
+            dimensions.push({
+                Name: 'StorageType',
+                Value: storageType,
+            });
+        }
+        
+        // Prepare CloudWatch request
+        const params: GetMetricStatisticsCommandInput = {
+            Namespace: 'AWS/S3',
+            MetricName: metricName,
+            Dimensions: dimensions,
+            StartTime: startTime,
+            EndTime: endTime,
+            Period: period,
+            Statistics: [statistic],
+        };
+        
+        logger.info(`${serviceLocation}: Fetching ${metricName} metrics for S3 bucket ${bucketName} from ${startTime.toISOString()} to ${endTime.toISOString()}`);
+        
+        // Execute CloudWatch query
+        const client = getCloudWatchClient();
+        const command = new GetMetricStatisticsCommand(params);
+        const response = await client.send(command);
+        
+        // Process response data
+        const datapoints = response.Datapoints || [];
+        
+        // Sort datapoints by timestamp (ascending order)
+        datapoints.sort((a, b) => {
+            const timeA = a.Timestamp?.getTime() || 0;
+            const timeB = b.Timestamp?.getTime() || 0;
+            return timeA - timeB;
+        });
+        
+        // Extract timestamps and values based on statistic type
+        const timestamps = datapoints.map(point => point.Timestamp?.toISOString() || '');
+        const values = datapoints.map(point => {
+            let value: number;
+            switch (statistic) {
+                case 'Average':
+                    value = point.Average || 0;
+                    break;
+                case 'Sum':
+                    value = point.Sum || 0;
+                    break;
+                case 'Maximum':
+                default:
+                    value = point.Maximum || 0;
+                    break;
+            }
+            return Number(value.toFixed(2));
+        });
+        
+        logger.info(`${serviceLocation}: Retrieved ${datapoints.length} ${metricName} datapoints for S3 bucket ${bucketName}`);
+        
+        return {
+            timestamps,
+            values,
+        };
+        
+    } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+        logger.error(`${serviceLocation}: Failed to fetch S3 ${metricName} metrics for bucket ${bucketName}: ${errorMessage}`);
+        throw new Error(`Failed to retrieve S3 ${metricName} metrics for bucket ${bucketName}: ${errorMessage}`);
+    }
+}
+
+// Fetch S3 Bucket Size metrics
+export async function getS3BucketSizeMetrics(bucketName: string): Promise<MetricData> {
+    return getS3Metric('BucketSizeBytes', bucketName, 'Average', 'StandardStorage');
+}
+
+// Fetch S3 Number of Objects metrics
+export async function getS3NumberOfObjectsMetrics(bucketName: string): Promise<MetricData> {
+    return getS3Metric('NumberOfObjects', bucketName, 'Average', 'AllStorageTypes');
+}
+
+// Fetch S3 All Requests metrics
+export async function getS3AllRequestsMetrics(bucketName: string): Promise<MetricData> {
+    return getS3Metric('AllRequests', bucketName, 'Sum');
+}
+
+// Fetch S3 Get Requests metrics
+export async function getS3GetRequestsMetrics(bucketName: string): Promise<MetricData> {
+    return getS3Metric('GetRequests', bucketName, 'Sum');
+}
+
+// Fetch S3 Put Requests metrics
+export async function getS3PutRequestsMetrics(bucketName: string): Promise<MetricData> {
+    return getS3Metric('PutRequests', bucketName, 'Sum');
+}
+
+// Comprehensive function to fetch all S3 metrics for a bucket
+export async function getAllS3Metrics(bucketName: string): Promise<S3Metrics> {
+    try {
+        logger.info(`${serviceLocation}: Fetching all S3 metrics for bucket ${bucketName}`);
+        
+        // Fetch all metrics in parallel for better performance
+        const [
+            bucketSizeBytes,
+            numberOfObjects,
+            allRequests,
+            getRequests,
+            putRequests
+        ] = await Promise.all([
+            getS3BucketSizeMetrics(bucketName),
+            getS3NumberOfObjectsMetrics(bucketName),
+            getS3AllRequestsMetrics(bucketName),
+            getS3GetRequestsMetrics(bucketName),
+            getS3PutRequestsMetrics(bucketName)
+        ]);
+        
+        logger.info(`${serviceLocation}: Successfully retrieved all S3 metrics for bucket ${bucketName}`);
+        
+        return {
+            bucketName,
+            bucketSizeBytes,
+            numberOfObjects,
+            allRequests,
+            getRequests,
+            putRequests
+        };
+        
+    } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+        logger.error(`${serviceLocation}: Failed to fetch all S3 metrics for bucket ${bucketName}: ${errorMessage}`);
+        throw new Error(`Failed to retrieve all S3 metrics for bucket ${bucketName}: ${errorMessage}`);
+    }
+}
