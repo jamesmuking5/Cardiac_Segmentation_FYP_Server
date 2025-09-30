@@ -38,7 +38,13 @@ export interface ReconstructionCallbackResult {
 }
 
 /**
- * Main function to process 4D reconstruction callback from GPU server
+ * Processes 4D reconstruction callback from GPU server
+ * Handles OBJ file validation, TAR creation, S3 upload, and database record creation
+ * 
+ * @param gpuJobId - GPU job identifier for tracking
+ * @param uploadedFiles - Array of OBJ mesh files from GPU processing
+ * @param callbackMetadata - GPU result metadata including status and processing info
+ * @returns Promise with reconstruction result including success status and reconstruction ID
  */
 export async function processReconstructionCallback(
   gpuJobId: string,
@@ -48,15 +54,11 @@ export async function processReconstructionCallback(
   try {
     logger.info(`${serviceLocation}: Processing 4D reconstruction callback for job ${gpuJobId}`);
     
-    // Safely handle uploadedFiles to prevent undefined errors
+    // Safely handle uploaded files and extract GPU metadata
     const safeUploadedFiles = uploadedFiles || [];
-    logger.info(`${serviceLocation}: Received ${safeUploadedFiles.length} files for processing`);
-
-    // Extract GPU result data from the metadata structure
     const { status, result: gpuResult, error: gpuErrorDetail } = callbackMetadata;
     
-    // Log the metadata structure for debugging
-    logger.info(`${serviceLocation}: Processing metadata for job ${gpuJobId} - Status: ${status}, Has result: ${!!gpuResult}, Has error: ${!!gpuErrorDetail}`);
+    logger.info(`${serviceLocation}: Received ${safeUploadedFiles.length} files with status: ${status}`);
 
     if (status !== "completed" && status !== "success" && status !== "reconstruction_completed") {
       logger.warn(`${serviceLocation}: GPU job ${gpuJobId} not successful - status: ${status}, error: ${gpuErrorDetail}`);
@@ -67,32 +69,28 @@ export async function processReconstructionCallback(
       };
     }
 
-    logger.info(`${serviceLocation}: GPU job ${gpuJobId} completed successfully with status: ${status}`);
+    logger.info(`${serviceLocation}: GPU job ${gpuJobId} completed successfully`);
 
-    // Validate GPU metadata for expected mesh files
-    // Use the result object for validation since that contains the actual reconstruction metadata
+    // Validate GPU metadata contains required reconstruction information
     const validationTarget = gpuResult || callbackMetadata;
     const metadataValidation = validateMetadata(validationTarget, gpuJobId);
     if (!metadataValidation.success) {
-      logger.error(`${serviceLocation}: Metadata validation failed for job ${gpuJobId}: ${metadataValidation.message}`);
+      logger.error(`${serviceLocation}: Metadata validation failed: ${metadataValidation.message}`);
       return metadataValidation;
     }
 
-    // Validate uploaded OBJ files using safe array
+    // Validate uploaded OBJ mesh files
     const validationResult = validateObjFiles(safeUploadedFiles, gpuJobId);
     if (!validationResult.success) {
       logger.error(`${serviceLocation}: File validation failed for job ${gpuJobId}: ${validationResult.message}`);
       return validationResult;
     }
 
-    // Process the OBJ files (already filtered by webhook route)
-    logger.info(`${serviceLocation}: Processing ${safeUploadedFiles.length} OBJ files (pre-filtered by webhook)`);
+    // Process OBJ mesh files and extract project information
     const processedFiles = await processObjFiles(safeUploadedFiles, gpuJobId);
-    
-    // Get project details for userId and filehash
     const { userId, filehash, projectId, maskId } = await getProjectDetails(gpuJobId);
     
-    // Create TAR bundle
+    // Create TAR archive containing all mesh frames
     const tarResult = await createReconstructionTar(processedFiles, userId, filehash, gpuJobId);
     if (!tarResult.success) {
       return tarResult;
@@ -337,7 +335,11 @@ async function processObjFiles(
 }
 
 /**
- * Get project details (userId, filehash, projectId, maskId) from job
+ * Extracts project details and mask ID from job record
+ * Retrieves userId, filehash, projectId from database and extracts maskId from job result
+ * 
+ * @param gpuJobId - GPU job identifier
+ * @returns Promise with project details including extracted mask ID
  */
 async function getProjectDetails(gpuJobId: string): Promise<{ userId: string; filehash: string; projectId: string; maskId?: string }> {
   // Get job details first
@@ -350,13 +352,12 @@ async function getProjectDetails(gpuJobId: string): Promise<{ userId: string; fi
   
   const projectId = jobResult.job.projectid;
   
-  // Extract mask ID from job result if it exists
+  // Extract mask ID from job result if present
   let maskId: string | undefined;
   if (jobResult.job.result) {
     const maskIdMatch = jobResult.job.result.match(/Mask ID: ([a-fA-F0-9]{24})/);
     if (maskIdMatch) {
       maskId = maskIdMatch[1];
-      logger.info(`${serviceLocation}: Extracted mask ID ${maskId} from job result for job ${gpuJobId}`);
     }
   }
   
@@ -375,7 +376,7 @@ async function getProjectDetails(gpuJobId: string): Promise<{ userId: string; fi
     throw new Error(`Missing userId (${userId}) or filehash (${filehash}) for job ${gpuJobId}`);
   }
 
-  logger.info(`${serviceLocation}: Retrieved project details for job ${gpuJobId} - userId: ${userId}, filehash: ${filehash.substring(0, 10)}..., maskId: ${maskId || 'not found'}`);
+  logger.info(`${serviceLocation}: Retrieved project details for job ${gpuJobId} (maskId: ${maskId ? 'found' : 'not found'})`);
   return { userId, filehash, projectId, maskId };
 }
 
@@ -452,7 +453,19 @@ async function createReconstructionTar(
 }
 
 /**
- * Create reconstruction database record
+ * Creates database record for completed 4D reconstruction
+ * Extracts metadata from GPU result and creates comprehensive reconstruction record
+ * 
+ * @param gpuJobId - GPU job identifier for tracking
+ * @param projectId - Database project ID
+ * @param userId - User who initiated the reconstruction
+ * @param filehash - Original file hash for consistency
+ * @param gpuResult - GPU processing result metadata
+ * @param processedFiles - Array of processed mesh files
+ * @param tarSize - Size of TAR archive in bytes
+ * @param reconstructionFileS3Url - S3 URL of uploaded TAR file
+ * @param maskId - ID of segmentation mask used for reconstruction
+ * @returns Promise with creation result and reconstruction ID
  */
 async function createReconstructionRecord(
   gpuJobId: string,
@@ -466,33 +479,24 @@ async function createReconstructionRecord(
   maskId?: string
 ): Promise<{ success: boolean; message: string; reconstructionId?: string }> {
   try {
-    // Extract and validate GPU metadata with bounds checking
-    logger.info(`${serviceLocation}: Raw GPU result for job ${gpuJobId}:`, {
-      keys: Object.keys(gpuResult),
-      ed_frame_index: gpuResult.ed_frame_index,
-      total_frames: gpuResult.total_frames,
-      processedFilesCount: processedFiles.length
-    });
-    
+    // Extract and validate GPU metadata
     const rawEdFrameIndex = gpuResult.ed_frame_index !== undefined ? gpuResult.ed_frame_index : 0;
     const totalFrames = gpuResult.total_frames || processedFiles.length || 1;
     
-    // Validate frame index bounds to prevent array index errors
+    // Validate and correct frame index bounds
     let edFrameIndex = rawEdFrameIndex;
     if (typeof rawEdFrameIndex !== 'number' || rawEdFrameIndex < 0) {
-      logger.warn(`${serviceLocation}: Invalid ed_frame_index ${rawEdFrameIndex} for job ${gpuJobId}. Using default 0.`);
+      logger.warn(`${serviceLocation}: Invalid ED frame index, using default 0`);
       edFrameIndex = 0;
     } else if (processedFiles.length > 0 && rawEdFrameIndex >= processedFiles.length) {
-      logger.warn(`${serviceLocation}: ed_frame_index ${rawEdFrameIndex} exceeds processed files count ${processedFiles.length} for job ${gpuJobId}. Using last valid frame ${processedFiles.length - 1}.`);
+      logger.warn(`${serviceLocation}: ED frame index exceeds available frames, using last frame`);
       edFrameIndex = Math.max(0, processedFiles.length - 1);
     } else if (rawEdFrameIndex >= totalFrames) {
-      logger.warn(`${serviceLocation}: ed_frame_index ${rawEdFrameIndex} exceeds total_frames ${totalFrames} for job ${gpuJobId}. Using last valid frame ${totalFrames - 1}.`);
+      logger.warn(`${serviceLocation}: ED frame index exceeds total frames, using last frame`);
       edFrameIndex = Math.max(0, totalFrames - 1);
     }
     
-    logger.info(`${serviceLocation}: Validated frame index for job ${gpuJobId} - ED frame: ${edFrameIndex} (was ${rawEdFrameIndex}), Total frames: ${totalFrames}, Processed files: ${processedFiles.length}`);
-    
-    // Generate reconstruction details
+    // Generate reconstruction metadata
     const reconstructionName = `4D Reconstruction - Job ${gpuJobId.substring(0, 8)}`;
     const reconstructionDescription = `4D cardiac reconstruction: ${processedFiles.length} frames, ED frame ${edFrameIndex + 1}`;
     const finalFilename = `${userId}_${filehash}_mesh.tar`;
@@ -553,7 +557,11 @@ async function createReconstructionRecord(
 }
 
 /**
- * Cleanup temporary files
+ * Cleans up temporary OBJ files and TAR archive after processing
+ * Removes individual mesh files and TAR bundle from temp directories
+ * 
+ * @param processedFiles - Array of processed OBJ files to clean up
+ * @param tarPath - Path to TAR archive file to remove
  */
 async function cleanupTempFiles(processedFiles: ProcessedObjFile[], tarPath: string): Promise<void> {
   try {
