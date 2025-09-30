@@ -36,9 +36,7 @@ export const generateAISegmentationForReconstruction = async (
     const segmentationsJsonPath = path.join(baseTempDir, 'segmentations.json');
     const localOutputSegmentationNiftiPath = path.join(baseTempDir, `reconstruction_${tempExportId}.nii.gz`);
 
-    logger.info(`${serviceLocation}: Starting AI segmentation NIfTI generation for reconstruction - Project: ${projectId}, Temp ID: ${tempExportId}`);
-
-    try {
+        logger.info(`${serviceLocation}: Generating AI segmentation NIfTI for project ${projectId}`);    try {
         const s3BucketName = process.env.AWS_BUCKET_NAME;
         if (!s3BucketName) {
             return { success: false, message: "AWS S3 bucket configuration is missing." };
@@ -72,26 +70,25 @@ export const generateAISegmentationForReconstruction = async (
         // 3. Select ONLY AI-generated masks (MedSAM output) for reconstruction
         let segmentationsToProcess: IProjectSegmentationMask[] = [];
 
+        // Select only AI-generated masks (MedSAM output) for reconstruction consistency
         const aiMask = hasMasksResult.projectsegmentationmasks!.find(mask => mask.isMedSAMOutput === true);
         if (aiMask) {
-            logger.info(`${serviceLocation}: Found AI segmentation mask for reconstruction of project ${projectId}. Using MedSAM output.`);
             segmentationsToProcess = [aiMask];
+            logger.info(`${serviceLocation}: Using AI-generated mask for reconstruction`);
         } else {
-            logger.error(`${serviceLocation}: No AI-generated segmentation mask found for reconstruction of project ${projectId}. Reconstruction requires MedSAM output.`);
+            logger.error(`${serviceLocation}: No AI-generated mask found for project ${projectId}`);
             return { success: false, message: "No AI-generated segmentation mask available for reconstruction. Please run AI segmentation first." };
         }
 
+        // Write segmentation data for Python processing
         await fs.writeJson(segmentationsJsonPath, segmentationsToProcess, { spaces: 2 });
-        logger.info(`${serviceLocation}: Created segmentations.json for reconstruction of project ${projectId}`);
 
         // 4. Generate NIfTI using Python script
         let pythonScriptPath: string;
         let pythonCommand: string;
 
         if (project.affineMatrix && Array.isArray(project.affineMatrix) && project.affineMatrix.length > 0) {
-            // Use stored affine matrix approach (no download needed)
-            logger.info(`${serviceLocation}: Using stored affine matrix for reconstruction of project ${projectId}`);
-
+            // Use stored affine matrix approach (faster, no S3 download required)
             pythonScriptPath = path.join(__dirname, '..', '..', 'src', 'python', 'create_nifti_with_stored_affine.py');
 
             const affineMatrixFile = path.join(baseTempDir, 'affine_matrix.json');
@@ -162,12 +159,10 @@ export const generateAISegmentationForReconstruction = async (
             return { success: false, message: "Failed to extract S3 key after upload." };
         }
 
-        logger.info(`${serviceLocation}: Successfully uploaded reconstruction NIfTI to S3 for project ${projectId}. S3 Key: ${s3Key}`);
+        logger.info(`${serviceLocation}: Successfully uploaded reconstruction NIfTI to S3`);
 
-        // 7. Generate presigned URL (optional, for debugging)
-        logger.info(`${serviceLocation}: Generating presigned URL for S3 key: ${s3Key}`);
+        // Generate presigned URL for GPU server access
         const presignedUrl = await generatePresignedGetUrl(s3BucketName, s3Key, 3600);
-        logger.info(`${serviceLocation}: Generated presigned URL for reconstruction: ${presignedUrl}`);
         
         return {
             success: true,
@@ -181,9 +176,8 @@ export const generateAISegmentationForReconstruction = async (
         logger.error(`${serviceLocation}: Error generating AI segmentation NIfTI for reconstruction of project ${projectId}:`, error);
         return { success: false, message: `Error generating AI segmentation NIfTI for reconstruction: ${error.message}` };
     } finally {
-        // Cleanup temporary directory
+        // Clean up temporary files
         if (await fs.pathExists(baseTempDir)) {
-            logger.info(`${serviceLocation}: Cleaning up temporary directory for reconstruction of project ${projectId}`);
             await fs.remove(baseTempDir);
         }
     }

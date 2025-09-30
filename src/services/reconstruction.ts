@@ -14,6 +14,14 @@ import { generateAISegmentationForReconstruction } from "./segmentation_export";
 
 const serviceLocation = 'Reconstruction';
 
+/**
+ * Sends 4D reconstruction request to Cloud GPU server
+ * Communicates with GPU inference server to start cardiac reconstruction processing
+ * 
+ * @param reconstructionData - Reconstruction parameters and data URLs
+ * @param gpuAuthToken - JWT token for GPU server authentication
+ * @returns Promise with success status and GPU job ID
+ */
 const sendReconstructionRequestToCloudGpu = async (
     reconstructionData: {
         url: string;  
@@ -28,17 +36,14 @@ const sendReconstructionRequestToCloudGpu = async (
     },
     gpuAuthToken: string
 ): Promise<{ success: boolean; jobId?: string; error?: string }> => {
-    // Get fresh GPU server configuration from database
+    // Get GPU server configuration from database
     const cloudGpuBaseUrl = await getFreshGPUServerAddress();
     if (!cloudGpuBaseUrl) {
-        logger.info(`${serviceLocation}: Currently configured Cloud GPU URL: ${cloudGpuBaseUrl}`);
-        logger.error(`${serviceLocation}: GPU server configuration is not available from database.`);
+        logger.error(`${serviceLocation}: GPU server configuration not available`);
         return { success: false, error: "Cloud GPU URL not configured." };
     }
 
-    // For debugging: Log the token being used. Mask or remove in production.
-    logger.debug(`${serviceLocation}: Attempting to send 4D reconstruction request. Token (first 10 chars): ${gpuAuthToken ? gpuAuthToken.substring(0, 10) + "..." : "undefined"}`);
-
+    // Validate GPU authentication token
     if (!gpuAuthToken) {
         logger.error(`${serviceLocation}: gpuAuthToken is missing. Cannot send 4D reconstruction request to Cloud GPU.`);
         return { success: false, error: "Authentication token for Cloud GPU is missing." };
@@ -56,10 +61,10 @@ const sendReconstructionRequestToCloudGpu = async (
             timeout: 120000, // 2 minute timeout for request submission
         });
 
-        // Log the full response data for debugging
-        logger.info(`${serviceLocation}: Successfully received response from Cloud GPU for UUID ${reconstructionData.uuid}. Status: ${response.status}, Full Response Data:`, response.data);
+        // Extract job ID from GPU response
+        logger.info(`${serviceLocation}: Received response from GPU for UUID ${reconstructionData.uuid}, Status: ${response.status}`);
 
-        // Attempt to extract a job ID from common fields
+        // Attempt to extract a job ID from common response fields
         interface ReconstructionResponse {
             job_id?: string;
             jobId?: string;
@@ -72,11 +77,11 @@ const sendReconstructionRequestToCloudGpu = async (
 
         if (response.status === 202 && response.data) {
             if (returnedJobId) {
-                logger.info(`${serviceLocation}: GPU Job ID identified: ${returnedJobId} for local UUID ${reconstructionData.uuid}.`);
+                logger.info(`${serviceLocation}: GPU accepted reconstruction job: ${returnedJobId}`);
                 return { success: true, jobId: returnedJobId };
             } else {
-                logger.warn(`${serviceLocation}: GPU request successful (Status ${response.status}) for UUID ${reconstructionData.uuid}, but no clear Job ID found in response. Response data logged above.`);
-                return { success: true, jobId: reconstructionData.uuid }; // Fallback to internal UUID
+                logger.warn(`${serviceLocation}: GPU accepted request but no Job ID returned, using UUID fallback`);
+                return { success: true, jobId: reconstructionData.uuid };
             }
         } else {
             const gpuError = response.data?.error || `Cloud GPU responded with status ${response.status}.`;
@@ -93,9 +98,22 @@ const sendReconstructionRequestToCloudGpu = async (
     }
 };
 
+/**
+ * Initiates 4D cardiac reconstruction process for a project
+ * Validates AI segmentation masks, generates NIfTI data, and submits to GPU server
+ * 
+ * @param projectId - Database ID of the project to reconstruct
+ * @param user - User initiating the reconstruction (for permissions and tracking)
+ * @param reconstructionName - Optional name for the reconstruction job
+ * @param reconstructionDescription - Optional description for the reconstruction
+ * @param parameters - Reconstruction parameters (iterations, resolution, etc.)
+ * @param ed_frame - End-diastolic frame number (1-based)
+ * @returns Promise with success status, message, and job UUID
+ */
 export const startReconstruction = async (projectId: string, user?: IUserSafe, reconstructionName?: string, reconstructionDescription?: string, parameters?: any, ed_frame?: number): Promise<{ success: boolean; message: string; uuid?: string }> => {
-    logger.info(`${serviceLocation}: Received start 4D reconstruction request for project ${projectId} with ed_frame ${ed_frame} by user ${user?.username} with id ${user?._id}`);
+    logger.info(`${serviceLocation}: Starting 4D reconstruction for project ${projectId} by user ${user?.username}`);
     
+    // Get current GPU authentication token
     const gpuAuthToken = getCurrentToken();
     if (!gpuAuthToken) {
         logger.error(`${serviceLocation}: GPU authentication token is missing for project ${projectId}. Cannot start 4D reconstruction.`);
@@ -164,13 +182,6 @@ export const startReconstruction = async (projectId: string, user?: IUserSafe, r
                 return { success: false, message: `End-diastole frame ${ed_frame} exceeds project frame count of ${projectData.dimensions.frames}.` };
             }
             
-            // Additional safety check for GPU server bug workaround
-            if (projectData.dimensions?.frames && ed_frame <= projectData.dimensions.frames) {
-                logger.info(`${serviceLocation}: Frame validation passed - ed_frame ${ed_frame} is valid for project with ${projectData.dimensions.frames} total frames`);
-            }
-        } else {
-            // Log default frame usage
-            logger.info(`${serviceLocation}: Using default ed_frame = 1 for project ${projectId} with ${projectData.dimensions?.frames || 'unknown'} total frames`);
         }
 
         // Generate segmentation NIfTI file directly (no HTTP call needed)
@@ -209,12 +220,8 @@ export const startReconstruction = async (projectId: string, user?: IUserSafe, r
             debug_dir: parameters?.debug_dir || "/tmp/4d_reconstruction_debug"
         };
 
-        // Enhanced logging to debug GPU server frame indexing issue
-        logger.info(`${serviceLocation}: Prepared reconstruction data for project ${projectId}, UUID ${jobUuid}`);
-        logger.info(`${serviceLocation}: Frame parameters - ed_frame input: ${ed_frame || 1}, ed_frame_index sent to GPU: ${reconstructionPayload.ed_frame_index}, project total frames: ${projectData.dimensions?.frames || 'unknown'}`);
-        logger.info(`${serviceLocation}: Project dimensions - width: ${projectData.dimensions?.width}, height: ${projectData.dimensions?.height}, slices: ${projectData.dimensions?.slices}, frames: ${projectData.dimensions?.frames}`);
-        logger.info(`${serviceLocation}: 4D processing enabled: ${reconstructionPayload.process_all_frames}, using segmentation NIfTI file`);
-        logger.info(`${serviceLocation}: GPU payload: ${JSON.stringify(reconstructionPayload, null, 2)}`);
+        // Log reconstruction parameters for monitoring
+        logger.info(`${serviceLocation}: Submitting 4D reconstruction for project ${projectId} (UUID: ${jobUuid}, ED frame: ${ed_frame || 1})`);
 
         // Send reconstruction request to GPU server BEFORE creating job record
         const reconstructionResult = await sendReconstructionRequestToCloudGpu(reconstructionPayload, gpuAuthToken);

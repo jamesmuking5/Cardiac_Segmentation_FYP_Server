@@ -113,54 +113,52 @@ export const projectUploadFilter = multer({
   { name: 'description', maxCount: 1 }  // Project description field
 ]);
 
-// OBJ file filter for GPU server webhook callbacks with detailed debugging
+/**
+ * File filter for GPU server reconstruction callback files
+ * Accepts OBJ mesh files and JSON metadata from GPU processing
+ */
 const objFileFilter = (req: Request, file: Express.Multer.File, cb: multer.FileFilterCallback) => {
   const ext = path.extname(file.originalname).toLowerCase();
   
-  // Log every file that goes through the filter for debugging
-  logger.info(`${serviceLocation}: [FILE FILTER] Processing file: ${file.originalname}, Field: ${file.fieldname}, Extension: ${ext}, MIME: ${file.mimetype}`);
-  
-  // Allow OBJ files and JSON metadata files
-  if (ext === '.obj') {
-    logger.info(`${serviceLocation}: [FILE FILTER] ✅ ACCEPTING OBJ file: ${file.originalname} (field: ${file.fieldname})`);
-    return cb(null, true);
-  } else if (ext === '.json') {
-    logger.info(`${serviceLocation}: [FILE FILTER] ✅ ACCEPTING JSON metadata file: ${file.originalname} (field: ${file.fieldname})`);
+  // Accept OBJ mesh files and JSON metadata from GPU server
+  if (ext === '.obj' || ext === '.json') {
     return cb(null, true);
   }
   
-  // Reject other file types with detailed logging
-  logger.warn(`${serviceLocation}: [FILE FILTER] ❌ REJECTING file with extension ${ext}: ${file.originalname} (field: ${file.fieldname}). Only .obj and .json files allowed.`);
+  // Reject unsupported file types
+  logger.warn(`${serviceLocation}: Rejected file with extension ${ext}: ${file.originalname}`);
   const error = new multer.MulterError("LIMIT_UNEXPECTED_FILE", `Invalid file extension: ${ext}. Only .obj and .json files allowed for GPU callbacks.`);
   return cb(error);
 };
 
-// Function to create the temporary mesh directory if it doesn't exist
+/**
+ * Ensures temporary mesh directory exists for GPU callback file processing
+ */
 const ensureTempMeshDirExists = (): void => {
   const tempMeshDir = "src/temp_mesh/";
   if (!fs.existsSync(tempMeshDir)) {
     fs.mkdirSync(tempMeshDir, { recursive: true });
-    logger.info(`${serviceLocation}: Temporary mesh directory created at: ${tempMeshDir}`);
   }
 };
 
-// Call the function when this module is loaded
+// Initialize mesh directory
 ensureTempMeshDirExists();
 
-// Multer middleware for GPU server multipart OBJ file callbacks with enhanced configuration
+/**
+ * Multer middleware for GPU server reconstruction callback files
+ * Handles OBJ mesh files and JSON metadata with optimized storage configuration
+ */
 export const gpuObjUploadFilter = multer({
   storage: multer.diskStorage({
     destination: (req, file, cb) => {
-      // Use dedicated temporary mesh directory for GPU callback files
-      logger.info(`${serviceLocation}: [STORAGE] Setting destination for file: ${file.originalname} -> src/temp_mesh/`);
+      // Store GPU callback files in dedicated mesh directory
       cb(null, "src/temp_mesh/");
     },
     filename: (req, file, cb) => {
-      // Preserve original filename from GPU server with timestamp to avoid conflicts
+      // Generate unique filename with timestamp to prevent conflicts
       const timestamp = Date.now();
       const sanitizedBasename = path.basename(file.originalname).replace(/[^a-zA-Z0-9._-]/g, '_');
       const sanitizedFilename = `gpu_callback_${timestamp}_${sanitizedBasename}`;
-      logger.info(`${serviceLocation}: [STORAGE] Generated filename for ${file.originalname}: ${sanitizedFilename}`);
       cb(null, sanitizedFilename);
     },
   }),
