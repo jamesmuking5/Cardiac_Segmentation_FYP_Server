@@ -138,6 +138,19 @@ export const startReconstruction = async (projectId: string, user?: IUserSafe, r
 
         logger.info(`${serviceLocation}: Found ${hasMasksResult.projectsegmentationmasks.length} segmentation mask(s) for project ${projectId}. Proceeding with 4D reconstruction.`);
 
+        // Filter for AI-generated masks only (isMedSAMOutput: true) - reconstruction requires AI masks, not manual ones
+        const aiMasks = hasMasksResult.projectsegmentationmasks.filter(mask => mask.isMedSAMOutput === true);
+        
+        if (aiMasks.length === 0) {
+            logger.warn(`${serviceLocation}: No AI-generated segmentation masks found for project ${projectId}. 4D reconstruction requires AI masks (MedSAM output), not manual segmentation.`);
+            return { success: false, message: "4D reconstruction requires AI-generated segmentation masks. Please run AI segmentation before starting reconstruction." };
+        }
+
+        // Extract mask ID from the first AI-generated segmentation mask
+        const firstAIMask = aiMasks[0];
+        const maskId = firstAIMask._id?.toString();
+        logger.info(`${serviceLocation}: Using AI-generated segmentation mask ID ${maskId} for reconstruction of project ${projectId} (${aiMasks.length} AI mask(s) available)`);
+
         // Validate ed_frame parameter if provided
         if (ed_frame !== undefined) {
             if (!Number.isInteger(ed_frame) || ed_frame < 1) {
@@ -215,7 +228,7 @@ export const startReconstruction = async (projectId: string, user?: IUserSafe, r
                 projectid: projectId,
                 uuid: jobUuid,
                 status: JobStatus.PENDING,  // Set to PENDING since GPU already accepted
-                result: `GPU Job ID: ${reconstructionResult.jobId}`,
+                result: `GPU Job ID: ${reconstructionResult.jobId}${maskId ? `, Mask ID: ${maskId}` : ''}`,
                 message: "4D reconstruction submitted to GPU server",
                 segmentationName: reconstructionName || `4D Reconstruction - ${new Date().toISOString()}`,
                 segmentationDescription: reconstructionDescription || "4D cardiac reconstruction using SDF model"

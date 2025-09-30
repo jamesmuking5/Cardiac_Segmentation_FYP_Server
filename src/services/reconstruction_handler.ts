@@ -90,7 +90,7 @@ export async function processReconstructionCallback(
     const processedFiles = await processObjFiles(safeUploadedFiles, gpuJobId);
     
     // Get project details for userId and filehash
-    const { userId, filehash, projectId } = await getProjectDetails(gpuJobId);
+    const { userId, filehash, projectId, maskId } = await getProjectDetails(gpuJobId);
     
     // Create TAR bundle
     const tarResult = await createReconstructionTar(processedFiles, userId, filehash, gpuJobId);
@@ -130,7 +130,8 @@ export async function processReconstructionCallback(
       gpuResult,
       processedFiles,
       tarResult.tarSize!,
-      reconstructionFileS3Url
+      reconstructionFileS3Url,
+      maskId
     );
     if (!dbResult.success) {
       return dbResult;
@@ -321,9 +322,9 @@ async function processObjFiles(
 }
 
 /**
- * Get project details (userId, filehash, projectId) from job
+ * Get project details (userId, filehash, projectId, maskId) from job
  */
-async function getProjectDetails(gpuJobId: string): Promise<{ userId: string; filehash: string; projectId: string }> {
+async function getProjectDetails(gpuJobId: string): Promise<{ userId: string; filehash: string; projectId: string; maskId?: string }> {
   // Get job details first
   const { readJob } = await import("./database");
   const jobResult = await readJob(gpuJobId);
@@ -333,6 +334,16 @@ async function getProjectDetails(gpuJobId: string): Promise<{ userId: string; fi
   }
   
   const projectId = jobResult.job.projectid;
+  
+  // Extract mask ID from job result if it exists
+  let maskId: string | undefined;
+  if (jobResult.job.result) {
+    const maskIdMatch = jobResult.job.result.match(/Mask ID: ([a-fA-F0-9]{24})/);
+    if (maskIdMatch) {
+      maskId = maskIdMatch[1];
+      logger.info(`${serviceLocation}: Extracted mask ID ${maskId} from job result for job ${gpuJobId}`);
+    }
+  }
   
   // Get project details - readProject returns projects (plural), not project (singular)
   const projectResult = await readProject(projectId);
@@ -349,8 +360,8 @@ async function getProjectDetails(gpuJobId: string): Promise<{ userId: string; fi
     throw new Error(`Missing userId (${userId}) or filehash (${filehash}) for job ${gpuJobId}`);
   }
 
-  logger.info(`${serviceLocation}: Retrieved project details for job ${gpuJobId} - userId: ${userId}, filehash: ${filehash.substring(0, 10)}...`);
-  return { userId, filehash, projectId };
+  logger.info(`${serviceLocation}: Retrieved project details for job ${gpuJobId} - userId: ${userId}, filehash: ${filehash.substring(0, 10)}..., maskId: ${maskId || 'not found'}`);
+  return { userId, filehash, projectId, maskId };
 }
 
 /**
@@ -436,7 +447,8 @@ async function createReconstructionRecord(
   gpuResult: any,
   processedFiles: ProcessedObjFile[],
   tarSize: number,
-  reconstructionFileS3Url: string
+  reconstructionFileS3Url: string,
+  maskId?: string
 ): Promise<{ success: boolean; message: string; reconstructionId?: string }> {
   try {
     // Extract and validate GPU metadata with bounds checking
@@ -476,6 +488,7 @@ async function createReconstructionRecord(
     
     const reconstructionData: Partial<IProjectReconstruction> = {
       projectid: projectId,
+      maskId: maskId, // Add the segmentation mask ID used for reconstruction
       name: reconstructionName,
       description: reconstructionDescription,
       ed_frame: edFrameIndex + 1,
