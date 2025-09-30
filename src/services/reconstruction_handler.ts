@@ -108,7 +108,7 @@ export async function processReconstructionCallback(
         tarStream,
         userId,
         filehash,
-        '.tar',
+        '_mesh.tar',
         s3KeyPrefix
       );
       
@@ -137,8 +137,23 @@ export async function processReconstructionCallback(
       return dbResult;
     }
 
-    // Update job status
-    await updateJobWithReconstructionData(gpuJobId, tarResult.tarPath!);
+    // Update job status to completed
+    try {
+      await updateJob(gpuJobId, {
+        status: JobStatus.COMPLETED,
+        result: JSON.stringify({
+          reconstruction_created: true,
+          reconstruction_id: dbResult.reconstructionId,
+          tar_file_path: tarResult.tarPath,
+          s3_url: reconstructionFileS3Url
+        }),
+        message: "4D reconstruction processed successfully"
+      });
+      logger.info(`${serviceLocation}: Updated job ${gpuJobId} status to COMPLETED`);
+    } catch (jobUpdateError) {
+      logger.warn(`${serviceLocation}: Failed to update job ${gpuJobId} status to COMPLETED:`, jobUpdateError);
+      // Don't fail the whole process for job update issues
+    }
 
     // Cleanup temporary files
     await cleanupTempFiles(processedFiles, tarResult.tarPath!);
@@ -534,25 +549,6 @@ async function createReconstructionRecord(
       success: false,
       message: `Database error: ${(error as Error).message}`
     };
-  }
-}
-
-/**
- * Update job with reconstruction completion data
- */
-async function updateJobWithReconstructionData(gpuJobId: string, tarPath: string): Promise<void> {
-  try {
-    await updateJob(gpuJobId, {
-      result: JSON.stringify({
-        reconstruction_created: true,
-        tar_file_path: path.basename(tarPath),
-        ready_for_s3_upload: true
-      }),
-    });
-    logger.info(`${serviceLocation}: Updated job ${gpuJobId} with reconstruction data`);
-  } catch (error) {
-    logger.warn(`${serviceLocation}: Failed to update job ${gpuJobId} with reconstruction data:`, error);
-    // Don't fail the whole process for job update issues
   }
 }
 
