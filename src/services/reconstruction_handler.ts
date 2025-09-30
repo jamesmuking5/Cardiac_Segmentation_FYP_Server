@@ -98,10 +98,17 @@ export async function processReconstructionCallback(
 
     if (status !== "completed" && status !== "success" && status !== "reconstruction_completed") {
       logger.warn(`${serviceLocation}: GPU job ${gpuJobId} failed with status: ${status}`);
+      
+      // Update job status to failed
+      await updateJob(gpuJobId, {
+        status: JobStatus.FAILED,
+        message: `GPU reconstruction failed: ${gpuErrorDetail || status}`
+      });
+
       return {
         success: false,
         message: `GPU job completed with status: ${status}`,
-        error: gpuErrorDetail
+        error: String(gpuErrorDetail || 'Unknown GPU error')
       };
     }
 
@@ -110,12 +117,36 @@ export async function processReconstructionCallback(
     const metadataValidation = validateMetadata(validationTarget, gpuJobId);
     if (!metadataValidation.success) {
       logger.error(`${serviceLocation}: Metadata validation failed: ${metadataValidation.message}`);
+      
+      // Update job status to failed
+      await updateJob(gpuJobId, {
+        status: JobStatus.FAILED,
+        message: `Metadata validation failed: ${metadataValidation.message}`
+      });
+      
       return metadataValidation;
     }
 
     const validationResult = validateObjFiles(safeUploadedFiles, gpuJobId);
     if (!validationResult.success) {
       logger.error(`${serviceLocation}: File validation failed: ${validationResult.message}`);
+      
+      // Update job status to failed
+      await updateJob(gpuJobId, {
+        status: JobStatus.FAILED,
+        message: `File validation failed: ${validationResult.message}`
+      });
+      
+      // Cleanup any uploaded files even on validation failure
+      if (safeUploadedFiles.length > 0) {
+        try {
+          const processedFiles = await processObjFiles(safeUploadedFiles, gpuJobId);
+          await cleanupTempFiles(processedFiles, '');
+        } catch (cleanupError) {
+          logger.warn(`${serviceLocation}: Failed to cleanup files after validation failure: ${(cleanupError as Error).message}`);
+        }
+      }
+      
       return validationResult;
     }
 
@@ -126,6 +157,15 @@ export async function processReconstructionCallback(
     // Create TAR archive containing all mesh frames
     const tarResult = await createReconstructionTar(processedFiles, userId, filehash, gpuJobId);
     if (!tarResult.success) {
+      // Update job status to failed
+      await updateJob(gpuJobId, {
+        status: JobStatus.FAILED,
+        message: `TAR creation failed: ${tarResult.message}`
+      });
+      
+      // Cleanup processed files even on TAR creation failure
+      await cleanupTempFiles(processedFiles, '');
+      
       return tarResult;
     }
 
@@ -153,17 +193,19 @@ export async function processReconstructionCallback(
     } catch (error) {
       logger.error(`${serviceLocation}: S3 upload failed: ${(error as Error).message}`);
       
+      // Update job status to failed
+      await updateJob(gpuJobId, {
+        status: JobStatus.FAILED,
+        message: `S3 upload failed: ${(error as Error).message}`
+      });
+      
       // Ensure stream is properly closed
       if (tarStream && !tarStream.destroyed) {
         tarStream.destroy();
       }
       
-      // Clean up the TAR file on S3 upload failure
-      try {
-        await fs.unlink(tarResult.tarPath!);
-      } catch (cleanupError) {
-        logger.warn(`${serviceLocation}: Failed to cleanup TAR file after S3 upload failure`);
-      }
+      // Clean up temporary files and TAR file on S3 upload failure
+      await cleanupTempFiles(processedFiles, tarResult.tarPath!);
       
       return {
         success: false,
@@ -251,6 +293,9 @@ export async function processReconstructionCallback(
         logger.error(`${serviceLocation}: Failed to mark job as failed: ${(jobUpdateError as Error).message}`);
       }
       
+      // Cleanup temporary files even on database transaction failure
+      await cleanupTempFiles(processedFiles, tarResult.tarPath!);
+      
       return {
         success: false,
         message: `Database transaction failed: ${(transactionError as Error).message}`
@@ -268,6 +313,27 @@ export async function processReconstructionCallback(
     };
 
   } catch (error) {
+    // Update job status to failed on unexpected error
+    try {
+      await updateJob(gpuJobId, {
+        status: JobStatus.FAILED,
+        message: `Unexpected error processing reconstruction callback: ${(error as Error).message}`
+      });
+    } catch (updateError) {
+      logger.error(`${serviceLocation}: Failed to update job status after error for job ${gpuJobId}:`, updateError);
+    }
+
+    // Cleanup any temporary files that may have been created
+    try {
+      const safeFiles = uploadedFiles || [];
+      if (safeFiles.length > 0) {
+        const processedFiles = await processObjFiles(safeFiles, gpuJobId);
+        await cleanupTempFiles(processedFiles, '');
+      }
+    } catch (cleanupError) {
+      logger.warn(`${serviceLocation}: Failed to cleanup files after unexpected error: ${(cleanupError as Error).message}`);
+    }
+
     LogError(
       error as Error,
       serviceLocation,
