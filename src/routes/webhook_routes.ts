@@ -449,6 +449,20 @@ router.post("/gpu-callback", async (req: Request, res: Response) => {
  * 3. Processes OBJ files for reconstruction record creation
  * 4. Delegates to reconstruction handler for TAR creation and S3 upload
  */
+// Store recent callback requests to prevent duplicate processing
+const recentCallbacks = new Map<string, number>();
+const CALLBACK_TIMEOUT = 5 * 60 * 1000; // 5 minutes
+
+// Clean up old callback tracking entries periodically
+setInterval(() => {
+  const now = Date.now();
+  for (const [jobId, timestamp] of recentCallbacks.entries()) {
+    if (now - timestamp > CALLBACK_TIMEOUT) {
+      recentCallbacks.delete(jobId);
+    }
+  }
+}, 60000); // Clean every minute
+
 router.post("/gpu-reconstruction-callback", preMulterLogging, gpuObjUploadFilter, handleMulterError, async (req: Request, res: Response) => {
   const uploadedFiles = (req.files as Express.Multer.File[]) || [];
   const gpuJobId = req.headers["x-job-id"] as string | undefined;
@@ -458,6 +472,17 @@ router.post("/gpu-reconstruction-callback", preMulterLogging, gpuObjUploadFilter
     logger.error(`${serviceLocation}: Missing X-Job-ID header in reconstruction callback`);
     return res.status(400).json({ message: "Missing Cloud GPU Job ID in headers" });
   }
+
+  // Check for recent duplicate callback
+  const now = Date.now();
+  const lastCallback = recentCallbacks.get(gpuJobId);
+  if (lastCallback && (now - lastCallback) < 30000) { // 30 second window
+    logger.warn(`${serviceLocation}: Duplicate callback detected for job ${gpuJobId}, ignoring`);
+    return res.status(409).json({ message: "Duplicate callback detected, request ignored" });
+  }
+  
+  // Track this callback
+  recentCallbacks.set(gpuJobId, now);
 
   // Filter files by type for processing
   const objFiles = uploadedFiles.filter(f => f.originalname.toLowerCase().endsWith('.obj'));
