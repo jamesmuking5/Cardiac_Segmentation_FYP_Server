@@ -12,6 +12,7 @@ import gpuStatusRoute from '../routes/gpu_status';
 import adminToolsRoute from '../routes/admin_tools';
 import sampleNiftiRoute from '../routes/sample_nifti';
 import cpuMetricsRoute from '../routes/cpu_metrics';
+import ecrMetricsRoute from '../routes/ecr_metrics';
 import logger from './logger';
 import cors from 'cors';
 import path from 'path';
@@ -139,10 +140,11 @@ app.use('/status', gpuStatusRoute); // Mount GPU status routes
 
 // Admin Tool Routes
 app.use('/admintools', adminToolsRoute);
-
-
 // CPU Metrics Routes
 app.use('/metrics', cpuMetricsRoute);
+
+// ECR Metrics Routes
+app.use('/ecr', ecrMetricsRoute);
 
 // Sample NIfTI Routes
 app.use('/sample-nifti', sampleNiftiRoute);
