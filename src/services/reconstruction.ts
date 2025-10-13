@@ -209,6 +209,10 @@ export const startReconstruction = async (projectId: string, user?: IUserSafe, r
         // Generate job UUID
         const jobUuid = uuidv4();
 
+        // Get mesh format from environment variable (default to 'glb' for better web compatibility)
+        const meshFormat = (process.env.RECONSTRUCTION_MESH_FORMAT?.toLowerCase() === 'obj') ? 'obj' : 'glb';
+        logger.info(`${serviceLocation}: Using mesh export format: ${meshFormat}`);
+
         // Prepare reconstruction request payload - match GPU server schema
         const reconstructionPayload = {
             url: dataUrlForGpu,  // Presigned URL for segmentation data
@@ -218,6 +222,7 @@ export const startReconstruction = async (projectId: string, user?: IUserSafe, r
             num_iterations: parameters?.num_iterations || 50,  // Flattened parameters
             resolution: parameters?.resolution || 128,
             process_all_frames: parameters?.process_all_frames ?? true,  // Enable 4D processing by default
+            export_format: meshFormat,  // NEW: Send mesh format to GPU (obj or glb)
             debug_save: parameters?.debug_save || parameters?.debug || false,  // Support both debug and debug_save
             debug_dir: parameters?.debug_dir || "/tmp/4d_reconstruction_debug"
         };

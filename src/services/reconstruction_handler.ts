@@ -407,7 +407,7 @@ function validateMetadata(
 }
 
 /**
- * Validate uploaded OBJ files with enhanced debugging
+ * Validate uploaded mesh files (OBJ or GLB) with enhanced debugging
  */
 function validateObjFiles(
   uploadedFiles: Express.Multer.File[],
@@ -416,25 +416,28 @@ function validateObjFiles(
   // Ensure uploadedFiles is always an array to prevent undefined errors
   const safeFiles = uploadedFiles || [];
   
-  // Filter files by type for validation
-  const objFiles = safeFiles.filter(file => 
-    file.originalname.toLowerCase().endsWith('.obj')
-  );
+  // Filter files by type for validation - support both OBJ and GLB
+  const meshFiles = safeFiles.filter(file => {
+    const filename = file.originalname.toLowerCase();
+    return filename.endsWith('.obj') || filename.endsWith('.glb');
+  });
   
   const jsonFiles = safeFiles.filter(file => 
     file.originalname.toLowerCase().endsWith('.json')
   );
   
-  const otherFiles = safeFiles.filter(file => 
-    !file.originalname.toLowerCase().endsWith('.obj') && 
-    !file.originalname.toLowerCase().endsWith('.json')
-  );
+  const otherFiles = safeFiles.filter(file => {
+    const filename = file.originalname.toLowerCase();
+    return !filename.endsWith('.obj') && 
+           !filename.endsWith('.glb') && 
+           !filename.endsWith('.json');
+  });
 
-  if (objFiles.length === 0) {
-    logger.error(`${serviceLocation}: No OBJ files received for job ${gpuJobId}`);
+  if (meshFiles.length === 0) {
+    logger.error(`${serviceLocation}: No mesh files (.obj or .glb) received for job ${gpuJobId}`);
     return {
       success: false,
-      message: "No OBJ mesh files received in reconstruction callback. The reconstruction may have failed to generate mesh output or encountered an error during processing."
+      message: "No mesh files received in reconstruction callback. The reconstruction may have failed to generate mesh output or encountered an error during processing."
     };
   }
   
@@ -442,12 +445,13 @@ function validateObjFiles(
     logger.error(`${serviceLocation}: Unexpected file formats for job ${gpuJobId}: ${otherFiles.map(f => f.originalname).join(', ')}`);
     return {
       success: false,
-      message: `Unexpected file formats received. Expected .obj files and optional .json metadata, but received: ${otherFiles.map(f => f.originalname).join(', ')}`
+      message: `Unexpected file formats received. Expected .obj/.glb files and optional .json metadata, but received: ${otherFiles.map(f => f.originalname).join(', ')}`
     };
   }
 
-  const totalObjSize = objFiles.reduce((sum, f) => sum + f.size, 0);
-  logger.info(`${serviceLocation}: Validated ${objFiles.length} OBJ files (${Math.round(totalObjSize / 1024 / 1024)} MB total)`);
+  const totalMeshSize = meshFiles.reduce((sum, f) => sum + f.size, 0);
+  const meshFormat = meshFiles[0].originalname.toLowerCase().endsWith('.glb') ? 'GLB' : 'OBJ';
+  logger.info(`${serviceLocation}: Validated ${meshFiles.length} ${meshFormat} files (${Math.round(totalMeshSize / 1024 / 1024)} MB total)`);
   
   return { success: true, message: "Files validated successfully" };
 }
@@ -690,6 +694,11 @@ async function createReconstructionRecord(
     const reconstructionDescription = `4D cardiac reconstruction: ${processedFiles.length} frames, ED frame ${edFrameIndex + 1}`;
     const finalFilename = `${userId}_${filehash}_mesh.tar`;
     
+    // Detect mesh format from uploaded files
+    const firstMeshFile = processedFiles[0];
+    const detectedFormat = firstMeshFile.originalName.toLowerCase().endsWith('.glb') ? MeshFormat.GLB : MeshFormat.OBJ;
+    logger.info(`${serviceLocation}: Detected mesh format: ${detectedFormat}`);
+    
     // Generate basepath following same pattern as projects
     const s3KeyPrefix = `source_nifti/${userId}/`;
     const basepath = `s3://${process.env.AWS_BUCKET_NAME}/${s3KeyPrefix}`;
@@ -702,7 +711,7 @@ async function createReconstructionRecord(
       ed_frame: edFrameIndex + 1,
       isSaved: false,
       isAIGenerated: true,
-      meshFormat: MeshFormat.OBJ,
+      meshFormat: detectedFormat,  // CHANGED: Detect from file extension (OBJ or GLB)
       filename: finalFilename,
       filesize: tarSize,
       filehash: filehash,
