@@ -107,11 +107,13 @@ export const startInference = async (projectId: string, user?: IUserSafe, gpuAut
         return { success: false, message: "GPU authentication token is missing. Cannot start inference." };
     }
 
-    const callback_url = process.env.CALLBACK_URL;
-    if (!callback_url) {
+    // Build full callback URL by appending segmentation webhook path to base URL
+    const callback_base_url = process.env.CALLBACK_URL;
+    if (!callback_base_url) {
         logger.error(`${serviceLocation}: CALLBACK_URL is not set in environment variables. Cannot start inference for project ${projectId}.`);
         return { success: false, message: "Callback URL not configured for inference." };
     }
+    const callback_url = `${callback_base_url.replace(/\/$/, '')}/webhook/gpu-callback`;
 
     const s3BucketName = process.env.AWS_BUCKET_NAME; // Or S3_BUCKET_NAME
     if (!s3BucketName) {
