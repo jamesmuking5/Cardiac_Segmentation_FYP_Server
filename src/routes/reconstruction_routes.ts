@@ -5,7 +5,10 @@ import { injectGpuAuthToken } from "../middleware/gpuauthmiddleware";
 import {
     jobModel,
     JobStatus,
-    readProjectReconstruction
+    readProjectReconstruction,
+    projectReconstructionModel,
+    readProject,
+    IProjectDocument
 } from "../services/database";
 import { isAuth, isAuthAndNotGuest } from "../services/passportjs";
 import { extractS3KeyFromUrl } from "../services/s3_handler";
@@ -180,6 +183,114 @@ router.get("/user-check-jobs", isAuth, async (req: Request, res: Response) => {
         return res.status(500).json({
             success: false,
             message: "An error occurred while fetching reconstruction jobs"
+        });
+    }
+});
+
+/**
+ * Batch endpoint for checking reconstruction status of multiple projects
+ * Matches segmentation pattern: /segmentation/batch-segmentation-status
+ * 
+ * @route POST /reconstruction/batch-reconstruction-status
+ * @access Private (authenticated users only)
+ */
+router.post("/batch-reconstruction-status", isAuth, async (req: Request, res: Response) => {
+    const { projectIds } = req.body;
+    const userId = req.user?._id;
+
+    logger.info(`${serviceLocation}: Batch reconstruction status check for ${projectIds?.length || 0} projects by user ${req.user?.username}`);
+
+    if (!userId) {
+        logger.warn(`${serviceLocation}: User ID not found in request.`);
+        return res.status(401).json({
+            success: false,
+            message: "Authentication required."
+        });
+    }
+
+    if (!projectIds || !Array.isArray(projectIds) || projectIds.length === 0) {
+        logger.warn(`${serviceLocation}: Invalid or empty projectIds array in batch reconstruction status request.`);
+        return res.status(400).json({
+            success: false,
+            message: "projectIds array is required and must not be empty."
+        });
+    }
+
+    // Limit batch size to prevent abuse
+    if (projectIds.length > 50) {
+        logger.warn(`${serviceLocation}: Batch size too large: ${projectIds.length} projects requested.`);
+        return res.status(400).json({
+            success: false,
+            message: "Batch size limited to 50 projects per request."
+        });
+    }
+
+    try {
+        // 1. Verify user owns all requested projects
+        const userProjectsResult = await readProject(undefined, userId.toString());
+        if (!userProjectsResult.success || !userProjectsResult.projects) {
+            logger.error(`${serviceLocation}: Failed to fetch user projects for batch status check.`);
+            return res.status(500).json({
+                success: false,
+                message: "Failed to verify project ownership."
+            });
+        }
+
+        const userProjectIds = userProjectsResult.projects.map((p: IProjectDocument) => (p._id as string).toString());
+        const unauthorizedProjects = projectIds.filter((id: string) => !userProjectIds.includes(id));
+
+        if (unauthorizedProjects.length > 0) {
+            logger.warn(`${serviceLocation}: User ${userId} attempted to check reconstruction status for unauthorized projects: ${unauthorizedProjects.join(', ')}`);
+            return res.status(403).json({
+                success: false,
+                message: "Access denied to some requested projects."
+            });
+        }
+
+        // 2. Batch query reconstruction results using MongoDB aggregation
+        const reconstructionResults = await projectReconstructionModel.aggregate([
+            {
+                $match: {
+                    projectid: { $in: projectIds }
+                }
+            },
+            {
+                $group: {
+                    _id: "$projectid",
+                    reconstructionCount: { $sum: 1 },
+                    hasReconstructions: { $sum: { $cond: [{ $ne: ["$reconstructedMesh", null] }, 1, 0] } }
+                }
+            }
+        ]);
+
+        // 3. Build response object with status for each project
+        const statusMap: Record<string, { hasReconstructions: boolean; reconstructionCount: number }> = {};
+
+        // Initialize all projects as having no reconstructions
+        projectIds.forEach((projectId: string) => {
+            statusMap[projectId] = { hasReconstructions: false, reconstructionCount: 0 };
+        });
+
+        // Update with actual results
+        reconstructionResults.forEach((result: { _id: string; reconstructionCount: number; hasReconstructions: number }) => {
+            statusMap[result._id] = {
+                hasReconstructions: result.hasReconstructions > 0,
+                reconstructionCount: result.reconstructionCount
+            };
+        });
+
+        logger.info(`${serviceLocation}: Successfully processed batch reconstruction status for ${projectIds.length} projects. Found reconstructions for ${reconstructionResults.length} projects.`);
+
+        return res.status(200).json({
+            success: true,
+            statuses: statusMap
+        });
+
+    } catch (error: unknown) {
+        LogError(error as Error, serviceLocation, `Error in batch reconstruction status check for user ${userId}`);
+        return res.status(500).json({
+            success: false,
+            message: "An error occurred while checking reconstruction status."
         });
     }
 });
