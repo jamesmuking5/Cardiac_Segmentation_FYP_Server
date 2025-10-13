@@ -82,6 +82,37 @@ export const generateAISegmentationForReconstruction = async (
 
         // Write segmentation data for Python processing
         await fs.writeJson(segmentationsJsonPath, segmentationsToProcess, { spaces: 2 });
+        
+        // Log segmentation data being processed
+        const maskStructure = {
+            maskId: aiMask._id,
+            frameCount: aiMask.frames?.length || 0,
+            isMedSAMOutput: aiMask.isMedSAMOutput,
+            firstFrameIndex: aiMask.frames?.[0]?.frameindex,
+            lastFrameIndex: aiMask.frames?.[aiMask.frames.length - 1]?.frameindex
+        };
+        logger.info(`${serviceLocation}: Segmentation mask structure for project ${projectId}: ${JSON.stringify(maskStructure)}`);
+        
+        // Log detailed class distribution across frames for debugging
+        const classDistribution: Record<string, number> = {};
+        let totalMasks = 0;
+        aiMask.frames?.forEach(frame => {
+            frame.slices?.forEach(slice => {
+                slice.segmentationmasks?.forEach(mask => {
+                    const className = mask.class || 'unknown';
+                    classDistribution[className] = (classDistribution[className] || 0) + 1;
+                    totalMasks++;
+                });
+            });
+        });
+        const classInfo = {
+            classes: classDistribution,
+            totalMasks,
+            hasLVC: !!classDistribution['LVC'],
+            hasMYO: !!classDistribution['MYO'],
+            hasRV: !!classDistribution['RV']
+        };
+        logger.info(`${serviceLocation}: Segmentation class distribution for project ${projectId}: ${JSON.stringify(classInfo)}`);
 
         // 4. Generate NIfTI using Python script
         let pythonScriptPath: string;
@@ -96,6 +127,18 @@ export const generateAISegmentationForReconstruction = async (
 
             await fs.writeJson(affineMatrixFile, project.affineMatrix, { spaces: 2 });
             await fs.writeJson(dimensionsFile, project.dimensions, { spaces: 2 });
+            
+            // Log critical NIfTI generation parameters
+            const niftiParams = {
+                dimensions: project.dimensions,
+                planeWidth: planeWidthForRLE,
+                planeHeight: planeHeightForRLE,
+                affineMatrixShape: `${project.affineMatrix.length}x${project.affineMatrix[0]?.length}`,
+                expectedShape: project.dimensions.frames 
+                    ? `(${project.dimensions.height}, ${project.dimensions.width}, ${project.dimensions.slices}, ${project.dimensions.frames})`
+                    : `(${project.dimensions.height}, ${project.dimensions.width}, ${project.dimensions.slices})`
+            };
+            logger.info(`${serviceLocation}: NIfTI generation parameters for project ${projectId}: ${JSON.stringify(niftiParams)}`);
 
             pythonCommand = `python "${pythonScriptPath}" "${segmentationsJsonPath}" "${localOutputSegmentationNiftiPath}" "${affineMatrixFile}" "${dimensionsFile}" "uint8" ${planeHeightForRLE} ${planeWidthForRLE}`;
         } else {
@@ -119,9 +162,16 @@ export const generateAISegmentationForReconstruction = async (
             exec(pythonCommand, (error, stdout, stderr) => {
                 if (error) {
                     logger.error(`${serviceLocation}: Python script execution failed for reconstruction of project ${projectId}: ${error.message}`);
+                    logger.error(`${serviceLocation}: Python stderr: ${stderr}`);
                     resolve({ success: false, error: error.message, stderr });
                 } else {
                     logger.info(`${serviceLocation}: Python script completed successfully for reconstruction of project ${projectId}`);
+                    if (stdout) {
+                        logger.info(`${serviceLocation}: Python stdout: ${stdout}`);
+                    }
+                    if (stderr) {
+                        logger.warn(`${serviceLocation}: Python stderr (warnings): ${stderr}`);
+                    }
                     resolve({ success: true, stdout, stderr });
                 }
             });

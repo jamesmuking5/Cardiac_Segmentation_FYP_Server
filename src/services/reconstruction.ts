@@ -222,8 +222,19 @@ export const startReconstruction = async (projectId: string, user?: IUserSafe, r
             debug_dir: parameters?.debug_dir || "/tmp/4d_reconstruction_debug"
         };
 
-        // Log reconstruction parameters for monitoring
-        logger.info(`${serviceLocation}: Submitting 4D reconstruction for project ${projectId} (UUID: ${jobUuid}, ED frame: ${ed_frame || 1})`);
+        // Log reconstruction parameters for monitoring with FULL payload details
+        logger.info(`${serviceLocation}: Submitting 4D reconstruction for project ${projectId}:`, {
+            uuid: jobUuid,
+            ed_frame: ed_frame || 1,
+            ed_frame_index: reconstructionPayload.ed_frame_index,
+            process_all_frames: reconstructionPayload.process_all_frames,
+            num_iterations: reconstructionPayload.num_iterations,
+            resolution: reconstructionPayload.resolution,
+            s3Key: segmentationResult.s3Key,
+            fileSizeBytes: segmentationResult.fileSizeBytes,
+            callbackUrl: callback_url,
+            urlPrefix: dataUrlForGpu?.substring(0, 100) + '...'
+        });
 
         // Send reconstruction request to GPU server BEFORE creating job record
         const reconstructionResult = await sendReconstructionRequestToCloudGpu(reconstructionPayload, gpuAuthToken);
