@@ -120,11 +120,13 @@ export const startReconstruction = async (projectId: string, user?: IUserSafe, r
         return { success: false, message: "GPU authentication token is missing. Cannot start 4D reconstruction." };
     }
     
-    const callback_url = process.env.CALLBACK_URL;
-    if (!callback_url) {
+    // Build full callback URL by appending reconstruction webhook path to base URL
+    const callback_base_url = process.env.CALLBACK_URL;
+    if (!callback_base_url) {
         logger.error(`${serviceLocation}: CALLBACK_URL is not set in environment variables. Cannot start reconstruction for project ${projectId}.`);
         return { success: false, message: "Callback URL not configured for reconstruction." };
     }
+    const callback_url = `${callback_base_url.replace(/\/$/, '')}/webhook/gpu-reconstruction-callback`;
 
     const s3BucketName = process.env.AWS_BUCKET_NAME;
     if (!s3BucketName) {
