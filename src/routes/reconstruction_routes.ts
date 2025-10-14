@@ -8,10 +8,11 @@ import {
     readProjectReconstruction,
     projectReconstructionModel,
     readProject,
-    IProjectDocument
+    IProjectDocument,
+    deleteProjectReconstruction
 } from "../services/database";
 import { isAuth, isAuthAndNotGuest } from "../services/passportjs";
-import { extractS3KeyFromUrl } from "../services/s3_handler";
+import { extractS3KeyFromUrl, deleteFromS3 } from "../services/s3_handler";
 import { generatePresignedGetUrl } from "../utils/s3_presigned_url";
 import LogError from "../utils/error_logger";
 
@@ -294,5 +295,117 @@ router.post("/batch-reconstruction-status", isAuth, async (req: Request, res: Re
         });
     }
 });
+
+/**
+ * Delete all reconstructions for a project
+ * Designed for workflow where masks are re-edited - only keep 1 reconstruction at a time
+ * Deletes both database records and S3 mesh files
+ * 
+ * @route DELETE /reconstruction/delete-project-reconstructions/:projectId
+ * @access Private (authenticated users only, project owner)
+ */
+router.delete("/delete-project-reconstructions/:projectId",
+    isAuth,
+    isAuthAndNotGuest,
+    async (req: Request, res: Response) => {
+        const { projectId } = req.params;
+        const userId = (req.user as any)?._id?.toString();
+
+        logger.info(`${serviceLocation}: Received request to delete all reconstructions for project ${projectId} by user ${req.user?.username}`);
+
+        if (!userId) {
+            logger.warn(`${serviceLocation}: User ID not found in request.`);
+            return res.status(401).json({
+                success: false,
+                message: "Authentication required."
+            });
+        }
+
+        if (!projectId) {
+            logger.warn(`${serviceLocation}: Project ID is required to delete reconstructions.`);
+            return res.status(400).json({
+                success: false,
+                message: "Project ID is required."
+            });
+        }
+
+        try {
+            // 1. Verify user owns the project
+            const projectResult = await readProject(projectId, userId);
+            if (!projectResult.success || !projectResult.projects || projectResult.projects.length === 0) {
+                logger.warn(`${serviceLocation}: User ${userId} does not have access to project ${projectId} or project not found.`);
+                return res.status(403).json({
+                    success: false,
+                    message: "Access denied or project not found."
+                });
+            }
+
+            // 2. Get all reconstructions for this project
+            const reconstructionsResult = await readProjectReconstruction(projectId);
+            if (!reconstructionsResult.success || !reconstructionsResult.projectreconstructions || reconstructionsResult.projectreconstructions.length === 0) {
+                logger.info(`${serviceLocation}: No reconstructions found for project ${projectId}.`);
+                return res.status(200).json({
+                    success: true,
+                    message: "No reconstructions to delete.",
+                    deletedCount: 0
+                });
+            }
+
+            const reconstructions = reconstructionsResult.projectreconstructions;
+            logger.info(`${serviceLocation}: Found ${reconstructions.length} reconstruction(s) to delete for project ${projectId}.`);
+
+            // 3. Delete S3 files first (mesh tar files)
+            const s3DeletePromises = reconstructions.map(async (recon) => {
+                if (recon.reconstructedMesh?.path) {
+                    const s3Key = extractS3KeyFromUrl(recon.reconstructedMesh.path);
+                    if (s3Key) {
+                        logger.info(`${serviceLocation}: Deleting S3 mesh file: ${s3Key}`);
+                        const deleteSuccess = await deleteFromS3(s3Key);
+                        if (!deleteSuccess) {
+                            logger.warn(`${serviceLocation}: Failed to delete S3 file ${s3Key} for reconstruction ${recon._id}`);
+                        }
+                        return deleteSuccess;
+                    }
+                }
+                return true; // No file to delete
+            });
+
+            await Promise.all(s3DeletePromises);
+
+            // 4. Delete database records
+            let deletedCount = 0;
+            const dbDeletePromises = reconstructions.map(async (recon) => {
+                const reconstructionId = recon._id?.toString();
+                if (reconstructionId) {
+                    const deleteResult = await deleteProjectReconstruction(reconstructionId);
+                    if (deleteResult.success) {
+                        deletedCount++;
+                        logger.info(`${serviceLocation}: Deleted reconstruction ${reconstructionId} from database.`);
+                    } else {
+                        logger.warn(`${serviceLocation}: Failed to delete reconstruction ${reconstructionId}: ${deleteResult.message}`);
+                    }
+                    return deleteResult.success;
+                }
+                return false;
+            });
+
+            await Promise.all(dbDeletePromises);
+
+            logger.info(`${serviceLocation}: Successfully deleted ${deletedCount} reconstruction(s) for project ${projectId}.`);
+
+            return res.status(200).json({
+                success: true,
+                message: `Successfully deleted ${deletedCount} reconstruction(s).`,
+                deletedCount
+            });
+
+        } catch (error: unknown) {
+            LogError(error as Error, serviceLocation, `Error deleting reconstructions for project ${projectId}`);
+            return res.status(500).json({
+                success: false,
+                message: "An error occurred while deleting reconstructions."
+            });
+        }
+    });
 
 export default router;
