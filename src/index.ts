@@ -20,6 +20,11 @@ try {
   process.exit(1); // Fatal - exit if critical error occurs
 }
 
+// Print CALLBACK URL for verification
+if (process.env.CALLBACK_URL) {
+  logger.info(`${serviceLocation}: CALLBACK_URL is set to ${process.env.CALLBACK_URL}`);
+}
+
 // Import necessary modules AFTER dotenv
 import { app } from './services/express_app'; // Import the configured Express app
 import LogError from './utils/error_logger'; // Import error logging utility
