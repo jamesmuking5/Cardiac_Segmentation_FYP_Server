@@ -537,7 +537,7 @@ async function getProjectDetails(gpuJobId: string): Promise<{ userId: string; fi
 }
 
 /**
- * Create TAR bundle from OBJ files following naming convention
+ * Create TAR bundle from mesh files (OBJ or GLB) following naming convention
  */
 async function createReconstructionTar(
   processedFiles: ProcessedObjFile[],
@@ -552,31 +552,50 @@ async function createReconstructionTar(
     const tarPath = path.join("src/temp_mesh/", tarFilename);
     const tempTarPath = `${tarPath}.tmp`; // Atomic creation using temp file
     
-    logger.info(`${serviceLocation}: Creating TAR bundle with ${processedFiles.length} OBJ files`);
+    const meshFormat = processedFiles[0]?.tempPath?.toLowerCase().endsWith('.glb') ? 'GLB' : 'OBJ';
+    logger.info(`${serviceLocation}: Creating TAR bundle with ${processedFiles.length} ${meshFormat} files`);
     
-    // Comprehensive OBJ file validation
+    // Comprehensive mesh file validation (OBJ or GLB)
     for (const file of processedFiles) {
       if (!fsSync.existsSync(file.tempPath)) {
-        throw new Error(`OBJ file not found: ${file.tempPath}`);
+        throw new Error(`Mesh file not found: ${file.tempPath}`);
       }
       
-      // Validate file is not empty and has minimum OBJ content
+      // Validate file is not empty
       const stats = await fs.stat(file.tempPath);
       if (stats.size === 0) {
-        throw new Error(`OBJ file is empty: ${file.tempPath}`);
+        throw new Error(`Mesh file is empty: ${file.tempPath}`);
       }
       
-      // Basic OBJ format validation
-      const fileContent = await fs.readFile(file.tempPath, 'utf-8');
-      if (!fileContent.includes('v ') && !fileContent.includes('f ')) {
-        throw new Error(`Invalid OBJ file format: ${file.tempPath}`);
+      // Format-specific validation
+      const isGlb = file.tempPath.toLowerCase().endsWith('.glb');
+      const isObj = file.tempPath.toLowerCase().endsWith('.obj');
+      
+      if (isObj) {
+        // OBJ format validation: check for vertices and faces
+        const fileContent = await fs.readFile(file.tempPath, 'utf-8');
+        if (!fileContent.includes('v ') && !fileContent.includes('f ')) {
+          throw new Error(`Invalid OBJ file format: ${file.tempPath}`);
+        }
+      } else if (isGlb) {
+        // GLB format validation: check for glTF magic number (0x46546C67 = "glTF")
+        const buffer = await fs.readFile(file.tempPath);
+        if (buffer.length < 12) {
+          throw new Error(`GLB file too small to be valid: ${file.tempPath}`);
+        }
+        const magic = buffer.readUInt32LE(0);
+        if (magic !== 0x46546C67) {
+          throw new Error(`Invalid GLB file format (missing glTF magic number): ${file.tempPath}`);
+        }
+      } else {
+        throw new Error(`Unknown mesh file format: ${file.tempPath}`);
       }
     }
     
-    // Build TAR command with all OBJ files from job-specific directory - create temp file first for atomicity
-    const objFileNames = processedFiles.map(f => path.basename(f.tempPath));
+    // Build TAR command with all mesh files from job-specific directory - create temp file first for atomicity
+    const meshFileNames = processedFiles.map(f => path.basename(f.tempPath));
     const jobTempDir = path.dirname(processedFiles[0].tempPath); // All files should be in same job dir
-    const tarCommand = `tar -cf "${tempTarPath}" -C "${jobTempDir}" ${objFileNames.map(name => `"${name}"`).join(' ')}`;
+    const tarCommand = `tar -cf "${tempTarPath}" -C "${jobTempDir}" ${meshFileNames.map(name => `"${name}"`).join(' ')}`;
     
     try {
       execSync(tarCommand, { stdio: 'pipe' });

@@ -110,8 +110,8 @@ const sendReconstructionRequestToCloudGpu = async (
  * @param ed_frame - End-diastolic frame number (1-based)
  * @returns Promise with success status, message, and job UUID
  */
-export const startReconstruction = async (projectId: string, user?: IUserSafe, reconstructionName?: string, reconstructionDescription?: string, parameters?: any, ed_frame?: number): Promise<{ success: boolean; message: string; uuid?: string }> => {
-    logger.info(`${serviceLocation}: Starting 4D reconstruction for project ${projectId} by user ${user?.username}`);
+export const startReconstruction = async (projectId: string, user?: IUserSafe, reconstructionName?: string, reconstructionDescription?: string, parameters?: any, ed_frame?: number, export_format?: string): Promise<{ success: boolean; message: string; uuid?: string }> => {
+    logger.info(`${serviceLocation}: Starting 4D reconstruction for project ${projectId} by user ${user?.username} with export_format: ${export_format || 'default'}`);
     
     // Get current GPU authentication token
     const gpuAuthToken = getCurrentToken();
@@ -209,9 +209,19 @@ export const startReconstruction = async (projectId: string, user?: IUserSafe, r
         // Generate job UUID
         const jobUuid = uuidv4();
 
-        // Get mesh format from environment variable (default to 'glb' for better web compatibility)
-        const meshFormat = (process.env.RECONSTRUCTION_MESH_FORMAT?.toLowerCase() === 'obj') ? 'obj' : 'glb';
-        logger.info(`${serviceLocation}: Using mesh export format: ${meshFormat}`);
+        // Determine mesh format: user choice > environment variable > default to GLB
+        let meshFormat = 'glb'; // Default
+        if (export_format) {
+            // User explicitly chose format via wizard
+            meshFormat = export_format.toLowerCase() === 'obj' ? 'obj' : 'glb';
+            logger.info(`${serviceLocation}: Using user-selected mesh export format: ${meshFormat}`);
+        } else if (process.env.RECONSTRUCTION_MESH_FORMAT) {
+            // Fallback to environment variable
+            meshFormat = process.env.RECONSTRUCTION_MESH_FORMAT.toLowerCase() === 'obj' ? 'obj' : 'glb';
+            logger.info(`${serviceLocation}: Using environment-configured mesh export format: ${meshFormat}`);
+        } else {
+            logger.info(`${serviceLocation}: Using default mesh export format: ${meshFormat}`);
+        }
 
         // Prepare reconstruction request payload - match GPU server schema
         const reconstructionPayload = {
