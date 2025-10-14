@@ -115,19 +115,19 @@ export const projectUploadFilter = multer({
 
 /**
  * File filter for GPU server reconstruction callback files
- * Accepts OBJ mesh files and JSON metadata from GPU processing
+ * Accepts OBJ/GLB mesh files and JSON metadata from GPU processing
  */
 const objFileFilter = (req: Request, file: Express.Multer.File, cb: multer.FileFilterCallback) => {
   const ext = path.extname(file.originalname).toLowerCase();
   
-  // Accept OBJ mesh files and JSON metadata from GPU server
-  if (ext === '.obj' || ext === '.json') {
+  // Accept OBJ/GLB mesh files and JSON metadata from GPU server
+  if (ext === '.obj' || ext === '.glb' || ext === '.json') {
     return cb(null, true);
   }
   
   // Reject unsupported file types
   logger.warn(`${serviceLocation}: Rejected file with extension ${ext}: ${file.originalname}`);
-  const error = new multer.MulterError("LIMIT_UNEXPECTED_FILE", `Invalid file extension: ${ext}. Only .obj and .json files allowed for GPU callbacks.`);
+  const error = new multer.MulterError("LIMIT_UNEXPECTED_FILE", `Invalid file extension: ${ext}. Only .obj, .glb, and .json files allowed for GPU callbacks.`);
   return cb(error);
 };
 
