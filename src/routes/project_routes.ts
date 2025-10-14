@@ -569,14 +569,40 @@ router.delete(
       }
 
       const s3KeysToDelete: string[] = [];
+      
+      // 1. Add project's original NIfTI file
       if (projectToDelete.originalfilepath) {
         const key = extractS3KeyFromUrl(projectToDelete.originalfilepath);
         if (key) s3KeysToDelete.push(key);
       }
+      
+      // 2. Add project's extracted JPEG frames tar
       if (projectToDelete.extractedfolderpath) {
         // This might be a TAR file of JPEGs
         const key = extractS3KeyFromUrl(projectToDelete.extractedfolderpath);
         if (key) s3KeysToDelete.push(key);
+      }
+
+      // 3. Add reconstruction mesh tar files
+      try {
+        const reconstructionsResult = await readProjectReconstruction(projectId);
+        if (reconstructionsResult.success && reconstructionsResult.projectreconstructions) {
+          for (const recon of reconstructionsResult.projectreconstructions) {
+            if (recon.reconstructedMesh?.path) {
+              const key = extractS3KeyFromUrl(recon.reconstructedMesh.path);
+              if (key) {
+                logger.info(`${serviceLocation}: Adding reconstruction mesh file to deletion queue: ${key}`);
+                s3KeysToDelete.push(key);
+              }
+            }
+          }
+        }
+      } catch (reconError) {
+        LogError(
+          reconError as Error,
+          serviceLocation,
+          `Error fetching reconstructions for project ${projectId} during deletion. Continuing with other S3 files.`
+        );
       }
 
       for (const s3Key of s3KeysToDelete) {
@@ -681,14 +707,40 @@ router.delete(
       }
 
       const s3KeysToDelete: string[] = [];
+      
+      // 1. Add project's original NIfTI file
       if (projectToDelete.originalfilepath) {
         const key = extractS3KeyFromUrl(projectToDelete.originalfilepath);
         if (key) s3KeysToDelete.push(key);
       }
+      
+      // 2. Add project's extracted JPEG frames tar
       if (projectToDelete.extractedfolderpath) {
         // This might be a TAR file of JPEGs
         const key = extractS3KeyFromUrl(projectToDelete.extractedfolderpath);
         if (key) s3KeysToDelete.push(key);
+      }
+
+      // 3. Add reconstruction mesh tar files
+      try {
+        const reconstructionsResult = await readProjectReconstruction(projectId);
+        if (reconstructionsResult.success && reconstructionsResult.projectreconstructions) {
+          for (const recon of reconstructionsResult.projectreconstructions) {
+            if (recon.reconstructedMesh?.path) {
+              const key = extractS3KeyFromUrl(recon.reconstructedMesh.path);
+              if (key) {
+                logger.info(`${serviceLocation}: Admin ${adminUserId} adding reconstruction mesh file to deletion queue: ${key}`);
+                s3KeysToDelete.push(key);
+              }
+            }
+          }
+        }
+      } catch (reconError) {
+        LogError(
+          reconError as Error,
+          serviceLocation,
+          `Admin ${adminUserId} error fetching reconstructions for project ${projectId} during deletion. Continuing with other S3 files.`
+        );
       }
 
       for (const s3Key of s3KeysToDelete) {
