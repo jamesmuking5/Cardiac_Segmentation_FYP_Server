@@ -441,12 +441,12 @@ router.post("/gpu-callback", async (req: Request, res: Response) => {
 
 /**
  * GPU reconstruction callback endpoint for 4D cardiac mesh processing
- * Accepts OBJ mesh files and JSON metadata from GPU server reconstruction
+ * Accepts OBJ/GLB mesh files and JSON metadata from GPU server reconstruction
  * 
  * Processing Flow:
- * 1. Receives multipart upload with .obj mesh files and .json metadata
+ * 1. Receives multipart upload with .obj/.glb mesh files and .json metadata
  * 2. Parses metadata from uploaded JSON file or form fields
- * 3. Processes OBJ files for reconstruction record creation
+ * 3. Processes mesh files for reconstruction record creation
  * 4. Delegates to reconstruction handler for TAR creation and S3 upload
  */
 // Store recent callback requests to prevent duplicate processing
@@ -484,14 +484,17 @@ router.post("/gpu-reconstruction-callback", preMulterLogging, gpuObjUploadFilter
   // Track this callback
   recentCallbacks.set(gpuJobId, now);
 
-  // Filter files by type for processing
-  const objFiles = uploadedFiles.filter(f => f.originalname.toLowerCase().endsWith('.obj'));
+  // Filter files by type for processing - support both OBJ and GLB formats
+  const meshFiles = uploadedFiles.filter(f => {
+    const fname = f.originalname.toLowerCase();
+    return fname.endsWith('.obj') || fname.endsWith('.glb');
+  });
   const jsonFiles = uploadedFiles.filter(f => f.originalname.toLowerCase().endsWith('.json'));
   
-  logger.info(`${serviceLocation}: Processing reconstruction callback - Job: ${gpuJobId}, OBJ files: ${objFiles.length}, JSON files: ${jsonFiles.length}`);
+  logger.info(`${serviceLocation}: Processing reconstruction callback - Job: ${gpuJobId}, Mesh files: ${meshFiles.length}, JSON files: ${jsonFiles.length}`);
 
-  if (objFiles.length === 0) {
-    logger.warn(`${serviceLocation}: No OBJ files found in reconstruction callback for job ${gpuJobId}`);
+  if (meshFiles.length === 0) {
+    logger.warn(`${serviceLocation}: No mesh files (.obj/.glb) found in reconstruction callback for job ${gpuJobId}`);
   }
 
   // Parse metadata from uploaded JSON file or form fields
@@ -548,21 +551,24 @@ router.post("/gpu-reconstruction-callback", preMulterLogging, gpuObjUploadFilter
 
   try {
     // Validate files before processing
-    if (objFiles.length === 0) {
+    if (meshFiles.length === 0) {
       const expectedFiles = callbackMetadata?.result?.total_mesh_files || callbackMetadata?.total_mesh_files;
       if (expectedFiles > 0) {
         logger.error(`${serviceLocation}: Expected ${expectedFiles} mesh files but received none for job ${gpuJobId}`);
       }
     }
     
-    // Log any unexpected file types
-    const nonObjFiles = uploadedFiles.filter(f => !f.originalname.toLowerCase().endsWith('.obj') && !f.originalname.toLowerCase().endsWith('.json'));
-    if (nonObjFiles.length > 0) {
-      logger.warn(`${serviceLocation}: Unexpected file types in callback: ${nonObjFiles.map(f => f.originalname).join(', ')}`);
+    // Log any unexpected file types (not .obj, .glb, or .json)
+    const nonMeshFiles = uploadedFiles.filter(f => {
+      const fname = f.originalname.toLowerCase();
+      return !fname.endsWith('.obj') && !fname.endsWith('.glb') && !fname.endsWith('.json');
+    });
+    if (nonMeshFiles.length > 0) {
+      logger.warn(`${serviceLocation}: Unexpected file types in callback: ${nonMeshFiles.map(f => f.originalname).join(', ')}`);
     }
     
     // Process reconstruction through service layer
-    const result = await processReconstructionCallback(gpuJobId, objFiles, callbackMetadata);
+    const result = await processReconstructionCallback(gpuJobId, meshFiles, callbackMetadata);
     
     if (result.success) {
       logger.info(`${serviceLocation}: Successfully processed reconstruction callback - Job: ${gpuJobId}, Reconstruction: ${result.reconstructionId}`);
