@@ -10,11 +10,10 @@ import {
   isAuthAndNotGuest,
   isAuthAndAdmin,
 } from "../services/passportjs";
-import { readProject, updateProject, readUser } from "../services/database";
+import { readProject, updateProject, readUser, readProjectReconstruction } from "../services/database";
 import { FileType } from "../types/database_types"; // Import FileType enum
-import { extractS3KeyFromUrl, deleteFromS3 } from "../services/s3_handler"; // Import S3 URL utility
+import { extractS3KeyFromUrl, deleteFromS3, getS3FileSize } from "../services/s3_handler"; // Import S3 URL utility
 import { generatePresignedGetUrl } from "../utils/s3_presigned_url"; // Import S3 presigned URL utility
-import { userModel } from "../services/database"; // Import UserModel
 import { deleteProject } from "../services/database"; // Import deleteProject function
 
 import logger from "../services/logger"; // Import Winston Logger
@@ -178,22 +177,50 @@ router.get(
       );
 
       if (result.success && result.projects) {
-        // Sanitize the projects
-        const sanitized_results = result.projects.map((project) => {
-          return {
-            projectId: project._id,
-            name: project.name,
-            description: project.description,
-            isSaved: project.isSaved,
-            filesize: project.filesize,
-            filetype: project.filetype,
-            dimensions: project.dimensions,
-            voxelsize: project.voxelsize,
-            affineMatrix: project.affineMatrix,
-            createdAt: project.createdAt,
-            updatedAt: project.updatedAt,
-          };
-        });
+        // Sanitize the projects and fetch reconstruction metadata for each
+        const sanitized_results = await Promise.all(
+          result.projects.map(async (project) => {
+            // Fetch reconstruction data for the project
+            let reconstructionMetadata = null;
+            try {
+              const reconResult = await readProjectReconstruction(String(project._id));
+              if (reconResult.success && reconResult.projectreconstructions && reconResult.projectreconstructions.length > 0) {
+                // Get the most recent reconstruction
+                const latestReconstruction = reconResult.projectreconstructions[0];
+                
+                // Get tar file size from S3 if available
+                let tarFileSize = null;
+                if (latestReconstruction.reconstructedMesh?.path) {
+                  tarFileSize = await getS3FileSize(latestReconstruction.reconstructedMesh.path);
+                }
+                
+                reconstructionMetadata = {
+                  edFrame: latestReconstruction.ed_frame,
+                  tarFileSize: tarFileSize || latestReconstruction.reconstructedMesh?.filesize || null,
+                  meshFormat: latestReconstruction.meshFormat,
+                };
+              }
+            } catch (reconError) {
+              // Log but don't fail if reconstruction fetch fails
+              logger.warn(`${serviceLocation}: Error fetching reconstruction for project ${project._id}:`, reconError);
+            }
+
+            return {
+              projectId: project._id,
+              name: project.name,
+              description: project.description,
+              isSaved: project.isSaved,
+              filesize: project.filesize,
+              filetype: project.filetype,
+              dimensions: project.dimensions,
+              voxelsize: project.voxelsize,
+              affineMatrix: project.affineMatrix,
+              createdAt: project.createdAt,
+              updatedAt: project.updatedAt,
+              reconstruction: reconstructionMetadata,
+            };
+          })
+        );
 
         return res.status(200).json({ projects: sanitized_results }); // Return the projects
       } else {

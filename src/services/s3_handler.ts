@@ -1,7 +1,7 @@
 // File: src/services/s3_handler.ts
 // Description: This module handles AWS S3 interactions, including uploading files, deleting objects, and extracting S3 keys from URLs.
 
-import { S3Client, PutObjectCommand, PutObjectCommandInput, DeleteObjectCommand, GetObjectCommand, GetObjectCommandOutput } from "@aws-sdk/client-s3";
+import { S3Client, PutObjectCommand, PutObjectCommandInput, DeleteObjectCommand, GetObjectCommand, GetObjectCommandOutput, HeadObjectCommand } from "@aws-sdk/client-s3";
 import { projectModel } from "../services/database";
 import logger from "./logger"; // Import your logger
 import fs from "fs";
@@ -84,6 +84,33 @@ export const extractS3KeyFromUrl = (s3Url: string): string | null => {
     return key;
   } catch (error) {
     logger.error(`${serviceLocation}: Error extracting key from S3 URL: ${s3Url}`, error);
+    return null;
+  }
+};
+
+// Get file size from S3 using HeadObject
+export const getS3FileSize = async (s3Url: string): Promise<number | null> => {
+  if (!s3Client || !process.env.AWS_BUCKET_NAME) {
+    logger.error(`${serviceLocation}: Cannot get file size from S3: Client or bucket not configured`);
+    return null;
+  }
+
+  try {
+    const s3Key = extractS3KeyFromUrl(s3Url);
+    if (!s3Key) {
+      logger.error(`${serviceLocation}: Failed to extract S3 key from URL: ${s3Url}`);
+      return null;
+    }
+
+    const command = new HeadObjectCommand({
+      Bucket: process.env.AWS_BUCKET_NAME,
+      Key: s3Key,
+    });
+
+    const response = await s3Client.send(command);
+    return response.ContentLength || null;
+  } catch (error) {
+    logger.error(`${serviceLocation}: Error getting file size for ${s3Url}:`, error);
     return null;
   }
 };
