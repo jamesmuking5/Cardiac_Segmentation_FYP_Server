@@ -38,20 +38,24 @@ RUN npm ci --only=production
 # Copy built application from the builder stage
 COPY --from=builder /app/dist ./dist
 
+# Copy public assets from the builder stage
+COPY --from=builder /app/public ./public
+
 # Copy Node.js node_modules from the builder stage
 COPY --from=builder /app/node_modules ./node_modules
 
 # Create a directory for Python scripts inside the /app directory
-RUN mkdir -p /app/python
+RUN mkdir -p /app/dist/python
 
 # Copy the Python scripts
-COPY src/python/extract_metadata.py /app/python/
-COPY src/python/convert_to_jpeg.py /app/python/
+COPY src/python/extract_metadata.py /app/dist/python/
+COPY src/python/convert_to_jpeg.py /app/dist/python/
+COPY src/python/create_nifti_from_segmentations.py /app/dist/python/
 
 # Install Python dependencies for your scripts in a virtual environment
-COPY src/python/requirements.txt /app/python/
+COPY src/python/requirements.txt /app/dist/python/
 RUN python3 -m venv /opt/venv \
-    && /opt/venv/bin/pip install --no-cache-dir -r /app/python/requirements.txt
+    && /opt/venv/bin/pip install --no-cache-dir -r /app/dist/python/requirements.txt
 
 # Activate the virtual environment for subsequent commands
 # This ensures that when Node.js calls 'python3', it uses the one from the venv

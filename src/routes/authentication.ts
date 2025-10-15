@@ -4,11 +4,14 @@
 import express, { Request, Response, NextFunction } from "express";
 import passport from "passport";
 import { IUser, IUserSafe, UserRole, createUser, readUser, updateUser, deleteUser, authenticateUser } from "../services/database"; // CRUD + Auth functions for User
-import { isAuth, isAuthAndAdmin, isAuthAndUser } from "../services/passportjs"; // Import Passport.js middleware
+import { isAuth, isAuthAndAdmin, isAuthAndNotGuest, isAuthandGuest } from "../services/passportjs"; // Import Passport.js middleware
 import logger from "../services/logger"; // Import logger
+// import { extractS3KeyFromUrl, deleteFromS3 } from "../services/s3_handler";
 import validateFields from "../utils/field_validation"; // Import reusable validation middleware
 import { validationResult } from 'express-validator'; // Import express-validator for input validation
 import { v4 as uuidv4 } from 'uuid'; // Import UUID for generating unique guest IDs
+import { cleanupUserS3Storage } from '../services/s3_handler';
+import { handleUserSaveUnsave } from "../jobs/projectcleanupjob"; // Import project handler for user project management
 
 const router = express.Router();
 const serviceLocation = "API(Authentication)"; // Service location for logging
@@ -52,6 +55,65 @@ router.post("/register",
   }
 );
 
+// Upgrade guest to registered user (tested)
+router.post("/register-from-guest",
+  isAuthandGuest,
+  validateFields, // Validate the fields for upgrade
+  (req: Request, res: Response, next: NextFunction): void => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      res.status(400).json({ register: false, errors: errors.array() });
+    } else {
+      next(); // Proceed to registration if validation passes
+    }
+  },
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const { username, password, email, phone } = req.body;
+      const guestUser = req.user;
+
+      if (!guestUser || !guestUser._id) {
+        logger.error(`${serviceLocation}: Guest user not found or missing ID.`);
+        res.status(400).json({ register: false, message: "Guest user not found." });
+        return;
+      }
+
+      // Update the guest entry with new details and change role to User
+      const updateData = {
+        username,
+        password,
+        email,
+        phone,
+        role: UserRole.User, // Change role to User
+      };
+      const result = await updateUser(guestUser._id, updateData);
+
+      // Check if the update was successful
+      if (!result.success) {
+        logger.error(`${serviceLocation}: Failed to upgrade guest user ${guestUser.username}: ${result.message}`);
+        res.status(400).json({ register: false, message: result.message });
+        return;
+      }
+
+      // If successful, return the updated user information
+      if (result.success && result.user) {
+        logger.info(`${serviceLocation}: Guest user ${guestUser.username} upgraded to registered user ${result.user.username}.`);
+        res.status(200).json({
+          register: true,
+          message: `Guest ${result.user?.username} upgraded to registered user successfully.`,
+          user: result.user,
+        });
+        return;
+      }
+
+    }
+    catch (error: unknown) {
+      logger.error(`${serviceLocation}: Error during guest upgrade: ${error}`);
+      res.status(500).json({ register: false, message: "Internal error during guest upgrade." });
+    }
+  }
+)
+
 router.post("/login",
   [validateFields[0], validateFields[1]],  // Username and password validation
   (req: Request, res: Response, next: NextFunction): void => {
@@ -91,7 +153,6 @@ router.post("/login",
 );
 
 router.post("/logout", isAuth, async (req: Request, res: Response): Promise<void> => {
-  // Store user info before logout for potential guest cleanup
   const user = req.user;
   const isGuest = user && typeof user.username === 'string' && user.username.startsWith('guest_');
   const userId = user?._id;
@@ -113,17 +174,15 @@ router.post("/logout", isAuth, async (req: Request, res: Response): Promise<void
       res.status(500).json({ message: "Internal error when logging out." });
       return; // Stop further execution
     }
-
-    // If this is a guest user, delete their account after logout
+    // If this is a guest user, delete their account and associated data
     if (isGuest && userId) {
       try {
         logger.info(`${serviceLocation}: Cleaning up guest user account: ${username}`);
 
-        // Here you would add your S3 cleanup code
-        // For example:
-        // await cleanupUserS3Storage(userId);
+        // Step 1: Cleanup S3 files for the guest user
+        await cleanupUserS3Storage(userId);
 
-        // Delete the user which will cascade delete all associated records
+        // Step 2: Delete the user, which will cascade delete all associated records
         const deleteResult = await deleteUser(userId);
 
         if (deleteResult.success) {
@@ -133,6 +192,21 @@ router.post("/logout", isAuth, async (req: Request, res: Response): Promise<void
         }
       } catch (cleanupError) {
         logger.error(`${serviceLocation}: Error during guest cleanup for ${username} (${userId}): ${cleanupError}`);
+        // Continue with response even if cleanup fails - the user is still logged out
+      }
+    }
+
+    // If this is a regular user (not a guest), handle their projects
+    if (!isGuest && userId) {
+      try {
+        logger.info(`${serviceLocation}: Cleaning up user projects for user: ${username}`);
+
+        // Use handleUserSaveUnsave to process user projects
+        await handleUserSaveUnsave(userId, false); // Set isSaved=false to delete unsaved projects
+
+        logger.info(`${serviceLocation}: User ${username} (${userId}) projects processed successfully.`);
+      } catch (cleanupError) {
+        logger.error(`${serviceLocation}: Error during user project cleanup for ${username} (${userId}): ${cleanupError}`);
         // Continue with response even if cleanup fails - the user is still logged out
       }
     }
@@ -147,14 +221,14 @@ router.post("/logout", isAuth, async (req: Request, res: Response): Promise<void
 
 // Delete user route
 router.post("/delete",
-  isAuthAndUser,
+  isAuthAndNotGuest,
   async (req: Request, res: Response): Promise<void> => {
     try {
       if (req.user && req.user._id) {
         const userId = req.user._id;
 
         // Clean up user data before deletion
-        // Add S3 cleanup code here 
+        await cleanupUserS3Storage(userId);
 
         // Delete the user from the database
         const deleteResult = await deleteUser(userId);
@@ -236,12 +310,18 @@ router.post("/guest", async (req: Request, res: Response): Promise<void> => {
 router.post("/update",
   // Validate the input fields for update
   validateFields,
-  isAuthAndUser, async (req: Request, res: Response): Promise<void> => {
+  isAuthAndNotGuest, async (req: Request, res: Response): Promise<void> => {
     try {
       if (req.user && req.user._id) {
         const userid = req.user._id;
         // Only allow updates to username, email, and phone (not password or role)
         const { username, email, phone } = req.body;
+
+        // If other fields are provided, respond with an error
+        if (Object.keys(req.body).length > 3 || !username || !email || !phone) {
+          res.status(400).json({ update: false, message: "Only username, email, and phone fields are allowed." });
+          return;
+        }
 
         // Update the user information in the database
         const result = await updateUser(userid, { username, email, phone });
@@ -267,12 +347,18 @@ router.post("/update",
 
 // Update route for user password
 router.post("/update-password",
-  isAuthAndUser,
+  isAuthAndNotGuest,
   validateFields[1], async (req: Request, res: Response): Promise<void> => {
     try {
       if (req.user && req.user._id) {
         const userid = req.user._id;
         const { old_password, password } = req.body;
+
+        // If other fields are provided, respond with an error
+        if (Object.keys(req.body).length > 2 || !old_password || !password) {
+          res.status(400).json({ update: false, message: "Only old_password and password fields are allowed." });
+          return;
+        }
 
         // Check if the old password is correct
         const isPasswordValid = await authenticateUser(req.user.username, old_password);
@@ -369,10 +455,168 @@ router.get("/fetch", isAuth, async (req: Request, res: Response): Promise<void> 
   }
 });
 
+// Admin-only route
+// This route is restricted to admin users only. It ensures the user is logged in and has the admin role.
+router.get("/admin", isAuthAndAdmin, (req: Request, res: Response) => {
+  res.status(200).json({ message: "You are an admin!" });
+});
+
+// Admin-only route to delete a user
+// Admin-only route to delete a user by username
+router.post("/admin-delete-user",
+  isAuthAndAdmin,
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const { usernameToDelete } = req.body; // Expecting usernameToDelete in the request body
+
+      if (!usernameToDelete) {
+        res.status(400).json({ delete: false, message: "Username to delete is required." });
+        return;
+      }
+
+      // Check if the user exists by username
+      const userExistsResult = await readUser({ username: usernameToDelete });
+
+      if (!userExistsResult.success || !userExistsResult.users || userExistsResult.users.length === 0) {
+        res.status(404).json({ delete: false, message: `User with username '${usernameToDelete}' not found.` });
+        return;
+      }
+
+      // Assuming readUser returns an array and we take the first one if multiple (though username should be unique)
+      const userToDelete = userExistsResult.users[0];
+
+      if (!userToDelete._id) {
+        logger.error(`${serviceLocation}: User '${usernameToDelete}' found but has no _id.`);
+        res.status(500).json({ delete: false, message: "User data is inconsistent; missing ID." });
+        return;
+      }
+
+      const userIdToDelete = userToDelete._id;
+
+      // Clean up user data before deletion using their ID
+      await cleanupUserS3Storage(userIdToDelete);
+
+      // Delete the user from the database using their ID
+      const deleteResult = await deleteUser(userIdToDelete);
+
+      if (!deleteResult.success) {
+        res.status(400).json({ delete: false, message: deleteResult.message || `Failed to delete user '${usernameToDelete}'.` });
+        return;
+      }
+
+      logger.info(`${serviceLocation}: Admin deleted user '${usernameToDelete}' (ID: ${userIdToDelete}) successfully.`);
+      res.status(200).json({
+        delete: true,
+        message: `User '${usernameToDelete}' deleted successfully by admin.`,
+      });
+
+    } catch (error: unknown) {
+      logger.error(`${serviceLocation}: Error during admin user deletion (username: ${req.body.usernameToDelete}): ${error}`);
+      res.status(500).json({ delete: false, message: "Internal error during admin user deletion." });
+    }
+  }
+);
+
+// Admin route to update any user's information
+router.post("/admin-update-user",
+  isAuthAndAdmin,
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const { targetUsername, updates } = req.body;
+
+      if (!targetUsername) {
+        res.status(400).json({ update: false, message: "Target username is required." });
+        return;
+      }
+
+      if (!updates || Object.keys(updates).length === 0) {
+        res.status(400).json({ update: false, message: "No update information provided." });
+        return;
+      }
+
+      // Find the user by username
+      const userToUpdateResult = await readUser({ username: targetUsername });
+
+      if (!userToUpdateResult.success || !userToUpdateResult.users || userToUpdateResult.users.length === 0) {
+        res.status(404).json({ update: false, message: `User "${targetUsername}" not found.` });
+        return;
+      }
+
+      const userToUpdate = userToUpdateResult.users[0];
+      if (!userToUpdate._id) {
+        res.status(500).json({ update: false, message: "User ID is missing for the target user." });
+        return;
+      }
+
+      // Prepare the updates object, filtering for allowed fields
+      const allowedUpdates: {
+        username?: string;
+        email?: string;
+        phone?: string;
+        role?: UserRole;
+        password?: string;
+      } = {};
+
+      if (updates.username !== undefined) allowedUpdates.username = updates.username;
+      if (updates.email !== undefined) allowedUpdates.email = updates.email;
+      if (updates.phone !== undefined) allowedUpdates.phone = updates.phone;
+      if (updates.role !== undefined) allowedUpdates.role = updates.role;
+      if (updates.password !== undefined) allowedUpdates.password = updates.password;
+
+      if (Object.keys(allowedUpdates).length === 0) {
+        res.status(400).json({ update: false, message: "No valid fields provided for update." });
+        return;
+      }
+
+      // Update the user information in the database
+      const result = await updateUser(userToUpdate._id, allowedUpdates);
+
+      if (!result.success) {
+        res.status(400).json({ update: false, message: result.message });
+        return;
+      }
+
+      logger.info(`${serviceLocation}: Admin ${req.user?.username} updated user ${targetUsername} successfully.`);
+      res.status(200).json({
+        update: true,
+        message: `User ${targetUsername}'s information updated successfully.`,
+        user: result.user, // Contains the updated user information (excluding password)
+      });
+
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : "Unknown error";
+      logger.error(`${serviceLocation}: Error during admin user update: ${errorMessage}`);
+      res.status(500).json({ update: false, message: "Internal error during admin user update." });
+    }
+  }
+);
+
+// Fetch all users route (Admin only)
+router.get("/users", isAuthAndAdmin, async (req: Request, res: Response): Promise<void> => {
+  try {
+    const result = await readUser({}); // Or readUser() if that's the convention
+
+    if (!result.success || !result.users) {
+      res.status(404).json({ fetch: false, message: "No users found or error fetching users." });
+      return;
+    }
+
+    logger.info(`${serviceLocation}: Fetched all users.`);
+    res.status(200).json({
+      fetch: true,
+      message: "All users fetched successfully.",
+      users: result.users, // Assuming result.users is an array of IUserSafe
+    });
+  } catch (error: unknown) {
+    logger.error(`${serviceLocation}: Error fetching all users: ${error}`);
+    res.status(500).json({ fetch: false, message: "Internal error during user fetch." });
+  }
+});
+
 // Middleware-protected route
 // This route is only accessible to users who are logged in (i.e., authenticated users). It acts as a basic protected endpoint.
 router.get("/protected", isAuth, (req: Request, res: Response) => {
-  res.status(200).json({ message: "You are authenticated!" });
+  res.status(200).json({ message: "You are authenticated!", you: req.user?.username });
 });
 
 // Admin-only route

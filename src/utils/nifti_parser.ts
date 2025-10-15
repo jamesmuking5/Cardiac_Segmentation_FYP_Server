@@ -4,6 +4,9 @@
 import { execFile } from 'child_process';
 import path from 'path';
 import { promisify } from 'util';
+import LogError from './error_logger';
+
+const serviceLocation = "NIfTI Parser";
 
 const execFileAsync = promisify(execFile);
 
@@ -27,6 +30,7 @@ export interface INiftiMetadata {
         z: number | null; // Voxel size in the z-direction (mm)
         t: number | null; // Time resolution, if applicable (e.g., seconds per frame)
     };
+    affineMatrix: number[][]; // 4x4 affine transformation matrix from NIfTI header
 }
 
 /**
@@ -44,9 +48,9 @@ export async function extractNiftiMetadata(niftiPath: string): Promise<INiftiMet
         const parsed: INiftiMetadata = JSON.parse(stdout);
         return parsed;
   
-    } catch (error: any) {
+    } catch (error: unknown) {
         // Log an error if metadata extraction fails
-        console.error('Failed to extract NIfTI metadata:', error.message || error);
+        LogError(error as Error, serviceLocation, "Error extracting metadata from NIfTI file");
   
         // Return a fallback object with default values to ensure robustness
         return {
@@ -63,6 +67,7 @@ export async function extractNiftiMetadata(niftiPath: string): Promise<INiftiMet
             z: null,
             t: null,
             },
+            affineMatrix: [], // Empty array as fallback for affine matrix
         };
     }
   }

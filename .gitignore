@@ -7,3 +7,6 @@
 /src/temp_upload/*
 /src/temp_jpeg/.gitkeep
 /src/temp_jpeg/*
+/src/temp_mesh/*
+
+.venv/

@@ -1,11 +1,14 @@
 import cron from 'node-cron';
 import { readUser, deleteUser, UserRole, } from '../services/database';
 import logger from '../services/logger';
-// import { cleanupUserS3Storage } from '../services/s3Cleanup'; // Assuming you create this
+import { cleanupUserS3Storage } from '../services/s3_handler';
+import cronstrue from 'cronstrue';
 
 let INACTIVE_THRESHOLD_MS = parseInt(process.env.GUEST_INACTIVITY_THRESHOLD_HOURS || '24', 10) * 60 * 60 * 1000; // Default 24 hours
 // If development, set to 0 to trigger immediate cleanup
 if (process.env.NODE_ENV === 'development') INACTIVE_THRESHOLD_MS = 0; // For testing purposes, set to 0 to trigger immediate cleanup
+
+const serviceLocation = "Guest Cleanup CRON";
 
 async function cleanupInactiveGuests(): Promise<void> {
     logger.info('GuestCleanupJob: Starting inactive guest cleanup...');
@@ -33,8 +36,8 @@ async function cleanupInactiveGuests(): Promise<void> {
             if (now - lastActivity > INACTIVE_THRESHOLD_MS) {
                 logger.info(`GuestCleanupJob: Found inactive guest ${guest.username} (${guest._id}). Last active: ${new Date(lastActivity).toISOString()}. Cleaning up...`);
 
-                // 1. TODO: Add S3 Cleanup
-                // await cleanupUserS3Storage(guest._id); 
+                // Step 1: Cleanup S3 files
+                await cleanupUserS3Storage(guest._id);
 
                 // 2. Delete DB Records
                 const deleteResult = await deleteUser(guest._id);
@@ -54,18 +57,16 @@ async function cleanupInactiveGuests(): Promise<void> {
 }
 
 // Schedule the job (e.g., run every day at 3:00 AM)
-// Adjust the cron schedule as needed: '0 3 * * *'
 export async function scheduleGuestCleanup(): Promise<void> {
-    cron.schedule(process.env.GUEST_CLEANUP_CRON_SCHEDULE || '0 3 * * *', cleanupInactiveGuests, {
-        scheduled: true,
-        timezone: "Asia/Singapore" // Example timezone
-    });
-    logger.info(`GuestCleanupJob: Scheduled to run daily at ${process.env.GUEST_CLEANUP_CRON_SCHEDULE || '0 3 * * *'}`);
+    const cronExpression = process.env.GUEST_CLEANUP_CRON_SCHEDULE || '0 3 * * *'; // Default to daily at 3:00 AM
+    const cronDescription = cronstrue.toString(cronExpression, { throwExceptionOnParseError: true });
+    // Log the cron schedule description
+    cron.schedule(cronExpression, cleanupInactiveGuests);
+    logger.info(`${serviceLocation}: Scheduled to run daily ${cronDescription} (${cronExpression})`);
 
     // Optional: Run once on startup after a delay
     // setTimeout(cleanupInactiveGuests, 5 * 60 * 1000); // Run 5 mins after start
 
     // Optional: Run immediately on startup
     await cleanupInactiveGuests(); // Uncomment to run immediately on startup
-
 }
