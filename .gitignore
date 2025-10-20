@@ -1,4 +1,5 @@
 .env
+.env.fyp
 /node_modules
 /logs/winston_logger/*
 /dist
