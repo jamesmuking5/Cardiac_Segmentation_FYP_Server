@@ -66,6 +66,8 @@ app.use(
       httpOnly: true,
       sameSite: 'lax', // Allow cross-site requests 
       maxAge: 1000 * 60 * 60 * 24, // 1 day
+      // Only for prod:
+      domain: envType === 'production' ? '.visheart.art' : undefined,
     },
   })
 )
