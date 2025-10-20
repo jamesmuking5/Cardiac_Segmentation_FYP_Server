@@ -8,6 +8,7 @@ import projectRoute from '../routes/project_routes';
 import webhookRoute from '../routes/webhook_routes';
 import debugRoute from '../routes/debug_routes';
 import segmentationRoutes from '../routes/segmentation_routes';
+import reconstructionRoutes from '../routes/reconstruction_routes';
 import gpuStatusRoute from '../routes/gpu_status';
 import adminToolsRoute from '../routes/admin_tools';
 import sampleNiftiRoute from '../routes/sample_nifti';
@@ -25,8 +26,9 @@ const app = express();
 const serviceLocation = "ExpressApp"; // For logging context
 
 /* Middleware */
-// Apply essential middleware like parsing JSON bodies
+// Apply essential middleware like parsing JSON bodies and URL-encoded data
 app.use(express.json({ limit: '10mb' })); // Increase limit for large JSON payloads (for webhook callback)
+app.use(express.urlencoded({ limit: '10mb', extended: true })); // Handle multipart form data parsing
 
 // Setup Redis session store
 const redisStore = new RedisStore({
@@ -135,6 +137,9 @@ if (envType === 'development') {
 
 // Segmentation Data Routes
 app.use('/segmentation', segmentationRoutes); // Mount the segmentation routes
+
+// 4D Reconstruction Routes
+app.use('/reconstruction', reconstructionRoutes); // Mount the 4D reconstruction routes
 
 // Status Routes (mount under '/status')
 app.use('/status', gpuStatusRoute); // Mount GPU status routes

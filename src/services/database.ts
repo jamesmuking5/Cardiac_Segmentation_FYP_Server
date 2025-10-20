@@ -13,6 +13,7 @@ const serviceLocation = "Database"; // Service location for error logging
 // Import Types
 import { IUser, IUserDocument, IUserSafe, UserRole, CRUDOperation, UserCrudResult, IProjectDocument, IProjectSegmentationMaskDocument, segmentationSource } from "../types/database_types"; // Import the user types
 import { FileType, FileDataType, ComponentBoundingBoxesClass, IProject, IProjectSegmentationMask, ProjectCrudResult, ProjectSegmentationMaskCrudResult } from "../types/database_types"; // Import the project types
+import { IProjectReconstruction, IProjectReconstructionDocument, ProjectReconstructionCrudResult, MeshFormat } from "../types/database_types"; // Import the project reconstruction types
 import { JobStatus, IJob, IJobDocument, JobCrudResult } from "../types/database_types"; // Import the job types
 import { IGPUHost, IGPUHostDocument, GPUHostCrudResult } from "../types/database_types"; // Import the GPU host types
 
@@ -100,7 +101,7 @@ const userSchema = new Schema<IUserDocument>({
   role: { type: String, required: true, enum: Object.values(UserRole), default: UserRole.User },
 }, { timestamps: true }); // Automatically add createdAt and updatedAt timestamps
 // Hooks for pre-save and pre-delete operations (must be before the model creation)
-// If a user is deleted, delete all their projects and segmentation masks (especially important for guest accounts)
+// If a user is deleted, delete all their projects, segmentation masks, and reconstructions (especially important for guest accounts)
 userSchema.pre('deleteOne', { document: true, query: false }, async function (next) {
   const serviceLocationCascade = `${serviceLocation} - User Delete Hook`;
   try {
@@ -108,15 +109,21 @@ userSchema.pre('deleteOne', { document: true, query: false }, async function (ne
     const projects = await projectModel.find({ userid: this._id }).select('_id').lean(); // Use lean for plain objects
     const projectIds = projects.map(p => p._id);
     if (projectIds.length > 0) {
-      logger.info(`${serviceLocation}: Deleting ${projectIds.length} projects and their associated masks for user ${this._id}`);
-      // Delete all masks for all found projects first
+      logger.info(`${serviceLocation}: Deleting ${projectIds.length} projects and their associated data for user ${this._id}`);
+      
+      // Delete all reconstructions for all found projects first
+      const reconstructionDeleteResult = await projectReconstructionModel.deleteMany({ projectid: { $in: projectIds } });
+      logger.info(`${serviceLocation}: Deleted ${reconstructionDeleteResult.deletedCount} reconstructions for user ${this._id}`);
+      
+      // Delete all masks for all found projects
       const maskDeleteResult = await projectSegmentationMaskModel.deleteMany({ projectid: { $in: projectIds } });
       logger.info(`${serviceLocation}: Deleted ${maskDeleteResult.deletedCount} segmentation masks for user ${this._id}`);
+      
       // Then delete all projects for the user
       const projectDeleteResult = await projectModel.deleteMany({ userid: this._id });
       logger.info(`${serviceLocation}: Deleted ${projectDeleteResult.deletedCount} projects for user ${this._id}`);
     } else {
-      logger.info(`${serviceLocation}: No projects found for user ${this._id}. No cascade delete needed for projects/masks.`);
+      logger.info(`${serviceLocation}: No projects found for user ${this._id}. No cascade delete needed for projects/masks/reconstructions.`);
     }
     next(); // Proceed to user deletion
   } catch (error: unknown) {
@@ -639,12 +646,17 @@ projectSchema.pre('save', async function (next) {
   }
   next();
 });
-// When a project is deleted, delete ALL associated segmentation masks
+// When a project is deleted, delete ALL associated segmentation masks AND reconstructions
 // THE S3 FILES STILL EXIST, API SIDE?
 projectSchema.pre('deleteOne', { document: true, query: false }, async function (next) {
   const serviceLocationCascade = `${serviceLocation} - Project Delete Hook`;
   try {
     logger.info(`${serviceLocation}: Cascade delete triggered for project ${this._id}`);
+    
+    // Delete all reconstructions associated with this project first
+    const reconstructionDeleteResult = await projectReconstructionModel.deleteMany({ projectid: this._id });
+    logger.info(`${serviceLocation}: Deleted ${reconstructionDeleteResult.deletedCount} reconstructions for project ${this._id}`);
+    
     // Delete all masks associated with this project
     const maskDeleteResult = await projectSegmentationMaskModel.deleteMany({ projectid: this._id });
     logger.info(`${serviceLocation}: Deleted ${maskDeleteResult.deletedCount} segmentation masks for project ${this._id}`);
@@ -652,11 +664,14 @@ projectSchema.pre('deleteOne', { document: true, query: false }, async function 
   } catch (error: unknown) {
     LogError(error as Error, serviceLocationCascade, `Error during cascade delete for project ${this._id}.`);
     // Halt the original project deletion by passing the error
-    next(error instanceof Error ? error : new Error('Failed to cascade delete segmentation masks'));
+    next(error instanceof Error ? error : new Error('Failed to cascade delete segmentation masks and reconstructions'));
   }
 });
 // Create the model with proper typing
 const projectModel = model<IProject, Model<IProject>>("Project", projectSchema);
+
+// Add project indexes after model creation
+projectSchema.index({ userid: 1, name: 1 }, { unique: true }); // Unique index on userid and name
 
 // Project Segmentation Mask Collection
 // Create segmentation mask content schema for use in project segmentation mask schema (Nest Depth: 3)
@@ -716,9 +731,93 @@ projectSegmentationMaskSchema.pre('save', async function (next) {
 });
 const projectSegmentationMaskModel = model<IProjectSegmentationMask, Model<IProjectSegmentationMask>>("Segmentation Masks", projectSegmentationMaskSchema);
 
-// Add an index to improve query performance
-projectSchema.index({ userid: 1, name: 1 }, { unique: true }); // Unique index on userid and name
-projectSegmentationMaskSchema.index({ projectid: 1 });
+// Add segmentation mask indexes after model creation  
+projectSegmentationMaskSchema.index({ projectid: 1 }); // Index on project ID for segmentation masks
+
+// Project Reconstruction Collection
+// Create simplified Project 4D Reconstruction schema for AI SDF-based reconstruction
+const projectReconstructionSchema = new Schema<IProjectReconstructionDocument>({
+  // Identifiers
+  projectid: { type: String, required: true }, // MongoDB Project ID of the project to which the reconstruction belongs
+  maskId: { type: String, required: false }, // MongoDB Segmentation Mask ID used for reconstruction (optional for GPU-generated reconstructions)
+  
+  // User inputs
+  name: { type: String, required: true }, // Name of the reconstruction
+  description: { type: String, required: false }, // Description of the reconstruction
+  ed_frame: { type: Number, required: true, default: 1 }, // End-diastole frame number for reconstruction
+  isSaved: { type: Boolean, required: true, default: false }, // Indicates if the reconstruction is saved
+  isAIGenerated: { type: Boolean, required: true, default: false }, // Indicates if the reconstruction is AI generated
+  meshFormat: { type: String, required: true, enum: Object.values(MeshFormat) }, // Format of the mesh file
+  
+  // File properties
+  filename: { type: String, required: true }, // Server-generated unique filename
+  filesize: { type: Number, required: true }, // Size of the reconstruction file in bytes
+  filehash: { type: String, required: true }, // Hash of the reconstruction file for integrity verification
+  
+  // Location tracking
+  basepath: { type: String, required: true }, // Base path for the reconstruction storage (e.g., S3 bucket URL)
+  reconstructionfolderpath: { type: String, required: true }, // Folder path for the reconstruction file (e.g., S3 bucket URL)
+  
+  // 4D Reconstruction Mesh - single mesh file from AI SDF model
+  reconstructedMesh: {
+    path: { type: String, required: true }, // S3 path to the mesh file
+    filename: { type: String, required: true }, // Mesh filename (e.g., projectid_reconstructionid_4d.npz)
+    filesize: { type: Number, required: true }, // Size of mesh file in bytes
+    hash: { type: String, required: true }, // SHA256 hash of mesh file
+    format: { type: String, required: true }, // Mesh file format (npz, obj, glb)
+    meshData: { type: String, required: false }, // Base64 encoded mesh data from GPU callback (optional)
+    reconstructionTime: { type: Number, required: false }, // Time taken for reconstruction in seconds (optional)
+    numIterations: { type: Number, required: false }, // Number of iterations used in SDF reconstruction (optional)
+    resolution: { type: Number, required: false }, // Resolution of the reconstruction grid (optional)
+  },
+}, { timestamps: true }); // Automatically add createdAt and updatedAt timestamps
+
+// Hooks for pre-save and pre-delete operations (must be before the model creation)
+// Add validation to ensure projectid exists before saving the reconstruction
+projectReconstructionSchema.pre('save', async function (next) {
+  const projectExists = await projectModel.exists({ _id: this.projectid });
+  if (!projectExists) {
+    throw new Error('Referenced project does not exist');
+  }
+  
+  // Validate that maskId exists and belongs to the same project (only if maskId is provided)
+  if (this.maskId) {
+    const maskExists = await projectSegmentationMaskModel.findOne({ 
+      _id: this.maskId,
+      projectid: this.projectid 
+    });
+    if (!maskExists) {
+      throw new Error('Referenced segmentation mask does not exist or does not belong to the same project');
+    }
+  }
+  
+  // Validate reconstruction mesh data consistency
+  if (this.reconstructedMesh) {
+    // Validate required mesh properties
+    const requiredStringFields = ['path', 'filename', 'hash', 'format'];
+    for (const field of requiredStringFields) {
+      if (!this.reconstructedMesh[field as keyof typeof this.reconstructedMesh] || 
+          typeof this.reconstructedMesh[field as keyof typeof this.reconstructedMesh] !== 'string') {
+        throw new Error(`reconstructedMesh.${field} is required and must be a non-empty string`);
+      }
+    }
+    
+    // Validate filesize
+    if (typeof this.reconstructedMesh.filesize !== 'number' || this.reconstructedMesh.filesize < 0) {
+      throw new Error('reconstructedMesh.filesize must be a non-negative number');
+    }
+  }
+  
+  next();
+});
+
+// Create the model with proper typing
+const projectReconstructionModel = model<IProjectReconstructionDocument, Model<IProjectReconstructionDocument>>("4D reconstructions", projectReconstructionSchema);
+
+// Add reconstruction indexes BEFORE model creation for better performance
+projectReconstructionSchema.index({ maskId: 1 }); // Index on mask ID for performance
+projectReconstructionSchema.index({ projectid: 1, maskId: 1 }); // Compound index for project-mask queries (also covers projectid-only queries)
+projectReconstructionSchema.index({ projectid: 1, name: 1 }, { unique: true }); // Unique index on project ID and name (also covers projectid-only queries)
 
 /**
  * Creates a new project record in the database.
@@ -1396,6 +1495,355 @@ const deleteProjectSegmentationMask = async (maskid: string): Promise<ProjectSeg
   }
 }
 
+/* Project Reconstruction section */
+
+/**
+ * Creates a new 3D reconstruction record in the database.
+ * Validates the provided data, including checking for the existence of the referenced project ID,
+ * required segmentation mask ID, ensuring string inputs are not empty, numeric inputs are valid,
+ * and that the segmentation mask belongs to the same project.
+ * 
+ * @async
+ * @function createProjectReconstruction
+ * @param {IProjectReconstruction} reconstruction - An object containing the details of the reconstruction to create.
+ * @returns {Promise<ProjectReconstructionCrudResult>} A promise resolving to a ProjectReconstructionCrudResult object.
+ * - On success: `{ success: true, operation: CREATE, projectreconstruction: IProjectReconstructionDocument }` containing the created reconstruction document.
+ * - On failure (project not found): `{ success: false, operation: CREATE, message: "Project ID ... does not exist." }`.
+ * - On failure (segmentation mask not found or mismatch): `{ success: false, operation: CREATE, message: "Segmentation mask ... does not exist or does not belong to the same project." }`.
+ * - On failure (duplicate name): `{ success: false, operation: CREATE, message: "Reconstruction with name ... already exists for this project." }`.
+ * - On failure (invalid input): `{ success: false, operation: CREATE, message: "Invalid input parameters..." }`.
+ * - On database error: `{ success: false, operation: CREATE, message: "Error creating project reconstruction." }`.
+ */
+const createProjectReconstruction = async (
+  reconstruction: IProjectReconstruction
+): Promise<ProjectReconstructionCrudResult> => {
+  const operation = CRUDOperation.CREATE;
+  const recon = reconstruction; 
+  try {
+    // 1. Validate that referenced project exists
+    const projectid = reconstruction.projectid;
+    const projectidexists = await projectModel.exists({ _id: projectid });
+    if (!projectidexists) {
+      logger.warn(`${serviceLocation}: Project ID ${projectid} does not exist.`);
+      return { success: false, operation, message: `Project ID ${projectid} does not exist.` };
+    }
+
+    // 2. Validate that the maskId exists and belongs to the same project (only if maskId is provided)
+    if (recon.maskId) {
+      const maskExists = await projectSegmentationMaskModel.findOne({ 
+        _id: recon.maskId
+      });
+      
+      if (!maskExists) {
+        logger.warn(`${serviceLocation}: Segmentation mask ID ${recon.maskId} does not exist.`);
+        return { success: false, operation, message: `Segmentation mask ID ${recon.maskId} does not exist.` };
+      }
+      
+      // Ensure the mask's projectId matches the reconstruction's projectId
+      if (maskExists.projectid !== recon.projectid) {
+        logger.warn(`${serviceLocation}: Segmentation mask ${recon.maskId} does not belong to project ${recon.projectid}. Mask belongs to project ${maskExists.projectid}.`);
+        return { success: false, operation, message: `Segmentation mask ${recon.maskId} does not belong to project ${recon.projectid}. Mask belongs to project ${maskExists.projectid}.` };
+      }
+    }
+
+    // 3. Check for name uniqueness within the project 
+    const reconstructionNameExists = await projectReconstructionModel.exists({ 
+      name: recon.name, 
+      projectid: recon.projectid 
+    });
+    
+    if (reconstructionNameExists) {
+      logger.warn(`${serviceLocation}: Invalid input parameters for project reconstruction creation: Reconstruction name ${recon.name} already exists for this project.`);
+      return { success: false, operation, message: `Invalid input parameters for project reconstruction creation: Reconstruction name ${recon.name} already exists for this project.` };
+    }
+
+    // 5. Validate required string inputs
+    const requiredStringInputs = [
+      recon.projectid,
+      recon.maskId,
+      recon.name,
+      recon.filename,
+      recon.filehash,
+      recon.basepath,
+      recon.reconstructionfolderpath,
+      recon.meshFormat
+    ];
+    
+    const emptyStringInputs = requiredStringInputs.filter(input => !input || typeof input !== 'string' || input.trim() === '');
+    if (emptyStringInputs.length > 0) {
+      logger.warn(`${serviceLocation}: Invalid input parameters for project reconstruction creation: ${emptyStringInputs.join(", ")}`);
+      return { success: false, operation, message: `Invalid input parameters for project reconstruction creation: ${emptyStringInputs.join(", ")}` };
+    }
+
+    // 6. Validate required numeric inputs
+    const numericInputs = [recon.filesize];
+    const invalidNumericInputs = numericInputs.filter(input => typeof input !== 'number' || isNaN(input) || input < 0);
+    if (invalidNumericInputs.length > 0) {
+      logger.warn(`${serviceLocation}: Invalid numeric input parameters for project reconstruction creation: ${invalidNumericInputs.join(", ")}`);
+      return { success: false, operation, message: `Invalid numeric input parameters for project reconstruction creation.` };
+    }
+
+    // 7. Validate required boolean inputs 
+    if (typeof recon.isSaved !== 'boolean' || typeof recon.isAIGenerated !== 'boolean') {
+      logger.warn(`${serviceLocation}: Invalid boolean input parameters for project reconstruction creation: isSaved and isAIGenerated must be boolean values.`);
+      return { success: false, operation, message: `Invalid boolean input parameters for project reconstruction creation: isSaved and isAIGenerated must be boolean values.` };
+    }
+
+    // 8. Validate enum fields 
+    if (!Object.values(MeshFormat).includes(recon.meshFormat)) {
+      logger.warn(`${serviceLocation}: Invalid meshFormat: ${recon.meshFormat}. Valid values are: ${Object.values(MeshFormat).join(", ")}`);
+      return { success: false, operation, message: `Invalid meshFormat: ${recon.meshFormat}. Valid values are: ${Object.values(MeshFormat).join(", ")}` };
+    }
+
+    // 9. Validate reconstructedMesh structure 
+    if (!recon.reconstructedMesh || typeof recon.reconstructedMesh !== 'object') {
+      logger.warn(`${serviceLocation}: Invalid input parameters for project reconstruction creation: reconstructedMesh is required and must be an object.`);
+      return { success: false, operation, message: `Invalid input parameters for project reconstruction creation: reconstructedMesh is required and must be an object.` };
+    }
+
+    // Validate required mesh properties
+    const requiredMeshStringFields: (keyof typeof recon.reconstructedMesh)[] = ['path', 'filename', 'hash', 'format'];
+    for (const field of requiredMeshStringFields) {
+      const value = recon.reconstructedMesh[field];
+      if (!value || typeof value !== 'string' || (value as string).trim() === '') {
+        logger.warn(`${serviceLocation}: Invalid reconstructedMesh.${field}: must be a non-empty string`);
+        return { success: false, operation, message: `Invalid reconstructedMesh.${field}: must be a non-empty string` };
+      }
+    }
+
+    // Validate required mesh filesize
+    if (typeof recon.reconstructedMesh.filesize !== 'number' || isNaN(recon.reconstructedMesh.filesize) || recon.reconstructedMesh.filesize < 0) {
+      logger.warn(`${serviceLocation}: Invalid reconstructedMesh.filesize: must be a non-negative number`);
+      return { success: false, operation, message: `Invalid reconstructedMesh.filesize: must be a non-negative number` };
+    }
+
+    // 10. Create and save the new reconstruction 
+    const newProjectReconstruction = new projectReconstructionModel(recon);
+    const result = await newProjectReconstruction.save();
+    
+    if (!result) {
+      logger.warn(`${serviceLocation}: Error creating project reconstruction.`);
+      return { success: false, operation, message: "Error creating project reconstruction." };
+    }
+
+    logger.info(`${serviceLocation}: Project reconstruction ${result._id} created successfully for project ${recon.projectid}.`);
+    return { success: true, operation, projectreconstruction: result };
+  } catch (error: unknown) {
+    LogError(error as Error, serviceLocation, `Error creating project reconstruction, ${error}`);
+    return { success: false, operation, message: "Error creating project reconstruction." };
+  }
+};
+
+/**
+ * Reads 3D reconstruction(s) from the database based on project ID and optional reconstruction ID or mask ID.
+ * Validates input parameters and performs filtered queries based on the provided criteria.
+ * This function supports multiple query patterns:
+ * - Single reconstruction by ID (when both projectid and reconstructionid are provided)
+ * - All reconstructions for a project (when only projectid is provided)
+ * - All reconstructions for a specific project and mask combination (when projectid and maskid are provided)
+ * 
+ * @async
+ * @function readProjectReconstruction
+ * @param {string} projectid - The project ID to search for reconstructions. Must be a valid MongoDB ObjectId string.
+ * @param {string} [reconstructionid] - Optional specific reconstruction ID to find a single reconstruction.
+ * @param {string} [maskid] - Optional mask ID to filter reconstructions for a specific mask.
+ * @returns {Promise<ProjectReconstructionCrudResult>} A promise resolving to a ProjectReconstructionCrudResult object.
+ * - On success (single reconstruction found): `{ success: true, operation: READ, projectreconstruction: IProjectReconstructionDocument }`.
+ * - On success (multiple reconstructions found): `{ success: true, operation: READ, projectreconstructions: IProjectReconstructionDocument[] }`.
+ * - On success (no reconstructions found): `{ success: true, operation: READ, projectreconstructions: [], message: "No reconstructions found..." }`.
+ * - On failure (invalid input): `{ success: false, operation: READ, message: "Invalid input parameters..." }`.
+ * - On failure (reconstruction not found): `{ success: false, operation: READ, message: "Reconstruction not found." }`.
+ * - On database error: `{ success: false, operation: READ, message: "Error reading project reconstructions." }`.
+ */
+const readProjectReconstruction = async (
+  projectid: string, reconstructionid?: string, maskid?: string
+): Promise<ProjectReconstructionCrudResult> => {
+  const operation = CRUDOperation.READ;
+  try {
+    // Validate input parameters 
+    if (!projectid || typeof projectid !== 'string' || projectid.trim() === '') {
+      logger.warn(`${serviceLocation}: Invalid input parameters for reading project reconstructions: projectid must be a non-empty string.`);
+      return { success: false, operation, message: `Invalid input parameters for reading project reconstructions: projectid must be a non-empty string.` };
+    }
+
+    if (reconstructionid !== undefined && (typeof reconstructionid !== 'string' || reconstructionid.trim() === '')) {
+      logger.warn(`${serviceLocation}: Invalid input parameters for reading project reconstructions: reconstructionid must be a non-empty string if provided.`);
+      return { success: false, operation, message: `Invalid input parameters for reading project reconstructions: reconstructionid must be a non-empty string if provided.` };
+    }
+    
+    if (reconstructionid) {
+      // Find specific reconstruction 
+      const reconstruction = await projectReconstructionModel.findOne({ 
+        _id: reconstructionid, 
+        projectid: projectid 
+      });
+      
+      if (!reconstruction) {
+        logger.warn(`${serviceLocation}: Reconstruction ${reconstructionid} not found for project ${projectid}.`);
+        return { success: false, operation, message: `Reconstruction ${reconstructionid} not found for project ${projectid}.` };
+      }
+      
+      logger.info(`${serviceLocation}: Reconstruction ${reconstructionid} found for project ${projectid}.`);
+      return { success: true, operation, projectreconstruction: reconstruction };
+    } else {
+      // Build query based on provided parameters
+      const query: any = { projectid };
+      if (maskid) {
+        query.maskId = maskid;
+      }
+      
+      // Find reconstructions based on query
+      const reconstructions = await projectReconstructionModel.find(query);
+      
+      if (reconstructions.length === 0) {
+        const searchDesc = maskid ? `project ${projectid} and mask ${maskid}` : `project ${projectid}`;
+        logger.info(`${serviceLocation}: No reconstructions found for ${searchDesc}.`);
+        return { success: true, operation, projectreconstructions: [], message: `No reconstructions found for ${searchDesc}.` };
+      }
+      
+      const searchDesc = maskid ? `project ${projectid} and mask ${maskid}` : `project ${projectid}`;
+      logger.info(`${serviceLocation}: Found ${reconstructions.length} reconstruction(s) for ${searchDesc}.`);
+      return { success: true, operation, projectreconstructions: reconstructions };
+    }
+  } catch (error: unknown) {
+    LogError(error as Error, serviceLocation, `Error reading project reconstructions for project ${projectid}, ${error}`);
+    return { success: false, operation, message: "Error reading project reconstructions." };
+  }
+};
+
+/**
+ * Updates an existing project reconstruction in the database.
+ * Validates the existence of the reconstruction ID before applying updates.
+ * Checks for uniqueness of the name and validates basic field types.
+ * Follows the same pattern as updateProjectSegmentationMask for consistency.
+ * 
+ * @async
+ * @function updateProjectReconstruction
+ * @param {string} reconstructionid - The ID of the reconstruction to update.
+ * @param {Partial<IProjectReconstructionDocument>} updates - An object containing the updates to apply to the reconstruction.
+ * @returns {Promise<ProjectReconstructionCrudResult>} A promise resolving to a ProjectReconstructionCrudResult object.
+ * - On success: `{ success: true, operation: CRUDOperation.UPDATE, projectreconstruction: IProjectReconstructionDocument }` containing the updated reconstruction document.
+ * - On failure (reconstruction not found): `{ success: false, operation: CRUDOperation.UPDATE, message: "Reconstruction ID ... does not exist." }`.
+ * - On failure (name conflict): `{ success: false, operation: CRUDOperation.UPDATE, message: "Reconstruction name ... already exists for this project." }`.
+ * - On database error: `{ success: false, operation: CRUDOperation.UPDATE, message: "Error updating project reconstruction." }`.
+ */
+const updateProjectReconstruction = async (
+  reconstructionid: string,
+  updates: Partial<IProjectReconstructionDocument>
+): Promise<ProjectReconstructionCrudResult> => {
+  const operation = CRUDOperation.UPDATE;
+  try {
+    const reconstruction = await projectReconstructionModel.findById(reconstructionid);
+    if (!reconstruction) {
+      logger.warn(`${serviceLocation}: Project reconstruction ${reconstructionid} not found.`);
+      return { success: false, operation, message: `Project reconstruction ${reconstructionid} not found.` };
+    }
+
+    if (updates.name && updates.name !== reconstruction.name) {
+      const nameExists = await projectReconstructionModel.exists({
+        projectid: reconstruction.projectid,
+        name: updates.name,
+        _id: { $ne: reconstructionid }
+      });
+      if (nameExists) {
+        return { success: false, operation, message: `Reconstruction name '${updates.name}' already exists for this project.` };
+      }
+      reconstruction.name = updates.name;
+    }
+
+    if (updates.description !== undefined) {
+      reconstruction.description = updates.description;
+    }
+
+    if (updates.isSaved !== undefined) {
+      reconstruction.isSaved = updates.isSaved;
+    }
+
+    if (updates.isAIGenerated !== undefined) {
+      reconstruction.isAIGenerated = updates.isAIGenerated;
+    }
+
+    if (updates.filesize !== undefined) {
+      reconstruction.filesize = updates.filesize;
+    }
+
+    if (updates.meshFormat !== undefined) {
+      reconstruction.meshFormat = updates.meshFormat;
+    }
+
+    if (updates.reconstructedMesh) {
+      reconstruction.reconstructedMesh = updates.reconstructedMesh;
+    }
+
+    await reconstruction.save();
+
+    logger.info(`${serviceLocation}: Project reconstruction ${reconstructionid} updated successfully.`);
+    return { success: true, operation, projectreconstruction: reconstruction };
+
+  } catch (error: unknown) {
+    LogError(error as Error, serviceLocation, `Error updating project reconstruction, ${error}`);
+    return { success: false, operation, message: "Error updating project reconstruction." };
+  }
+};
+
+/**
+ * Deletes a 3D reconstruction record from the database.
+ * Validates input parameters, checks for existence, and performs deletion with verification.
+ * Follows the same pattern as deleteUser and deleteProject functions for consistency.
+ * Note: This only deletes the database record. S3 files must be cleaned up separately by the API layer.
+ * 
+ * @async
+ * @function deleteProjectReconstruction
+ * @param {string} reconstructionid - The ID of the reconstruction to delete. Must be a valid MongoDB ObjectId string.
+ * @returns {Promise<ProjectReconstructionCrudResult>} A promise resolving to a ProjectReconstructionCrudResult object.
+ * - On success: `{ success: true, operation: DELETE, message: "Reconstruction ... deleted successfully." }`.
+ * - On failure (reconstruction not found): `{ success: false, operation: DELETE, message: "Reconstruction ... not found." }`.
+ * - On failure (invalid input): `{ success: false, operation: DELETE, message: "Invalid input parameters..." }`.
+ * - On database error: `{ success: false, operation: DELETE, message: "Error deleting project reconstruction." }`.
+ */
+const deleteProjectReconstruction = async (reconstructionid: string): Promise<ProjectReconstructionCrudResult> => {
+  const operation = CRUDOperation.DELETE;
+  try {
+    // Validate input parameters 
+    if (!reconstructionid || typeof reconstructionid !== 'string' || reconstructionid.trim() === '') {
+      logger.warn(`${serviceLocation}: Invalid input parameters for deleting project reconstruction: reconstructionid must be a non-empty string.`);
+      return { success: false, operation, message: `Invalid input parameters for deleting project reconstruction: reconstructionid must be a non-empty string.` };
+    }
+
+    // Check if the reconstruction exists
+    const existingReconstruction = await projectReconstructionModel.findById(reconstructionid);
+    if (!existingReconstruction) {
+      logger.warn(`${serviceLocation}: Reconstruction ${reconstructionid} not found.`);
+      return { success: false, operation, message: `Reconstruction ${reconstructionid} not found.` };
+    }
+
+    // Store reconstruction info for logging before deletion
+    const reconstructionInfo = {
+      name: existingReconstruction.name,
+      projectid: existingReconstruction.projectid,
+      isAIGenerated: existingReconstruction.isAIGenerated
+    };
+
+    // Delete the reconstruction
+    await existingReconstruction.deleteOne();
+
+    // Verify deletion was successful by attempting to find the reconstruction again
+    const verifyDeletion = await projectReconstructionModel.findById(reconstructionid);
+    if (verifyDeletion) {
+      logger.warn(`${serviceLocation}: Reconstruction ${reconstructionid} was not deleted successfully.`);
+      return { success: false, operation, message: `Reconstruction ${reconstructionid} was not deleted successfully.` };
+    }
+    
+    // Reconstruction deleted successfully
+    logger.info(`${serviceLocation}: Reconstruction ${reconstructionid} (${reconstructionInfo.name}) deleted successfully from project ${reconstructionInfo.projectid}. AI Generated: ${reconstructionInfo.isAIGenerated}`);
+    return { success: true, operation, message: `Reconstruction ${reconstructionid} deleted successfully.` };
+
+  } catch (error: unknown) {
+    LogError(error as Error, serviceLocation, `Error deleting project reconstruction ${reconstructionid}, ${error}`);
+    return { success: false, operation, message: "Error deleting project reconstruction." };
+  }
+};
+
 // Job Queue section
 // Create Job schema
 const jobSchema = new mongoose.Schema({
@@ -1698,6 +2146,10 @@ const updateGPUHost = async (updates: Partial<IGPUHost>): Promise<GPUHostCrudRes
 // Using ES modules instead of CommonJS which is module.exports = {connectToDatabase, User};
 // ONLY unit tests should use userModel, fileModel directly, otherwise use the created functions to create users/files.
 export {
-  connectToDatabase, userModel, createUser, readUser, updateUser, deleteUser, authenticateUser, UserRole, IUser, IUserSafe, UserCrudResult, CRUDOperation, IUserDocument, IProject, IProjectDocument, IProjectSegmentationMask, projectModel, projectSegmentationMaskModel, createProject, readProject, updateProject, deleteProject, createProjectSegmentationMask, readProjectSegmentationMask, updateProjectSegmentationMask, deleteProjectSegmentationMask, jobModel, createJob, readJob, updateJob, deleteJob, JobStatus, IJob, IJobDocument, IProjectSegmentationMaskDocument, ProjectSegmentationMaskCrudResult, ProjectCrudResult,
+  connectToDatabase, userModel, createUser, readUser, updateUser, deleteUser, authenticateUser, UserRole, IUser, IUserSafe, UserCrudResult, CRUDOperation, IUserDocument, IProject, IProjectDocument, IProjectSegmentationMask, projectModel, projectSegmentationMaskModel, createProject, readProject, updateProject, deleteProject, createProjectSegmentationMask, readProjectSegmentationMask, updateProjectSegmentationMask, deleteProjectSegmentationMask, 
+  // Project Reconstruction exports
+  IProjectReconstruction, IProjectReconstructionDocument, ProjectReconstructionCrudResult, MeshFormat, projectReconstructionModel, createProjectReconstruction, readProjectReconstruction, updateProjectReconstruction, deleteProjectReconstruction,
+  // Job and GPU Host exports
+  jobModel, createJob, readJob, updateJob, deleteJob, JobStatus, IJob, IJobDocument, IProjectSegmentationMaskDocument, ProjectSegmentationMaskCrudResult, ProjectCrudResult,
   readGPUHost, updateGPUHost, seedGPUHost, gpuHostModel, GPUHostCrudResult, IGPUHost, IGPUHostDocument
 };

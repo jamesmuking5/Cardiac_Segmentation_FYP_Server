@@ -77,26 +77,43 @@ def create_nifti_with_stored_affine(segmentations_json_path, output_nifti_path,
         img_height = dimensions.get('height', 0)
         img_slices = dimensions.get('slices', 0)
         img_frames = dimensions.get('frames', 0)
-
+        
+        # Load segmentation data FIRST to determine actual frame count
+        with open(segmentations_json_path, 'r') as f:
+            all_segmentation_sets = json.load(f)
+        
+        # Determine the actual number of frames from segmentation data
+        actual_frames_in_segmentation = 0
+        if all_segmentation_sets and len(all_segmentation_sets) > 0:
+            segmentation_set = all_segmentation_sets[0]
+            frames_list = segmentation_set.get("frames", [])
+            if frames_list:
+                # Get the maximum frame index + 1 (since indices are 0-based)
+                frame_indices = [f.get("frameindex", 0) for f in frames_list]
+                actual_frames_in_segmentation = max(frame_indices) + 1 if frame_indices else 1
+        
+        # Use the maximum of project frames or actual segmentation frames
+        # This ensures we create 4D NIfTI even if project.frames is missing/wrong
+        final_frame_count = max(img_frames, actual_frames_in_segmentation)
+        
         # Determine shape based on dimensions
         # NIfTI convention: shape is (height, width, slices, frames) for numpy arrays
-        is_4d = img_frames > 0
+        # ALWAYS create 4D if we have any frame data in segmentation
+        is_4d = final_frame_count > 0
         if is_4d:
-            img_shape = (img_height, img_width, img_slices, img_frames)
+            img_shape = (img_height, img_width, img_slices, final_frame_count)
         else:
             img_shape = (img_height, img_width, img_slices)
 
         print(f"Creating NIfTI with dimensions: {img_shape}")
-        print(
-            f"Plane dimensions for RLE decoding: Height={plane_height_for_rle}, Width={plane_width_for_rle}")
+        print(f"Plane dimensions for RLE decoding: Height={plane_height_for_rle}, Width={plane_width_for_rle}")
+        print(f"Project frames: {img_frames}, Segmentation frames: {actual_frames_in_segmentation}, Final: {final_frame_count}")
+        print(f"Is 4D: {is_4d}, Frames: {final_frame_count if is_4d else 'N/A'}")
 
         # Initialize segmentation data array
         segmentation_data = np.zeros(img_shape, dtype=np.uint8)
 
-        # Load segmentation data
-        with open(segmentations_json_path, 'r') as f:
-            all_segmentation_sets = json.load(f)
-
+        # Process segmentation data (already loaded above)
         if not all_segmentation_sets:
             print(
                 "Warning: No segmentation sets found in JSON. Output NIfTI will be empty.", file=sys.stderr)
@@ -106,9 +123,9 @@ def create_nifti_with_stored_affine(segmentations_json_path, output_nifti_path,
 
             for frame_obj in segmentation_set.get("frames", []):
                 frame_idx = frame_obj.get("frameindex", 0)
-                if frame_idx >= img_frames and is_4d:
+                if frame_idx >= final_frame_count and is_4d:
                     print(
-                        f"Warning: Frame index {frame_idx} from JSON exceeds NIfTI frames {img_frames}. Skipping.", file=sys.stderr)
+                        f"Warning: Frame index {frame_idx} from JSON exceeds NIfTI frames {final_frame_count}. Skipping.", file=sys.stderr)
                     continue
 
                 for slice_obj in frame_obj.get("slices", []):
@@ -201,9 +218,17 @@ def create_nifti_with_stored_affine(segmentations_json_path, output_nifti_path,
         seg_nifti_img = nib.Nifti1Image(
             segmentation_data, affine, header=new_header)
         nib.save(seg_nifti_img, output_nifti_path)
-
+        
+        # Log label statistics for debugging
+        unique_labels = np.unique(segmentation_data)
+        label_counts = {int(label): int(np.sum(segmentation_data == label)) for label in unique_labels}
         print(f"Successfully created segmentation NIfTI: {output_nifti_path}")
         print(f"NIFTI_FILE_PATH:{os.path.abspath(output_nifti_path)}")
+        print(f"Unique labels in NIfTI: {unique_labels.tolist()}")
+        print(f"Label distribution: {label_counts}")
+        print(f"Has label 3 (LVC): {3 in unique_labels}")
+        print(f"Has label 2 (MYO): {2 in unique_labels}")
+        print(f"Has label 1 (RV): {1 in unique_labels}")
 
     except Exception as e:
         print(

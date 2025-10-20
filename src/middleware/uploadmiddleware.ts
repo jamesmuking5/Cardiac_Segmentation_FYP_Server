@@ -112,3 +112,61 @@ export const projectUploadFilter = multer({
   { name: 'name', maxCount: 1 },    // Project name field
   { name: 'description', maxCount: 1 }  // Project description field
 ]);
+
+/**
+ * File filter for GPU server reconstruction callback files
+ * Accepts OBJ/GLB mesh files and JSON metadata from GPU processing
+ */
+const objFileFilter = (req: Request, file: Express.Multer.File, cb: multer.FileFilterCallback) => {
+  const ext = path.extname(file.originalname).toLowerCase();
+  
+  // Accept OBJ/GLB mesh files and JSON metadata from GPU server
+  if (ext === '.obj' || ext === '.glb' || ext === '.json') {
+    return cb(null, true);
+  }
+  
+  // Reject unsupported file types
+  logger.warn(`${serviceLocation}: Rejected file with extension ${ext}: ${file.originalname}`);
+  const error = new multer.MulterError("LIMIT_UNEXPECTED_FILE", `Invalid file extension: ${ext}. Only .obj, .glb, and .json files allowed for GPU callbacks.`);
+  return cb(error);
+};
+
+/**
+ * Ensures temporary mesh directory exists for GPU callback file processing
+ */
+const ensureTempMeshDirExists = (): void => {
+  const tempMeshDir = "src/temp_mesh/";
+  if (!fs.existsSync(tempMeshDir)) {
+    fs.mkdirSync(tempMeshDir, { recursive: true });
+  }
+};
+
+// Initialize mesh directory
+ensureTempMeshDirExists();
+
+/**
+ * Multer middleware for GPU server reconstruction callback files
+ * Handles OBJ mesh files and JSON metadata with optimized storage configuration
+ */
+export const gpuObjUploadFilter = multer({
+  storage: multer.diskStorage({
+    destination: (req, file, cb) => {
+      // Store GPU callback files in dedicated mesh directory
+      cb(null, "src/temp_mesh/");
+    },
+    filename: (req, file, cb) => {
+      // Generate unique filename with timestamp to prevent conflicts
+      const timestamp = Date.now();
+      const sanitizedBasename = path.basename(file.originalname).replace(/[^a-zA-Z0-9._-]/g, '_');
+      const sanitizedFilename = `gpu_callback_${timestamp}_${sanitizedBasename}`;
+      cb(null, sanitizedFilename);
+    },
+  }),
+  limits: {
+    fileSize: 50 * 1024 * 1024, // 50 MB limit per individual file (increased from previous)
+    files: 50, // Maximum 50 files per reconstruction (support multi-frame)
+    parts: 100, // Maximum form parts
+    fieldSize: 10 * 1024 * 1024 // 10MB for individual form fields
+  },
+  fileFilter: objFileFilter,
+}).any(); // Accept files with any field name from multipart/form-data

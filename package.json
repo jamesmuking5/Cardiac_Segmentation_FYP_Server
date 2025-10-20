@@ -31,7 +31,8 @@
       "logs/*",
       "__tests__/*",
       "src/temp_upload/*",
-      "src/temp_jpeg/*"
+      "src/temp_jpeg/*",
+      "src/temp_mesh/*"
     ],
     "exec": "ts-node ./src/index.ts"
   },

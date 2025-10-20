@@ -1,4 +1,4 @@
-import { projectModel, projectSegmentationMaskModel, deleteProject } from "../services/database";
+import { projectModel, projectSegmentationMaskModel, deleteProject, readProjectReconstruction } from "../services/database";
 import { cleanupUserS3Storage, deleteFromS3, extractS3KeyFromUrl } from "../services/s3_handler";
 import logger from "../services/logger";
 
@@ -64,6 +64,30 @@ export const handleUserSaveUnsave = async (userId: string, isSaved: boolean): Pr
               logger.error(`${serviceLocation}: Failed to delete extracted S3 file for project ${project._id}: ${extractedKey}`);
             }
           }
+        }
+
+        // Step 2.1.5: Delete reconstruction mesh tar files
+        try {
+          const reconstructionsResult = await readProjectReconstruction(project._id.toString());
+          if (reconstructionsResult.success && reconstructionsResult.projectreconstructions) {
+            for (const recon of reconstructionsResult.projectreconstructions) {
+              if (recon.reconstructedMesh?.path) {
+                const reconKey = extractS3KeyFromUrl(recon.reconstructedMesh.path);
+                if (reconKey) {
+                  logger.info(`${serviceLocation}: Deleting reconstruction mesh file for project ${project._id}: ${reconKey}`);
+                  const success = await deleteFromS3(reconKey);
+                  if (!success) {
+                    s3CleanupSuccess = false;
+                    s3Failures.push(`reconstruction mesh: ${reconKey}`);
+                    logger.error(`${serviceLocation}: Failed to delete reconstruction S3 file for project ${project._id}: ${reconKey}`);
+                  }
+                }
+              }
+            }
+          }
+        } catch (reconError) {
+          logger.error(`${serviceLocation}: Error fetching reconstructions during cleanup for project ${project._id}:`, reconError);
+          // Don't fail the entire cleanup if reconstruction fetch fails
         }
 
         // Step 2.2: Only delete the project if S3 cleanup was successful
