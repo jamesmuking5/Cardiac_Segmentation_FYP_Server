@@ -64,7 +64,7 @@ app.use(
     cookie: {
       secure: envType === 'production', // Use secure cookies in production
       httpOnly: true,
-      sameSite: 'lax', // Allow cross-site requests 
+      sameSite: envType === 'production' ? 'none': 'lax', // Allow cross-site requests 
       maxAge: 1000 * 60 * 60 * 24, // 1 day
       // Only for prod:
       domain: envType === 'production' ? '.visheart.art' : undefined,
@@ -112,7 +112,8 @@ app.use(
 );
 
 // Trust proxy to properly read X-Forwarded-For header
-app.set("trust proxy", "loopback");
+// app.set("trust proxy", "loopback");
+app.set("trust proxy", 1);
 
 // Initialize Passport.js
 app.use(passport.initialize());
