@@ -546,9 +546,18 @@ export async function getALBTargetResponseTimeMetrics(): Promise<MetricData> {
     return getALBMetric('TargetResponseTime', 'Average');
 }
 
+// Fetch ALB HTTP 5XX Error Count (ELB) metrics
+export async function getALBHTTP5XXELBMetrics(): Promise<MetricData> {
+    return getALBMetric('HTTPCode_ELB_5XX_Count', 'Sum');
+}
+
+// Fetch ALB HTTP 5XX Error Count (Target) metrics
+export async function getALBHTTP5XXTargetMetrics(): Promise<MetricData> {
+    return getALBMetric('HTTPCode_Target_5XX_Count', 'Sum');
+}
+
 // Fetch ALB HTTP 4XX Error Count (ELB) metrics
-export async function 
-(): Promise<MetricData> {
+export async function getALBHTTP4XXELBMetrics(): Promise<MetricData> {
     return getALBMetric('HTTPCode_ELB_4XX_Count', 'Sum');
 }
 
