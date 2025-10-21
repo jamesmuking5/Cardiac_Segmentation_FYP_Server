@@ -439,3 +439,228 @@ export async function getAllS3Metrics(bucketName: string): Promise<S3Metrics> {
         throw new Error(`Failed to retrieve all S3 metrics for bucket ${bucketName}: ${errorMessage}`);
     }
 }
+
+// ===== ALB CloudWatch Metrics =====
+
+// Generic function to fetch ALB metrics from CloudWatch
+async function getALBMetric(
+    metricName: string,
+    statistic: 'Average' | 'Sum' | 'Maximum' = 'Average'
+): Promise<MetricData> {
+    try {
+        // Get ALB name from environment variable
+        const albName = process.env.ALB_NAME;
+        if (!albName) {
+            throw new Error('ALB_NAME environment variable is not set');
+        }
+
+        // Calculate time range (last 24 hours for ALB metrics)
+        const endTime = new Date();
+        const startTime = new Date(endTime.getTime() - 24 * 60 * 60 * 1000); // 24 hours ago
+
+        // Prepare CloudWatch request
+        const params: GetMetricStatisticsCommandInput = {
+            Namespace: 'AWS/ApplicationELB',
+            MetricName: metricName,
+            Dimensions: [
+                {
+                    Name: 'LoadBalancer',
+                    Value: albName,
+                },
+            ],
+            StartTime: startTime,
+            EndTime: endTime,
+            Period: 300, // 5 minutes in seconds
+            Statistics: [statistic],
+        };
+
+        logger.info(`${serviceLocation}: Fetching ${metricName} metrics for ALB ${albName} from ${startTime.toISOString()} to ${endTime.toISOString()}`);
+
+        // Execute CloudWatch query
+        const client = getCloudWatchClient();
+        const command = new GetMetricStatisticsCommand(params);
+        const response = await client.send(command);
+
+        // Process response data
+        const datapoints = response.Datapoints || [];
+
+        // Sort datapoints by timestamp (ascending order)
+        datapoints.sort((a, b) => {
+            const timeA = a.Timestamp?.getTime() || 0;
+            const timeB = b.Timestamp?.getTime() || 0;
+            return timeA - timeB;
+        });
+
+        // Extract timestamps and values based on statistic type
+        const timestamps = datapoints.map(point => point.Timestamp?.toISOString() || '');
+        const values = datapoints.map(point => {
+            let value: number;
+            switch (statistic) {
+                case 'Average':
+                    value = point.Average || 0;
+                    break;
+                case 'Sum':
+                    value = point.Sum || 0;
+                    break;
+                case 'Maximum':
+                default:
+                    value = point.Maximum || 0;
+                    break;
+            }
+            return Number(value.toFixed(2));
+        });
+
+        logger.info(`${serviceLocation}: Retrieved ${datapoints.length} ${metricName} datapoints for ALB ${albName}`);
+
+        return {
+            timestamps,
+            values,
+        };
+
+    } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+        logger.error(`${serviceLocation}: Failed to fetch ALB ${metricName} metrics: ${errorMessage}`);
+        throw new Error(`Failed to retrieve ALB ${metricName} metrics: ${errorMessage}`);
+    }
+}
+
+// Fetch ALB Request Count metrics
+export async function getALBRequestCountMetrics(): Promise<MetricData> {
+    return getALBMetric('RequestCount', 'Sum');
+}
+
+// Fetch ALB Target Response Time metrics
+export async function getALBTargetResponseTimeMetrics(): Promise<MetricData> {
+    return getALBMetric('TargetResponseTime', 'Average');
+}
+
+// Fetch ALB HTTP 5XX Error Count (ELB) metrics
+export async function getALBHTTP5XXELBMetrics(): Promise<MetricData> {
+    return getALBMetric('HTTPCode_ELB_5XX_Count', 'Sum');
+}
+
+// Fetch ALB HTTP 5XX Error Count (Target) metrics
+export async function getALBHTTP5XXTargetMetrics(): Promise<MetricData> {
+    return getALBMetric('HTTPCode_Target_5XX_Count', 'Sum');
+}
+
+// Fetch ALB Healthy Host Count metrics
+export async function getALBHealthyHostCountMetrics(): Promise<MetricData> {
+    return getALBMetric('HealthyHostCount', 'Average');
+}
+
+// Fetch ALB Unhealthy Host Count metrics
+export async function getALBUnhealthyHostCountMetrics(): Promise<MetricData> {
+    return getALBMetric('UnHealthyHostCount', 'Average');
+}
+
+// ===== ASG CloudWatch Metrics =====
+
+// Generic function to fetch ASG metrics from CloudWatch
+async function getASGMetric(metricName: string, statistic: 'Average' | 'Sum' | 'Maximum' = 'Average'): Promise<MetricData> {
+    try {
+        // Get ASG name from environment variable
+        const asgName = process.env.ASG_NAME;
+        if (!asgName) {
+            throw new Error('ASG_NAME environment variable is not set');
+        }
+        
+        // Calculate time range (last 1 hour for ASG metrics as they change frequently)
+        const endTime = new Date();
+        const startTime = new Date(endTime.getTime() - 1 * 60 * 60 * 1000); // 1 hour ago
+        
+        // Prepare CloudWatch request
+        const params: GetMetricStatisticsCommandInput = {
+            Namespace: 'AWS/AutoScaling',
+            MetricName: metricName,
+            Dimensions: [
+                {
+                    Name: 'AutoScalingGroupName',
+                    Value: asgName,
+                },
+            ],
+            StartTime: startTime,
+            EndTime: endTime,
+            Period: 300, // 5 minutes in seconds
+            Statistics: [statistic],
+        };
+        
+        logger.info(`${serviceLocation}: Fetching ${metricName} metrics for ASG ${asgName} from ${startTime.toISOString()} to ${endTime.toISOString()}`);
+        
+        // Execute CloudWatch query
+        const client = getCloudWatchClient();
+        const command = new GetMetricStatisticsCommand(params);
+        const response = await client.send(command);
+        
+        // Process response data
+        const datapoints = response.Datapoints || [];
+        
+        // Sort datapoints by timestamp (ascending order)
+        datapoints.sort((a, b) => {
+            const timeA = a.Timestamp?.getTime() || 0;
+            const timeB = b.Timestamp?.getTime() || 0;
+            return timeA - timeB;
+        });
+        
+        // Extract timestamps and values based on statistic type
+        const timestamps = datapoints.map(point => point.Timestamp?.toISOString() || '');
+        const values = datapoints.map(point => {
+            let value: number;
+            switch (statistic) {
+                case 'Average':
+                    value = point.Average || 0;
+                    break;
+                case 'Sum':
+                    value = point.Sum || 0;
+                    break;
+                case 'Maximum':
+                default:
+                    value = point.Maximum || 0;
+                    break;
+            }
+            return Number(value.toFixed(0)); // ASG metrics are typically whole numbers
+        });
+        
+        logger.info(`${serviceLocation}: Retrieved ${datapoints.length} ${metricName} datapoints for ASG ${asgName}`);
+        
+        return {
+            timestamps,
+            values,
+        };
+        
+    } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+        logger.error(`${serviceLocation}: Failed to fetch ASG ${metricName} metrics: ${errorMessage}`);
+        throw new Error(`Failed to retrieve ASG ${metricName} metrics: ${errorMessage}`);
+    }
+}
+
+// Fetch ASG Group Min Size metrics
+export async function getASGGroupMinSizeMetrics(): Promise<MetricData> {
+    return getASGMetric('GroupMinSize', 'Maximum');
+}
+
+// Fetch ASG Group Max Size metrics
+export async function getASGGroupMaxSizeMetrics(): Promise<MetricData> {
+    return getASGMetric('GroupMaxSize', 'Maximum');
+}
+
+// Fetch ASG Group Desired Capacity metrics
+export async function getASGGroupDesiredCapacityMetrics(): Promise<MetricData> {
+    return getASGMetric('GroupDesiredCapacity', 'Average');
+}
+
+// Fetch ASG Group In Service Instances metrics
+export async function getASGGroupInServiceInstancesMetrics(): Promise<MetricData> {
+    return getASGMetric('GroupInServiceInstances', 'Average');
+}
+
+// Fetch ASG Group Pending Instances metrics
+export async function getASGGroupPendingInstancesMetrics(): Promise<MetricData> {
+    return getASGMetric('GroupPendingInstances', 'Average');
+}
+
+// Fetch ASG Group Total Instances metrics
+export async function getASGGroupTotalInstancesMetrics(): Promise<MetricData> {
+    return getASGMetric('GroupTotalInstances', 'Average');
+}
