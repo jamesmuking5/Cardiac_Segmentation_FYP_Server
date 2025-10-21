@@ -544,6 +544,16 @@ export async function getALBHTTP5XXTargetMetrics(): Promise<MetricData> {
     return getALBMetric('HTTPCode_Target_5XX_Count', 'Sum');
 }
 
+// Fetch ALB HTTP 4XX Error Count (ELB) metrics
+export async function getALBHTTP4XXELBMetrics(): Promise<MetricData> {
+    return getALBMetric('HTTPCode_ELB_4XX_Count', 'Sum');
+}
+
+// Fetch ALB HTTP 4XX Error Count (Target) metrics
+export async function getALBHTTP4XXTargetMetrics(): Promise<MetricData> {
+    return getALBMetric('HTTPCode_Target_4XX_Count', 'Sum');
+}
+
 // Fetch ALB Healthy Host Count metrics
 export async function getALBHealthyHostCountMetrics(): Promise<MetricData> {
     return getALBMetric('HealthyHostCount', 'Average');
