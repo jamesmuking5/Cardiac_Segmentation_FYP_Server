@@ -8,13 +8,14 @@ import projectRoute from '../routes/project_routes';
 import webhookRoute from '../routes/webhook_routes';
 import debugRoute from '../routes/debug_routes';
 import segmentationRoutes from '../routes/segmentation_routes';
-import reconstructionRoutes from '../routes/reconstruction_routes';
 import gpuStatusRoute from '../routes/gpu_status';
 import adminToolsRoute from '../routes/admin_tools';
 import sampleNiftiRoute from '../routes/sample_nifti';
 import cpuMetricsRoute from '../routes/cpu_metrics';
 import ecrMetricsRoute from '../routes/ecr_metrics';
 import s3MetricsRoute from '../routes/s3_metrics';
+import albMetricsRoute from '../routes/alb_metrics';
+import asgMetricsRoute from '../routes/asg_metrics';
 import logger from './logger';
 import cors from 'cors';
 import path from 'path';
@@ -26,9 +27,8 @@ const app = express();
 const serviceLocation = "ExpressApp"; // For logging context
 
 /* Middleware */
-// Apply essential middleware like parsing JSON bodies and URL-encoded data
+// Apply essential middleware like parsing JSON bodies
 app.use(express.json({ limit: '10mb' })); // Increase limit for large JSON payloads (for webhook callback)
-app.use(express.urlencoded({ limit: '10mb', extended: true })); // Handle multipart form data parsing
 
 // Setup Redis session store
 const redisStore = new RedisStore({
@@ -138,9 +138,6 @@ if (envType === 'development') {
 // Segmentation Data Routes
 app.use('/segmentation', segmentationRoutes); // Mount the segmentation routes
 
-// 4D Reconstruction Routes
-app.use('/reconstruction', reconstructionRoutes); // Mount the 4D reconstruction routes
-
 // Status Routes (mount under '/status')
 app.use('/status', gpuStatusRoute); // Mount GPU status routes
 
@@ -154,6 +151,12 @@ app.use('/ecr', ecrMetricsRoute);
 
 // S3 Metrics Routes
 app.use('/metrics/s3', s3MetricsRoute);
+
+// ALB Metrics Routes
+app.use('/metrics/alb', albMetricsRoute);
+
+// ASG Metrics Routes
+app.use('/metrics/asg', asgMetricsRoute);
 
 // Sample NIfTI Routes
 app.use('/sample-nifti', sampleNiftiRoute);
