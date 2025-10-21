@@ -445,7 +445,8 @@ export async function getAllS3Metrics(bucketName: string): Promise<S3Metrics> {
 // Generic function to fetch ALB metrics from CloudWatch
 async function getALBMetric(
     metricName: string,
-    statistic: 'Average' | 'Sum' | 'Maximum' = 'Average'
+    statistic: 'Average' | 'Sum' | 'Maximum' = 'Average',
+    targetGroupArn?: string  // Add optional targetGroupArn parameter
 ): Promise<MetricData> {
     try {
         // Get ALB name from environment variable
@@ -458,23 +459,34 @@ async function getALBMetric(
         const endTime = new Date();
         const startTime = new Date(endTime.getTime() - 24 * 60 * 60 * 1000); // 24 hours ago
 
+        // Prepare dimensions
+        const dimensions = [
+            {
+                Name: 'LoadBalancer',
+                Value: albName,
+            },
+        ];
+
+        // Add TargetGroup dimension if provided (required for host count metrics)
+        if (targetGroupArn) {
+            dimensions.push({
+                Name: 'TargetGroup',
+                Value: targetGroupArn,
+            });
+        }
+
         // Prepare CloudWatch request
         const params: GetMetricStatisticsCommandInput = {
             Namespace: 'AWS/ApplicationELB',
             MetricName: metricName,
-            Dimensions: [
-                {
-                    Name: 'LoadBalancer',
-                    Value: albName,
-                },
-            ],
+            Dimensions: dimensions,
             StartTime: startTime,
             EndTime: endTime,
             Period: 300, // 5 minutes in seconds
             Statistics: [statistic],
         };
 
-        logger.info(`${serviceLocation}: Fetching ${metricName} metrics for ALB ${albName} from ${startTime.toISOString()} to ${endTime.toISOString()}`);
+        logger.info(`${serviceLocation}: Fetching ${metricName} metrics for ALB ${albName}${targetGroupArn ? ` and TargetGroup ${targetGroupArn}` : ''} from ${startTime.toISOString()} to ${endTime.toISOString()}`);
 
         // Execute CloudWatch query
         const client = getCloudWatchClient();
@@ -510,7 +522,7 @@ async function getALBMetric(
             return Number(value.toFixed(2));
         });
 
-        logger.info(`${serviceLocation}: Retrieved ${datapoints.length} ${metricName} datapoints for ALB ${albName}`);
+        logger.info(`${serviceLocation}: Retrieved ${datapoints.length} ${metricName} datapoints for ALB ${albName}${targetGroupArn ? ` and TargetGroup ${targetGroupArn}` : ''}`);
 
         return {
             timestamps,
@@ -534,18 +546,9 @@ export async function getALBTargetResponseTimeMetrics(): Promise<MetricData> {
     return getALBMetric('TargetResponseTime', 'Average');
 }
 
-// Fetch ALB HTTP 5XX Error Count (ELB) metrics
-export async function getALBHTTP5XXELBMetrics(): Promise<MetricData> {
-    return getALBMetric('HTTPCode_ELB_5XX_Count', 'Sum');
-}
-
-// Fetch ALB HTTP 5XX Error Count (Target) metrics
-export async function getALBHTTP5XXTargetMetrics(): Promise<MetricData> {
-    return getALBMetric('HTTPCode_Target_5XX_Count', 'Sum');
-}
-
 // Fetch ALB HTTP 4XX Error Count (ELB) metrics
-export async function getALBHTTP4XXELBMetrics(): Promise<MetricData> {
+export async function 
+(): Promise<MetricData> {
     return getALBMetric('HTTPCode_ELB_4XX_Count', 'Sum');
 }
 
@@ -554,14 +557,22 @@ export async function getALBHTTP4XXTargetMetrics(): Promise<MetricData> {
     return getALBMetric('HTTPCode_Target_4XX_Count', 'Sum');
 }
 
-// Fetch ALB Healthy Host Count metrics
+// Fetch ALB Healthy Host Count metrics (requires TargetGroup)
 export async function getALBHealthyHostCountMetrics(): Promise<MetricData> {
-    return getALBMetric('HealthyHostCount', 'Average');
+    const targetGroupName = process.env.TARGET_GROUP_NAME;
+    if (!targetGroupName) {
+        throw new Error('TARGET_GROUP_NAME environment variable is not set (required for host count metrics)');
+    }
+    return getALBMetric('HealthyHostCount', 'Average', targetGroupName);
 }
 
-// Fetch ALB Unhealthy Host Count metrics
+// Fetch ALB Unhealthy Host Count metrics (requires TargetGroup)
 export async function getALBUnhealthyHostCountMetrics(): Promise<MetricData> {
-    return getALBMetric('UnHealthyHostCount', 'Average');
+    const targetGroupName = process.env.TARGET_GROUP_NAME;
+    if (!targetGroupName) {
+        throw new Error('TARGET_GROUP_NAME environment variable is not set (required for host count metrics)');
+    }
+    return getALBMetric('UnHealthyHostCount', 'Average', targetGroupName);
 }
 
 // ===== ASG CloudWatch Metrics =====
