@@ -71,7 +71,8 @@ export const generateAISegmentationForReconstruction = async (
         let segmentationsToProcess: IProjectSegmentationMask[] = [];
 
         // Select only AI-generated masks (MedSAM output) for reconstruction consistency
-        const aiMask = hasMasksResult.projectsegmentationmasks!.find(mask => mask.isMedSAMOutput === true);
+            // const aiMask = hasMasksResult.projectsegmentationmasks!.find(mask => mask.isMedSAMOutput === true);
+            const aiMask = hasMasksResult.projectsegmentationmasks!.find(mask => mask.isMedSAMOutput === false); // DEBUG: USING MANUAL MASK EXPERIMENTALLY
         if (aiMask) {
             segmentationsToProcess = [aiMask];
             logger.info(`${serviceLocation}: Using AI-generated mask for reconstruction`);
