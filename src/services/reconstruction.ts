@@ -167,7 +167,7 @@ export const startReconstruction = async (projectId: string, user?: IUserSafe, r
         }
 
         // Extract mask ID from the first AI-generated segmentation mask
-        const firstAIMask = aiMasks[0];
+        const firstAIMask = aiMasks[1]; // DEBUG: USING MANUAL MASK EXPERIMENTALLY
         const maskId = firstAIMask._id?.toString();
         logger.info(`${serviceLocation}: Using AI-generated segmentation mask ID ${maskId} for reconstruction of project ${projectId} (${aiMasks.length} AI mask(s) available)`);
 
