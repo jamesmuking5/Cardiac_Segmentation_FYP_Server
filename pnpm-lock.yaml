@@ -23,6 +23,9 @@ importers:
       bcrypt:
         specifier: ^6.0.0
         version: 6.0.0
+      client-cost-explorer:
+        specifier: github:aws-sdk/client-cost-explorer
+        version: https://codeload.github.com/aws-sdk/client-cost-explorer/tar.gz/76d7e96766d2e898a02aadb957a28a2e95b6b10d
       connect-redis:
         specifier: ^9.0.0
         version: 9.0.0(express-session@1.18.2)(redis@5.8.2)
@@ -2018,6 +2021,11 @@ packages:
   class-utils@0.3.6:
     resolution: {integrity: sha512-qOhPa/Fj7s6TY8H8esGu5QNpMMQxz79h+urzrNYN6mn+9BnxlDGf5QZ+XeCDsxSjPqsSR56XOZOJmpeurnLMeg==}
     engines: {node: '>=0.10.0'}
+
+  client-cost-explorer@https://codeload.github.com/aws-sdk/client-cost-explorer/tar.gz/76d7e96766d2e898a02aadb957a28a2e95b6b10d:
+    resolution: {tarball: https://codeload.github.com/aws-sdk/client-cost-explorer/tar.gz/76d7e96766d2e898a02aadb957a28a2e95b6b10d}
+    version: 3.844.0
+    engines: {node: '>20.0.0', npm: '>10.0.0'}
 
   cliui@8.0.1:
     resolution: {integrity: sha512-BSeNnyus75C4//NQ9gQt1/csTXyo/8Sb+afLAkzAptFuMsod9HFokGNudZpi/oQV73hnVK+sR+5PVRMd+Dr7YQ==}
@@ -7356,6 +7364,12 @@ snapshots:
       define-property: 0.2.5
       isobject: 3.0.1
       static-extend: 0.1.2
+
+  client-cost-explorer@https://codeload.github.com/aws-sdk/client-cost-explorer/tar.gz/76d7e96766d2e898a02aadb957a28a2e95b6b10d:
+    dependencies:
+      '@aws-sdk/client-cost-explorer': 3.916.0
+    transitivePeerDependencies:
+      - aws-crt
 
   cliui@8.0.1:
     dependencies:

@@ -159,7 +159,8 @@ export const startReconstruction = async (projectId: string, user?: IUserSafe, r
         logger.info(`${serviceLocation}: Found ${hasMasksResult.projectsegmentationmasks.length} segmentation mask(s) for project ${projectId}. Proceeding with 4D reconstruction.`);
 
         // Filter for AI-generated masks only (isMedSAMOutput: true) - reconstruction requires AI masks, not manual ones
-        const aiMasks = hasMasksResult.projectsegmentationmasks.filter(mask => mask.isMedSAMOutput === true);
+        // const aiMasks = hasMasksResult.projectsegmentationmasks.filter(mask => mask.isMedSAMOutput === true);
+        const aiMasks = hasMasksResult.projectsegmentationmasks.filter(mask => mask.isMedSAMOutput === false); // DEBUG: USING MANUAL MASK EXPERIMENTALLY
         
         if (aiMasks.length === 0) {
             logger.warn(`${serviceLocation}: No AI-generated segmentation masks found for project ${projectId}. 4D reconstruction requires AI masks (MedSAM output), not manual segmentation.`);
@@ -167,7 +168,7 @@ export const startReconstruction = async (projectId: string, user?: IUserSafe, r
         }
 
         // Extract mask ID from the first AI-generated segmentation mask
-        const firstAIMask = aiMasks[1]; // DEBUG: USING MANUAL MASK EXPERIMENTALLY
+        const firstAIMask = aiMasks[0]; // DEBUG: USING MANUAL MASK EXPERIMENTALLY
         const maskId = firstAIMask._id?.toString();
         logger.info(`${serviceLocation}: Using AI-generated segmentation mask ID ${maskId} for reconstruction of project ${projectId} (${aiMasks.length} AI mask(s) available)`);
 
