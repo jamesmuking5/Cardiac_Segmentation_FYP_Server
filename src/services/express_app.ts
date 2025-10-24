@@ -16,6 +16,7 @@ import ecrMetricsRoute from '../routes/ecr_metrics';
 import s3MetricsRoute from '../routes/s3_metrics';
 import albMetricsRoute from '../routes/alb_metrics';
 import asgMetricsRoute from '../routes/asg_metrics';
+import billingMetricsRoute from '../routes/billing_metrics';
 import logger from './logger';
 import cors from 'cors';
 import path from 'path';
@@ -69,8 +70,6 @@ app.use(
       httpOnly: true,
       sameSite: 'lax', // Allow cross-site requests 
       maxAge: 1000 * 60 * 60 * 24, // 1 day
-      // Only for prod:
-      domain: envType === 'production' ? '.visheart.art' : undefined,
     },
   })
 )
@@ -145,8 +144,6 @@ app.use('/status', gpuStatusRoute); // Mount GPU status routes
 
 // Admin Tool Routes
 app.use('/admintools', adminToolsRoute);
-// CPU Metrics Routes
-app.use('/metrics', cpuMetricsRoute);
 
 // ECR Metrics Routes
 app.use('/ecr', ecrMetricsRoute);
@@ -159,6 +156,12 @@ app.use('/metrics/alb', albMetricsRoute);
 
 // ASG Metrics Routes
 app.use('/metrics/asg', asgMetricsRoute);
+
+// Billing Metrics Routes
+app.use('/metrics/billing', billingMetricsRoute);
+
+// CPU Metrics Routes
+app.use('/metrics', cpuMetricsRoute);
 
 // Sample NIfTI Routes
 app.use('/sample-nifti', sampleNiftiRoute);
