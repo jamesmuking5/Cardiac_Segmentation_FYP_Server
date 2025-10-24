@@ -16,10 +16,12 @@ import cpuMetricsRoute from '../routes/cpu_metrics';
 import ecrMetricsRoute from '../routes/ecr_metrics';
 import s3MetricsRoute from '../routes/s3_metrics';
 import albMetricsRoute from '../routes/alb_metrics';
-import asgMetricsRoute from '../routes/asg_metrics';
 import billingMetricsRoute from '../routes/billing_metrics';
+import asgMetricsRoute from '../routes/asg_metrics';
 import logger from './logger';
 import cors from 'cors';
+import path from 'path';
+import fs from 'fs';
 import helmet from 'helmet';
 
 // Create express app instance
@@ -175,6 +177,46 @@ app.get('/', (req: Request, res: Response) => {
     environment: envType,
   });
 });
+
+// Configure static file serving
+// const configureStaticFiles = (): void => {
+//   // Define base paths
+//   const publicDir = path.join(__dirname, '../../public');
+//   const publicAssetsDir = path.join(__dirname, '../../public/assets');
+//   const indexHtmlPath = path.join(publicDir, 'index.html');
+
+//   // Verify that the public directory exists
+//   if (!fs.existsSync(publicDir)) {
+//     logger.warn(${serviceLocation}: Public directory not found at ${publicDir});
+//   }
+
+//   // Configure static file middleware with caching options
+//   const staticOptions = {
+//     maxAge: envType === 'production' ? '1d' : 0, // Cache for 1 day in production
+//     etag: true,
+//   };
+
+//   // Serve static files from the 'public' directory
+//   app.use(express.static(publicDir, staticOptions));
+
+//   // Serve assets with specific route
+//   app.use('/assets', express.static(publicAssetsDir, staticOptions));
+
+//   // SPA fallback - serve index.html for any unmatched routes
+//   app.get('*', (req: Request, res: Response) => {
+//     if (fs.existsSync(indexHtmlPath)) {
+//       res.sendFile(indexHtmlPath);
+//     } else {
+//       logger.error(${serviceLocation}: index.html not found at ${indexHtmlPath});
+//       res.status(404).send('Application entry point not found');
+//     }
+//   });
+
+// logger.info(${serviceLocation}: Static file serving configured);
+// };
+
+// Apply static file configuration
+// configureStaticFiles();
 
 // Export the configured app instance
 export { app };
