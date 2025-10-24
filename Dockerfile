@@ -1,40 +1,57 @@
+# =========================
 # Stage 1: Builder
+# =========================
 FROM node:18-alpine AS builder
 WORKDIR /app
 
-# Copy dependency files first (better caching)
-COPY package*.json ./
+# Install system dependencies (git for pnpm Git-based deps)
+RUN apk add --no-cache python3 py3-pip git
 
-# Install dependencies (this layer will be cached if deps don't change)
-RUN npm ci
+# Install pnpm globally
+RUN npm install -g pnpm
 
-# Copy source code (this invalidates cache only when code changes)
+# Copy dependency files
+COPY package.json pnpm-lock.yaml ./
+
+# Install all dependencies (dev included for build)
+RUN pnpm install --frozen-lockfile
+
+# Copy source code
 COPY . .
 
-# Build the application
-RUN npm run build
+# Build the application (TypeScript → JS)
+RUN pnpm run build
 
+
+# =========================
 # Stage 2: Production
+# =========================
 FROM node:18-alpine
 WORKDIR /app
 
-# Install system dependencies
-RUN apk add --no-cache python3 py3-pip build-base g++ libgomp
+# Install lightweight runtime dependencies
+RUN apk add --no-cache python3 py3-pip libgomp
+
+# Install pnpm globally
+RUN npm install -g pnpm
 
 # Copy dependency files
-COPY package*.json ./
+COPY package.json pnpm-lock.yaml ./
 
-# Install production dependencies
-RUN npm ci --only=production
+# Install only production dependencies
+RUN pnpm install --frozen-lockfile --prod
 
-# Install Python dependencies (fix the Python error)
+# Copy and install Python dependencies
 COPY src/python/requirements.txt ./
 RUN pip3 install --no-cache-dir --break-system-packages -r requirements.txt
 
-# Copy built application
+# Copy built app and static assets from builder
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/public ./public
 COPY src/python/*.py ./dist/python/
 
-EXPOSE 3000
+# Expose the backend port
+EXPOSE 5000
+
+# Run the server
 CMD ["node", "dist/index.js"]
