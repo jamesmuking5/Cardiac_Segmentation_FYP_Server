@@ -1,12 +1,9 @@
-// File: src/routes/billing_metrics.ts
-// Description: Express routes for AWS Cost Explorer billing metrics
-
 import express from 'express';
 import { getTotalCosts, getCostsByService, CostData } from '../services/cloudwatch';
 import logger from '../services/logger';
 
 const router = express.Router();
-const serviceLocation = 'BillingMetricsRoutes';
+const serviceLocation = 'Billing Metrics Routes';
 
 // GET /metrics/billing/total - Get total AWS costs for current month
 router.get('/total', async (req: express.Request, res: express.Response) => {
