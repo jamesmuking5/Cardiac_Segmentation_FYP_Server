@@ -2,6 +2,7 @@
 // Description: CloudWatch service for fetching EC2 metrics
 
 import { CloudWatchClient, GetMetricStatisticsCommand, GetMetricStatisticsCommandInput } from '@aws-sdk/client-cloudwatch';
+import { CostExplorerClient, GetCostAndUsageCommand, GetCostAndUsageCommandInput } from '@aws-sdk/client-cost-explorer';
 import logger from './logger';
 
 const serviceLocation = 'CloudWatchService';
@@ -18,6 +19,20 @@ function getCloudWatchClient(): CloudWatchClient {
         logger.info(`${serviceLocation}: CloudWatch client initialized for region ${process.env.AWS_REGION || 'us-east-1'}`);
     }
     return cloudWatchClientInstance;
+}
+
+// Create Cost Explorer client instance
+let costExplorerClientInstance: CostExplorerClient | null = null;
+
+// Get singleton Cost Explorer client
+function getCostExplorerClient(): CostExplorerClient {
+    if (!costExplorerClientInstance) {
+        costExplorerClientInstance = new CostExplorerClient({
+            region: process.env.AWS_REGION || 'us-east-1',
+        });
+        logger.info(`${serviceLocation}: Cost Explorer client initialized for region ${process.env.AWS_REGION || 'us-east-1'}`);
+    }
+    return costExplorerClientInstance;
 }
 
 // Get EC2 instance ID from environment variable or metadata service
@@ -546,16 +561,6 @@ export async function getALBTargetResponseTimeMetrics(): Promise<MetricData> {
     return getALBMetric('TargetResponseTime', 'Average');
 }
 
-// Fetch ALB HTTP 5XX Error Count (ELB) metrics
-export async function getALBHTTP5XXELBMetrics(): Promise<MetricData> {
-    return getALBMetric('HTTPCode_ELB_5XX_Count', 'Sum');
-}
-
-// Fetch ALB HTTP 5XX Error Count (Target) metrics
-export async function getALBHTTP5XXTargetMetrics(): Promise<MetricData> {
-    return getALBMetric('HTTPCode_Target_5XX_Count', 'Sum');
-}
-
 // Fetch ALB HTTP 4XX Error Count (ELB) metrics
 export async function getALBHTTP4XXELBMetrics(): Promise<MetricData> {
     return getALBMetric('HTTPCode_ELB_4XX_Count', 'Sum');
@@ -678,6 +683,106 @@ export async function getASGGroupMaxSizeMetrics(): Promise<MetricData> {
 // Fetch ASG Group Desired Capacity metrics
 export async function getASGGroupDesiredCapacityMetrics(): Promise<MetricData> {
     return getASGMetric('GroupDesiredCapacity', 'Average');
+}
+
+// Interface for cost data
+export interface CostData {
+    service: string;
+    amount: number;
+    unit: string;
+}
+
+// Generic function to fetch cost data from Cost Explorer
+async function getCostData(
+    timePeriod: { Start: string; End: string },
+    groupBy?: { Type: 'DIMENSION'; Key: 'SERVICE' }
+): Promise<CostData[]> {
+    try {
+        const client = getCostExplorerClient();
+        
+        const params: GetCostAndUsageCommandInput = {
+            TimePeriod: timePeriod,
+            Granularity: 'MONTHLY',
+            Metrics: ['BlendedCost'],
+            GroupBy: groupBy ? [groupBy] : undefined,
+        };
+        
+        const command = new GetCostAndUsageCommand(params);
+        const response = await client.send(command);
+        
+        logger.info(`${serviceLocation}: Retrieved cost data for period ${timePeriod.Start} to ${timePeriod.End}`);
+        
+        if (!response.ResultsByTime || response.ResultsByTime.length === 0) {
+            logger.warn(`${serviceLocation}: No cost data found for the specified period`);
+            return [];
+        }
+        
+        const costData: CostData[] = [];
+        
+        for (const result of response.ResultsByTime) {
+            if (result.Groups && result.Groups.length > 0) {
+                // Grouped by service
+                for (const group of result.Groups) {
+                    const service = group.Keys?.[0] || 'Unknown';
+                    const amount = parseFloat(group.Metrics?.BlendedCost?.Amount || '0');
+                    const unit = group.Metrics?.BlendedCost?.Unit || 'USD';
+                    
+                    costData.push({
+                        service,
+                        amount,
+                        unit,
+                    });
+                }
+            } else {
+                // Total cost (no grouping)
+                const amount = parseFloat(result.Groups?.[0]?.Metrics?.BlendedCost?.Amount || 
+                                        result.Total?.BlendedCost?.Amount || '0');
+                const unit = result.Groups?.[0]?.Metrics?.BlendedCost?.Unit || 
+                           result.Total?.BlendedCost?.Unit || 'USD';
+                
+                costData.push({
+                    service: 'Total',
+                    amount,
+                    unit,
+                });
+            }
+        }
+        
+        return costData;
+        
+    } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+        logger.error(`${serviceLocation}: Failed to fetch cost data: ${errorMessage}`);
+        throw new Error(`Failed to retrieve cost data: ${errorMessage}`);
+    }
+}
+
+// Fetch total AWS costs for the current month
+export async function getTotalCosts(): Promise<CostData[]> {
+    const now = new Date();
+    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+    const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+    
+    const timePeriod = {
+        Start: startOfMonth.toISOString().split('T')[0], // YYYY-MM-DD format
+        End: endOfMonth.toISOString().split('T')[0],
+    };
+    
+    return getCostData(timePeriod);
+}
+
+// Fetch AWS costs grouped by service for the current month
+export async function getCostsByService(): Promise<CostData[]> {
+    const now = new Date();
+    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+    const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+    
+    const timePeriod = {
+        Start: startOfMonth.toISOString().split('T')[0], // YYYY-MM-DD format
+        End: endOfMonth.toISOString().split('T')[0],
+    };
+    
+    return getCostData(timePeriod, { Type: 'DIMENSION', Key: 'SERVICE' });
 }
 
 // Fetch ASG Group In Service Instances metrics
