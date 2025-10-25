@@ -5,6 +5,8 @@ import express, { Request, Response } from 'express';
 import { 
     getEcrRepositorySizeMetrics, 
     getEcrImageCountMetrics,
+    getEcrBackendRepositoryPullCountMetrics,
+    getEcrFrontendRepositoryPullCountMetrics,
     getEcrBackendRepositorySizeMetrics,
     getEcrBackendImageCountMetrics,
     getEcrFrontendRepositorySizeMetrics,
@@ -47,36 +49,36 @@ async function handleEcrMetricRequest(
     }
 }
 
-// GET /repository-size - Fetch ECR Repository Size metrics (legacy - backend repository)
+// GET /repository-size - Fetch ECR Repository Pull Count metrics (legacy - backend repository)
 router.get('/repository-size', async (req: Request, res: Response): Promise<void> => {
-    await handleEcrMetricRequest(req, res, 'ECR Repository Size', getEcrRepositorySizeMetrics);
+    await handleEcrMetricRequest(req, res, 'ECR Repository Pull Count', getEcrRepositorySizeMetrics);
 });
 
-// GET /image-count - Fetch ECR Image Count metrics (legacy - backend repository)
+// GET /image-count - Fetch ECR Repository Pull Count metrics (legacy - backend repository)
 router.get('/image-count', async (req: Request, res: Response): Promise<void> => {
-    await handleEcrMetricRequest(req, res, 'ECR Image Count', getEcrImageCountMetrics);
+    await handleEcrMetricRequest(req, res, 'ECR Repository Pull Count', getEcrImageCountMetrics);
 });
 
 // Backend Repository Routes
-// GET /backend/repository-size - Fetch ECR Repository Size metrics for backend
+// GET /backend/repository-size - Fetch ECR Repository Pull Count metrics for backend
 router.get('/backend/repository-size', async (req: Request, res: Response): Promise<void> => {
-    await handleEcrMetricRequest(req, res, 'ECR Backend Repository Size', getEcrBackendRepositorySizeMetrics);
+    await handleEcrMetricRequest(req, res, 'ECR Backend Repository Pull Count', getEcrBackendRepositoryPullCountMetrics);
 });
 
-// GET /backend/image-count - Fetch ECR Image Count metrics for backend
+// GET /backend/image-count - Fetch ECR Repository Pull Count metrics for backend
 router.get('/backend/image-count', async (req: Request, res: Response): Promise<void> => {
-    await handleEcrMetricRequest(req, res, 'ECR Backend Image Count', getEcrBackendImageCountMetrics);
+    await handleEcrMetricRequest(req, res, 'ECR Backend Repository Pull Count', getEcrBackendRepositoryPullCountMetrics);
 });
 
 // Frontend Repository Routes
-// GET /frontend/repository-size - Fetch ECR Repository Size metrics for frontend
+// GET /frontend/repository-size - Fetch ECR Repository Pull Count metrics for frontend
 router.get('/frontend/repository-size', async (req: Request, res: Response): Promise<void> => {
-    await handleEcrMetricRequest(req, res, 'ECR Frontend Repository Size', getEcrFrontendRepositorySizeMetrics);
+    await handleEcrMetricRequest(req, res, 'ECR Frontend Repository Pull Count', getEcrFrontendRepositoryPullCountMetrics);
 });
 
-// GET /frontend/image-count - Fetch ECR Image Count metrics for frontend
+// GET /frontend/image-count - Fetch ECR Repository Pull Count metrics for frontend
 router.get('/frontend/image-count', async (req: Request, res: Response): Promise<void> => {
-    await handleEcrMetricRequest(req, res, 'ECR Frontend Image Count', getEcrFrontendImageCountMetrics);
+    await handleEcrMetricRequest(req, res, 'ECR Frontend Repository Pull Count', getEcrFrontendRepositoryPullCountMetrics);
 });
 
 export default router;
