@@ -10,7 +10,6 @@ import {
     getEcrBackendRepositorySizeMetrics,
     getEcrBackendImageCountMetrics,
     getEcrFrontendRepositorySizeMetrics,
-    getEcrFrontendImageCountMetrics
 } from '../services/cloudwatch';
 import logger from '../services/logger';
 

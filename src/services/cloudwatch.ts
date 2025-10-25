@@ -242,59 +242,53 @@ async function getECRMetric(metricName: string, repositoryName: string, statisti
     }
 }
 
-// Fetch ECR Repository Size metrics for backend repository
-export async function getEcrBackendRepositorySizeMetrics(): Promise<MetricData> {
-    const repositoryName = process.env.ECR_BACKEND_REPOSITORY_NAME || 'cardiac_segmentation_fyp_server_backend';
-    return getECRMetric('RepositorySizeBytes', repositoryName, 'Maximum');
-}
-
-// Fetch ECR Image Count metrics for backend repository  
-export async function getEcrBackendImageCountMetrics(): Promise<MetricData> {
-    const repositoryName = process.env.ECR_BACKEND_REPOSITORY_NAME || 'cardiac_segmentation_fyp_server_backend';
-    return getECRMetric('ImageCount', repositoryName, 'Maximum');
-}
-
-// Fetch ECR Repository Size metrics for frontend repository
-export async function getEcrFrontendRepositorySizeMetrics(): Promise<MetricData> {
-    const repositoryName = process.env.ECR_FRONTEND_REPOSITORY_NAME || 'cardiac_segmentation_fyp_server_frontend';
-    return getECRMetric('RepositorySizeBytes', repositoryName, 'Maximum');
-}
-
-// Fetch ECR Image Count metrics for frontend repository
-export async function getEcrFrontendImageCountMetrics(): Promise<MetricData> {
-    const repositoryName = process.env.ECR_FRONTEND_REPOSITORY_NAME || 'cardiac_segmentation_fyp_server_frontend';
-    return getECRMetric('ImageCount', repositoryName, 'Maximum');
-}
-
-// Fetch ECR Repository Pull Count metrics for backend repository (ECR doesn't provide pull count metrics)
+// Fetch ECR Repository Pull Count metrics for backend repository
 export async function getEcrBackendRepositoryPullCountMetrics(): Promise<MetricData> {
-    // ECR doesn't provide pull count metrics in CloudWatch
-    // Return empty data to prevent frontend errors
-    logger.warn(`${serviceLocation}: ECR pull count metrics are not available in CloudWatch. Returning empty data.`);
-    return {
-        timestamps: [],
-        values: []
-    };
+    const repositoryName = process.env.ECR_BACKEND_REPOSITORY_NAME || 'cardiac_segmentation_fyp_server_backend';
+    return getECRMetric('RepositoryPullCount', repositoryName, 'Sum');
 }
 
-// Fetch ECR Repository Pull Count metrics for frontend repository (ECR doesn't provide pull count metrics)
+// Fetch ECR Repository Pull Count metrics for frontend repository
 export async function getEcrFrontendRepositoryPullCountMetrics(): Promise<MetricData> {
-    // ECR doesn't provide pull count metrics in CloudWatch
-    // Return empty data to prevent frontend errors
-    logger.warn(`${serviceLocation}: ECR pull count metrics are not available in CloudWatch. Returning empty data.`);
-    return {
-        timestamps: [],
-        values: []
-    };
+    const repositoryName = process.env.ECR_FRONTEND_REPOSITORY_NAME || 'cardiac_segmentation_fyp_server_frontend';
+    return getECRMetric('RepositoryPullCount', repositoryName, 'Sum');
 }
 
-// Legacy functions for backward compatibility (use backend repository)
+// Legacy functions for backward compatibility (use backend repository pull count)
 export async function getEcrRepositorySizeMetrics(): Promise<MetricData> {
-    return getEcrBackendRepositorySizeMetrics();
+    return getEcrBackendRepositoryPullCountMetrics();
 }
 
 export async function getEcrImageCountMetrics(): Promise<MetricData> {
-    return getEcrBackendImageCountMetrics();
+    return getEcrBackendRepositoryPullCountMetrics();
+}
+
+// Fetch ECR Repository Size metrics for backend repository (Note: Size metrics not available in CloudWatch)
+export async function getEcrBackendRepositorySizeMetrics(): Promise<MetricData> {
+    // ECR doesn't provide size metrics in CloudWatch, return empty data
+    logger.warn(`${serviceLocation}: ECR RepositorySizeBytes metric not available in CloudWatch. Consider using ECR API for size information.`);
+    return { timestamps: [], values: [] };
+}
+
+// Fetch ECR Image Count metrics for backend repository (Note: Count metrics not available in CloudWatch)
+export async function getEcrBackendImageCountMetrics(): Promise<MetricData> {
+    // ECR doesn't provide image count metrics in CloudWatch, return empty data
+    logger.warn(`${serviceLocation}: ECR ImageCount metric not available in CloudWatch. Consider using ECR API for image count information.`);
+    return { timestamps: [], values: [] };
+}
+
+// Fetch ECR Repository Size metrics for frontend repository (Note: Size metrics not available in CloudWatch)
+export async function getEcrFrontendRepositorySizeMetrics(): Promise<MetricData> {
+    // ECR doesn't provide size metrics in CloudWatch, return empty data
+    logger.warn(`${serviceLocation}: ECR RepositorySizeBytes metric not available in CloudWatch. Consider using ECR API for size information.`);
+    return { timestamps: [], values: [] };
+}
+
+// Fetch ECR Image Count metrics for frontend repository (Note: Count metrics not available in CloudWatch)
+export async function getEcrFrontendImageCountMetrics(): Promise<MetricData> {
+    // ECR doesn't provide image count metrics in CloudWatch, return empty data
+    logger.warn(`${serviceLocation}: ECR ImageCount metric not available in CloudWatch. Consider using ECR API for image count information.`);
+    return { timestamps: [], values: [] };
 }
 
 // ===== S3 CloudWatch Metrics =====
@@ -313,8 +307,7 @@ export interface S3Metrics {
 async function getS3Metric(
     metricName: string, 
     bucketName: string, 
-    statistic: 'Average' | 'Sum' | 'Maximum' = 'Average',
-    storageType?: string
+    statistic: 'Average' | 'Sum' | 'Maximum' = 'Average'
 ): Promise<MetricData> {
     try {
         // Validate bucket name parameter
@@ -427,12 +420,12 @@ async function getS3Metric(
 
 // Fetch S3 Bucket Size metrics
 export async function getS3BucketSizeMetrics(bucketName: string): Promise<MetricData> {
-    return getS3Metric('BucketSizeBytes', bucketName, 'Average', 'StandardStorage');
+    return getS3Metric('BucketSizeBytes', bucketName, 'Average');
 }
 
 // Fetch S3 Number of Objects metrics
 export async function getS3NumberOfObjectsMetrics(bucketName: string): Promise<MetricData> {
-    return getS3Metric('NumberOfObjects', bucketName, 'Average', 'AllStorageTypes');
+    return getS3Metric('NumberOfObjects', bucketName, 'Average');
 }
 
 // Fetch S3 All Requests metrics
@@ -454,7 +447,7 @@ export async function getS3PutRequestsMetrics(bucketName: string): Promise<Metri
 export async function getAllS3Metrics(bucketName: string): Promise<S3Metrics> {
     try {
         logger.info(`${serviceLocation}: Fetching all S3 metrics for bucket ${bucketName}`);
-
+        
         // Fetch all metrics in parallel for better performance
         const [
             bucketSizeBytes,
@@ -469,9 +462,9 @@ export async function getAllS3Metrics(bucketName: string): Promise<S3Metrics> {
             getS3GetRequestsMetrics(bucketName),
             getS3PutRequestsMetrics(bucketName)
         ]);
-
+        
         logger.info(`${serviceLocation}: Successfully retrieved all S3 metrics for bucket ${bucketName}`);
-
+        
         return {
             bucketName,
             bucketSizeBytes,
@@ -480,7 +473,7 @@ export async function getAllS3Metrics(bucketName: string): Promise<S3Metrics> {
             getRequests,
             putRequests
         };
-
+        
     } catch (error) {
         const errorMessage = error instanceof Error ? error.message : 'Unknown error';
         logger.error(`${serviceLocation}: Failed to fetch all S3 metrics for bucket ${bucketName}: ${errorMessage}`);
