@@ -15,7 +15,7 @@ const serviceLocation = 'SegmentationExport';
 
 /**
  * Generates a segmentation NIfTI file specifically for 4D reconstruction
- * Only uses AI-generated masks (MedSAM output) for consistency with GPU processing
+ * Uses editable masks (user-refined segmentation) for better reconstruction accuracy
  * 
  * @param projectId - The project ID to generate segmentation NIfTI for
  * @param userId - The user ID (for access validation)
@@ -44,7 +44,7 @@ export const generateAISegmentationForReconstruction = async (
 
         await fs.ensureDir(baseTempDir);
 
-        // 1. Validate AI segmentation masks exist
+        // 1. Validate editable segmentation masks exist
         const hasMasksResult = await readProjectSegmentationMask(projectId);
         if (!hasMasksResult.projectsegmentationmasks || hasMasksResult.projectsegmentationmasks.length === 0) {
             return { success: false, message: "No segmentation masks found. Run AI segmentation first for reconstruction." };
@@ -67,18 +67,17 @@ export const generateAISegmentationForReconstruction = async (
         const planeHeightForRLE = project.dimensions.height;
         const planeWidthForRLE = project.dimensions.width;
 
-        // 3. Select ONLY AI-generated masks (MedSAM output) for reconstruction
+        // 3. Select ONLY editable masks (user-refined segmentation) for reconstruction
         let segmentationsToProcess: IProjectSegmentationMask[] = [];
 
-        // Select only AI-generated masks (MedSAM output) for reconstruction consistency
-            // const aiMask = hasMasksResult.projectsegmentationmasks!.find(mask => mask.isMedSAMOutput === true);
-            const aiMask = hasMasksResult.projectsegmentationmasks!.find(mask => mask.isMedSAMOutput === false); // DEBUG: USING MANUAL MASK EXPERIMENTALLY
-        if (aiMask) {
-            segmentationsToProcess = [aiMask];
-            logger.info(`${serviceLocation}: Using AI-generated mask for reconstruction`);
+        // Select only editable masks for reconstruction accuracy
+        const editableMask = hasMasksResult.projectsegmentationmasks!.find(mask => mask.isMedSAMOutput === false);
+        if (editableMask) {
+            segmentationsToProcess = [editableMask];
+            logger.info(`${serviceLocation}: Using editable mask for reconstruction`);
         } else {
-            logger.error(`${serviceLocation}: No AI-generated mask found for project ${projectId}`);
-            return { success: false, message: "No AI-generated segmentation mask available for reconstruction. Please run AI segmentation first." };
+            logger.error(`${serviceLocation}: No editable mask found for project ${projectId}`);
+            return { success: false, message: "No editable segmentation mask available for reconstruction. Please complete or refine segmentation first." };
         }
 
         // Write segmentation data for Python processing
@@ -86,18 +85,18 @@ export const generateAISegmentationForReconstruction = async (
         
         // Log segmentation data being processed
         const maskStructure = {
-            maskId: aiMask._id,
-            frameCount: aiMask.frames?.length || 0,
-            isMedSAMOutput: aiMask.isMedSAMOutput,
-            firstFrameIndex: aiMask.frames?.[0]?.frameindex,
-            lastFrameIndex: aiMask.frames?.[aiMask.frames.length - 1]?.frameindex
+            maskId: editableMask._id,
+            frameCount: editableMask.frames?.length || 0,
+            isMedSAMOutput: editableMask.isMedSAMOutput,
+            firstFrameIndex: editableMask.frames?.[0]?.frameindex,
+            lastFrameIndex: editableMask.frames?.[editableMask.frames.length - 1]?.frameindex
         };
         logger.info(`${serviceLocation}: Segmentation mask structure for project ${projectId}: ${JSON.stringify(maskStructure)}`);
         
         // Log detailed class distribution across frames for debugging
         const classDistribution: Record<string, number> = {};
         let totalMasks = 0;
-        aiMask.frames?.forEach(frame => {
+        editableMask.frames?.forEach(frame => {
             frame.slices?.forEach(slice => {
                 slice.segmentationmasks?.forEach(mask => {
                     const className = mask.class || 'unknown';

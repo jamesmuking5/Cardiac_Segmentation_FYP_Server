@@ -100,7 +100,7 @@ const sendReconstructionRequestToCloudGpu = async (
 
 /**
  * Initiates 4D cardiac reconstruction process for a project
- * Validates AI segmentation masks, generates NIfTI data, and submits to GPU server
+ * Validates editable segmentation masks, generates NIfTI data, and submits to GPU server
  * 
  * @param projectId - Database ID of the project to reconstruct
  * @param user - User initiating the reconstruction (for permissions and tracking)
@@ -108,6 +108,7 @@ const sendReconstructionRequestToCloudGpu = async (
  * @param reconstructionDescription - Optional description for the reconstruction
  * @param parameters - Reconstruction parameters (iterations, resolution, etc.)
  * @param ed_frame - End-diastolic frame number (1-based)
+ * @param export_format - Export format for mesh files ('glb' or 'obj')
  * @returns Promise with success status, message, and job UUID
  */
 export const startReconstruction = async (projectId: string, user?: IUserSafe, reconstructionName?: string, reconstructionDescription?: string, parameters?: any, ed_frame?: number, export_format?: string): Promise<{ success: boolean; message: string; uuid?: string }> => {
@@ -158,19 +159,18 @@ export const startReconstruction = async (projectId: string, user?: IUserSafe, r
 
         logger.info(`${serviceLocation}: Found ${hasMasksResult.projectsegmentationmasks.length} segmentation mask(s) for project ${projectId}. Proceeding with 4D reconstruction.`);
 
-        // Filter for AI-generated masks only (isMedSAMOutput: true) - reconstruction requires AI masks, not manual ones
-        // const aiMasks = hasMasksResult.projectsegmentationmasks.filter(mask => mask.isMedSAMOutput === true);
-        const aiMasks = hasMasksResult.projectsegmentationmasks.filter(mask => mask.isMedSAMOutput === false); // DEBUG: USING MANUAL MASK EXPERIMENTALLY
+        // Filter for editable/manual masks (isMedSAMOutput: false) - reconstruction uses user-edited masks for better accuracy
+        const editableMasks = hasMasksResult.projectsegmentationmasks.filter(mask => mask.isMedSAMOutput === false);
         
-        if (aiMasks.length === 0) {
-            logger.warn(`${serviceLocation}: No AI-generated segmentation masks found for project ${projectId}. 4D reconstruction requires AI masks (MedSAM output), not manual segmentation.`);
-            return { success: false, message: "4D reconstruction requires AI-generated segmentation masks. Please run AI segmentation before starting reconstruction." };
+        if (editableMasks.length === 0) {
+            logger.warn(`${serviceLocation}: No editable segmentation masks found for project ${projectId}. 4D reconstruction requires editable masks (user-refined segmentation).`);
+            return { success: false, message: "4D reconstruction requires editable segmentation masks. Please complete or refine segmentation before starting reconstruction." };
         }
 
-        // Extract mask ID from the first AI-generated segmentation mask
-        const firstAIMask = aiMasks[0]; // DEBUG: USING MANUAL MASK EXPERIMENTALLY
-        const maskId = firstAIMask._id?.toString();
-        logger.info(`${serviceLocation}: Using AI-generated segmentation mask ID ${maskId} for reconstruction of project ${projectId} (${aiMasks.length} AI mask(s) available)`);
+        // Extract mask ID from the first editable segmentation mask
+        const firstEditableMask = editableMasks[0];
+        const maskId = firstEditableMask._id?.toString();
+        logger.info(`${serviceLocation}: Using editable segmentation mask ID ${maskId} for reconstruction of project ${projectId} (${editableMasks.length} editable mask(s) available)`);
 
         // Validate ed_frame parameter if provided
         if (ed_frame !== undefined) {

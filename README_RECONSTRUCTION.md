@@ -10,6 +10,16 @@ The 4D Cardiac Reconstruction Pipeline provides advanced cardiac mesh reconstruc
 - **AI-Driven**: Leverages deep learning SDF models for high-quality mesh generation
 - **Cloud Processing**: GPU-accelerated reconstruction on dedicated inference servers
 - **Flexible Parameters**: Customizable resolution, iterations, and frame selection
+- **Editable Masks**: Uses user-refined segmentation masks for better reconstruction accuracy
+
+## Segmentation Mask System
+
+The reconstruction pipeline works with a **dual-mask system**:
+
+1. **AI-Generated Masks** (`isMedSAMOutput: true`): Raw output from MedSAM segmentation, automatically created when AI segmentation runs
+2. **Editable Masks** (`isMedSAMOutput: false`): User-refined masks that can be manually edited and improved
+
+**Important**: Both mask types exist together in the database after segmentation is completed. However, **reconstruction exclusively uses editable masks** (`isMedSAMOutput: false`) to ensure the highest quality results based on user refinements.
 
 ## Architecture
 
@@ -27,12 +37,26 @@ The reconstruction pipeline follows a distributed microservices architecture:
 ```
 
 1. Client initiates reconstruction request with project ID and parameters
-2. Server validates user permissions and AI segmentation availability
-3. Segmentation data is packaged and sent to GPU server
+2. Server validates user permissions and **editable segmentation mask availability**
+3. **Editable mask** data is packaged and sent to GPU server
 4. GPU processes 4D cardiac reconstruction using SDF models
-5. Resulting OBJ mesh files are returned via webhook callbacks
+5. Resulting mesh files (GLB or OBJ) are returned via webhook callbacks
 6. Server packages meshes into TAR archives and stores in S3
 7. Reconstruction metadata is saved to database with download URLs
+
+## Typical Workflow
+
+```
+User uploads NIfTI → Run AI Segmentation → Two masks created:
+                                         ├─ AI-generated mask (isMedSAMOutput: true) - stored as reference
+                                         └─ Editable mask (isMedSAMOutput: false) - used for reconstruction
+                                                          ↓
+                                         User refines/edits editable mask (optional)
+                                                          ↓
+                                         Start 4D Reconstruction → Uses ONLY editable mask
+```
+
+**Note**: Even if the user doesn't manually edit the masks, the editable mask (`isMedSAMOutput: false`) is automatically created and used for reconstruction. The AI-generated mask (`isMedSAMOutput: true`) is kept as a reference copy.
 
 ---
 
@@ -58,7 +82,7 @@ All reconstruction endpoints require authentication via session cookies. GPU ser
 
 **Endpoint**: `POST /reconstruction/start-reconstruction/:projectId`
 
-**Description**: Initiates 4D cardiac reconstruction processing for a project with completed AI segmentation masks.
+**Description**: Initiates 4D cardiac reconstruction processing for a project with completed editable segmentation masks.
 
 **Authentication**: Required (User or Admin role, Guest users blocked)
 
@@ -98,7 +122,9 @@ All reconstruction endpoints require authentication via session cookies. GPU ser
 
 **Prerequisites**:
 - Project must exist and belong to the authenticated user
-- Project must have completed AI segmentation masks (`isMedSAMOutput: true`)
+- Project must have completed editable segmentation masks (`isMedSAMOutput: false`)
+  - **Note**: Both AI-generated (`isMedSAMOutput: true`) and editable (`isMedSAMOutput: false`) masks exist together after segmentation
+  - Reconstruction uses **only the editable mask** for processing
 - Valid `ed_frame` parameter within project's frame range
 
 **Success Response** (HTTP 200):
@@ -526,10 +552,10 @@ gpu_callback_1761471371546_0545be3b-702d-459c-9fea-2b167391a34b.nii_4D_frame29.o
 }
 ```
 
-**Missing AI Segmentation**:
+**Missing Editable Segmentation**:
 ```json
 {
-  "message": "4D reconstruction requires completed segmentation masks. Please complete segmentation before starting reconstruction."
+  "message": "4D reconstruction requires completed segmentation masks. Please complete or refine segmentation before starting reconstruction."
 }
 ```
 
@@ -553,7 +579,7 @@ gpu_callback_1761471371546_0545be3b-702d-459c-9fea-2b167391a34b.nii_4D_frame29.o
 
 ### Project Requirements
 - **Completed Project Upload**: NIfTI/DICOM files successfully uploaded and processed
-- **AI Segmentation**: Project must have AI-generated segmentation masks (`isMedSAMOutput: true`)
+- **Editable Segmentation**: Project must have editable/refined segmentation masks (`isMedSAMOutput: false`)
 - **Frame Validation**: `ed_frame` parameter must be within project's actual frame count
 
 ### System Dependencies
@@ -602,10 +628,10 @@ gpu_callback_1761471371546_0545be3b-702d-459c-9fea-2b167391a34b.nii_4D_frame29.o
 
 ### Common Issues
 
-**"No AI-generated segmentation masks found"**
-- Ensure segmentation has been completed using the AI pipeline
-- Manual segmentation masks are not supported for reconstruction
-- Verify segmentation masks have `isMedSAMOutput: true`
+**"No editable segmentation masks found"**
+- Ensure segmentation has been completed or refined/edited by the user
+- Raw AI segmentation masks (unedited) are not supported for reconstruction
+- Verify segmentation masks have `isMedSAMOutput: false` (editable masks)
 
 **"End-diastole frame X exceeds project frame count"**
 - Check project metadata for actual frame count
