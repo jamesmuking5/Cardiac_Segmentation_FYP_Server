@@ -6,6 +6,7 @@ import path from 'path';
 import logger from './services/logger'; // Import Winston Logger
 import { connectRedis, checkRedisHealth } from './services/redis'; // Import Redis connection and health check
 import { scheduleGuestCleanup } from './jobs/guestcleanupjob'; // Import guest cleanup job
+import { scheduleInferenceJobCleanup } from './jobs/inferencejobcleanupjob'; // Import inference job cleanup CRON
 // Import the http module for graceful shutdown
 import http from 'http';
 
@@ -74,8 +75,9 @@ const PORT = parseInt(process.env.PORT || '3000', 10);
       logger.info(`${serviceLocation}: Server running at http://${HOST}:${PORT}`);
     });
 
-    // Schedule the guest cleanup job (if applicable)
-    await scheduleGuestCleanup();
+    // Schedule CRON jobs
+    await scheduleGuestCleanup(); // Guest user cleanup
+    await scheduleInferenceJobCleanup(); // Inference job cleanup (orphaned and old jobs)
 
     // Graceful Shutdown Logic 
     const signals: NodeJS.Signals[] = ['SIGTERM', 'SIGINT'];

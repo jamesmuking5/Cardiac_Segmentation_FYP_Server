@@ -660,11 +660,16 @@ projectSchema.pre('deleteOne', { document: true, query: false }, async function 
     // Delete all masks associated with this project
     const maskDeleteResult = await projectSegmentationMaskModel.deleteMany({ projectid: this._id });
     logger.info(`${serviceLocation}: Deleted ${maskDeleteResult.deletedCount} segmentation masks for project ${this._id}`);
+    
+    // Delete all inference jobs (segmentation/reconstruction) associated with this project
+    const jobDeleteResult = await jobModel.deleteMany({ projectid: this._id });
+    logger.info(`${serviceLocation}: Deleted ${jobDeleteResult.deletedCount} inference jobs for project ${this._id}`);
+    
     next(); // Proceed to project deletion
   } catch (error: unknown) {
     LogError(error as Error, serviceLocationCascade, `Error during cascade delete for project ${this._id}.`);
     // Halt the original project deletion by passing the error
-    next(error instanceof Error ? error : new Error('Failed to cascade delete segmentation masks and reconstructions'));
+    next(error instanceof Error ? error : new Error('Failed to cascade delete segmentation masks, reconstructions, and inference jobs'));
   }
 });
 // Create the model with proper typing
