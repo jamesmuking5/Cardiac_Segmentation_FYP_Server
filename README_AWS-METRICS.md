@@ -22,7 +22,7 @@ This document provides comprehensive documentation for all AWS CloudWatch metric
 
 The AWS Metrics API provides real-time monitoring and historical data for various AWS services used by the VisHeart application. All metrics are fetched from AWS CloudWatch and Cost Explorer services.
 
-**Base URL**: Your server base URL (e.g., `http://localhost:3000` or your production domain)
+**Base URL**: Your server base URL (`http://localhost:5000` or your production domain)
 
 **AWS SDK**: Uses `@aws-sdk/client-cloudwatch` and `@aws-sdk/client-cost-explorer`
 
@@ -40,11 +40,7 @@ AWS_REGION=ap-southeast-1  # or your preferred region
 ```
 
 ### IAM Permissions Required
-Your AWS IAM user/role must have the following permissions:
-- `cloudwatch:GetMetricStatistics` - For CloudWatch metrics
-- `ce:GetCostAndUsage` - For billing/cost metrics
-- `s3:ListBuckets` - For S3 bucket listing
-- `ec2:Describe*` - For EC2 metadata (optional, if not using env vars)
+Your AWS IAM user/role must have the following permission: `CloudWatchReadOnlyAccess` - For CloudWatch metrics
 
 ---
 
@@ -67,14 +63,6 @@ All metric endpoints return data in the following format:
 - **timestamps**: ISO 8601 formatted datetime strings
 - **values**: Numeric values corresponding to each timestamp
 - Data points are sorted chronologically (oldest to newest)
-
-### Error Response
-```json
-{
-  "error": "Error Type",
-  "message": "Detailed error message"
-}
-```
 
 ---
 
@@ -835,108 +823,6 @@ TARGET_GROUP_NAME=targetgroup/my-target-group/1234567890abcdef
 # ASG Metrics
 ASG_NAME=my-auto-scaling-group
 ```
-
-### Environment Variable Details
-
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `AWS_ACCESS_KEY_ID` | Yes | - | AWS access key for API authentication |
-| `AWS_SECRET_ACCESS_KEY` | Yes | - | AWS secret key for API authentication |
-| `AWS_REGION` | No | `us-east-1` | AWS region for CloudWatch queries |
-| `EC2_INSTANCE_ID` | No | Auto-detected | EC2 instance ID (fetched from metadata if not set) |
-| `ECR_BACKEND_REPOSITORY_NAME` | No | `cardiac_segmentation_fyp_server_backend` | Backend ECR repository name |
-| `ECR_FRONTEND_REPOSITORY_NAME` | No | `cardiac_segmentation_fyp_server_frontend` | Frontend ECR repository name |
-| `ALB_NAME` | Yes* | - | ALB name in format `app/name/id` (*for ALB metrics) |
-| `TARGET_GROUP_NAME` | Yes* | - | Target group name (*for host count metrics) |
-| `ASG_NAME` | Yes* | - | Auto Scaling Group name (*for ASG metrics) |
-
----
-
-## Error Handling
-
-### Common Error Responses
-
-#### 1. Configuration Error
-**Status Code**: 400 or 500
-
-```json
-{
-  "error": "Configuration Error",
-  "message": "ALB_NAME environment variable is not configured"
-}
-```
-
-**Cause**: Required environment variable is missing.
-
----
-
-#### 2. Authentication Error
-**Status Code**: 403
-
-```json
-{
-  "error": "Authentication Error",
-  "message": "Invalid AWS credentials"
-}
-```
-
-**Cause**: AWS credentials are invalid or expired.
-
----
-
-#### 3. Access Denied
-**Status Code**: 403
-
-```json
-{
-  "error": "Access Denied",
-  "message": "You do not have permission to access ALB CloudWatch metrics"
-}
-```
-
-**Cause**: IAM user/role lacks necessary permissions for CloudWatch or Cost Explorer.
-
----
-
-#### 4. Invalid Parameter
-**Status Code**: 400
-
-```json
-{
-  "error": "Invalid Parameter",
-  "message": "The ALB name or metric parameters are invalid"
-}
-```
-
-**Cause**: Provided parameters (e.g., bucket name, ALB name) are invalid or don't exist.
-
----
-
-#### 5. Internal Server Error
-**Status Code**: 500
-
-```json
-{
-  "error": "Internal Server Error",
-  "message": "Failed to retrieve CPU utilization metrics: Network timeout"
-}
-```
-
-**Cause**: Various issues including network problems, AWS service issues, or CloudWatch API errors.
-
----
-
-#### 6. Bucket Name Required (S3)
-**Status Code**: 400
-
-```json
-{
-  "error": "Bucket name is required"
-}
-```
-
-**Cause**: S3 bucket name not provided in the URL path parameter.
-
 ---
 
 ## Implementation Notes
@@ -969,128 +855,6 @@ All metrics undergo the following processing:
 2. Values are formatted with appropriate decimal precision
 3. Empty datapoints are handled gracefully
 4. All timestamps are returned in ISO 8601 UTC format
-
----
-
-## Usage Examples
-
-### JavaScript/TypeScript (Fetch API)
-
-```typescript
-// Fetch CPU utilization metrics
-async function getCpuMetrics() {
-  try {
-    const response = await fetch('http://localhost:3000/metrics/cpu-utilization');
-    const data = await response.json();
-    
-    console.log('CPU Utilization:', data);
-    // Plot or display the data
-  } catch (error) {
-    console.error('Error fetching CPU metrics:', error);
-  }
-}
-
-// Fetch S3 bucket metrics
-async function getS3Metrics(bucketName: string) {
-  try {
-    const response = await fetch(`http://localhost:3000/metrics/s3/${bucketName}/all`);
-    const data = await response.json();
-    
-    console.log(`S3 Metrics for ${data.bucketName}:`, data);
-  } catch (error) {
-    console.error('Error fetching S3 metrics:', error);
-  }
-}
-
-// Fetch current month's AWS costs
-async function getBillingInfo() {
-  try {
-    const response = await fetch('http://localhost:3000/metrics/billing/by-service');
-    const result = await response.json();
-    
-    if (result.success) {
-      console.log('Costs by Service:', result.data);
-    }
-  } catch (error) {
-    console.error('Error fetching billing info:', error);
-  }
-}
-```
-
-### cURL Examples
-
-```bash
-# Get EC2 CPU utilization
-curl http://localhost:3000/metrics/cpu-utilization
-
-# Get S3 bucket list
-curl http://localhost:3000/metrics/s3/buckets
-
-# Get S3 metrics for a specific bucket
-curl http://localhost:3000/metrics/s3/my-bucket-name/all
-
-# Get ALB request count
-curl http://localhost:3000/metrics/alb/request-count
-
-# Get ASG capacity metrics
-curl http://localhost:3000/metrics/asg/desired-capacity
-
-# Get current month's billing
-curl http://localhost:3000/metrics/billing/total
-```
-
----
-
-## Monitoring Dashboard Integration
-
-These metrics endpoints are designed to be integrated into monitoring dashboards. Recommended visualizations:
-
-### EC2 Metrics
-- **Line Chart**: CPU utilization over time
-- **Area Chart**: Network In/Out combined view
-- **Gauge**: Current CPU percentage
-
-### S3 Metrics
-- **Line Chart**: Bucket size growth over time
-- **Bar Chart**: Request counts by type
-- **Pie Chart**: Storage distribution across buckets
-
-### ALB Metrics
-- **Line Chart**: Request count and response time
-- **Stacked Area**: 4XX errors (ELB vs Target)
-- **Status Indicator**: Healthy vs Unhealthy hosts
-
-### ASG Metrics
-- **Line Chart**: Instance counts (min, max, desired, actual)
-- **Gauge**: Current capacity vs desired
-
-### Billing Metrics
-- **Pie Chart**: Cost distribution by service
-- **Bar Chart**: Monthly spend trend
-- **Counter**: Total monthly cost
-
----
-
-## Troubleshooting
-
-### Issue: "Unable to retrieve EC2 instance ID"
-**Solution**: Set `EC2_INSTANCE_ID` environment variable or ensure EC2 metadata service is accessible at `http://169.254.169.254/latest/meta-data/instance-id`
-
-### Issue: "ALB_NAME environment variable is not set"
-**Solution**: Set the `ALB_NAME` environment variable with your load balancer's full name (format: `app/name/id`)
-
-### Issue: Empty metrics arrays
-**Possible Causes**:
-1. CloudWatch data not yet available (metrics may have delays)
-2. Service not generating any data (e.g., no S3 requests made)
-3. Incorrect resource name in environment variables
-4. Time range configured outside of data retention period
-
-### Issue: 403 Access Denied
-**Solution**: Verify IAM permissions include `cloudwatch:GetMetricStatistics` and service-specific describe permissions
-
-### Issue: ECR metrics show empty arrays for size/count
-**Expected Behavior**: CloudWatch doesn't provide `RepositorySizeBytes` or `ImageCount` metrics for ECR. Use ECR API directly for this information.
 
 ---
 
