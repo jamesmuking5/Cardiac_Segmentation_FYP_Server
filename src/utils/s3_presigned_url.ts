@@ -13,12 +13,22 @@ const getS3Client = (): S3Client => {
             logger.error(`${serviceLocation}: AWS_REGION or S3_REGION environment variable is not set.`);
             throw new Error("S3 client region not configured. Please set AWS_REGION or S3_REGION.");
         }
-        s3ClientInstance = new S3Client({
+        
+        const s3Config: any = {
             region: region,
             // Credentials should be configured via environment variables (AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_SESSION_TOKEN)
             // or an IAM role if running on EC2/ECS, or a shared credentials file.
             // The SDK will automatically attempt to load them.
-        });
+        };
+
+        // MinIO support: override endpoint for local development
+        if (process.env.S3_ENDPOINT) {
+            s3Config.endpoint = process.env.S3_ENDPOINT;
+            s3Config.forcePathStyle = process.env.S3_FORCE_PATH_STYLE === 'true';
+            logger.info(`${serviceLocation}: Using custom S3 endpoint: ${process.env.S3_ENDPOINT} (forcePathStyle: ${s3Config.forcePathStyle})`);
+        }
+
+        s3ClientInstance = new S3Client(s3Config);
         logger.info(`${serviceLocation}: S3Client initialized for region: ${region}`);
     }
     return s3ClientInstance;
