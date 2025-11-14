@@ -16,13 +16,22 @@ if (process.env.STORAGE_MODE === "s3") {
     logger.error(`${serviceLocation}: AWS_REGION environment variable is not set. S3 client cannot be initialized.`);
     // You might want to throw an error here or handle this case appropriately
   } else {
-    s3Client = new S3Client({
+    const s3Config: any = {
       region: process.env.AWS_REGION!,
       credentials: {
         accessKeyId: process.env.AWS_ACCESS_KEY_ID!,
         secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY!,
       },
-    });
+    };
+
+    // MinIO support: override endpoint for local development
+    if (process.env.S3_ENDPOINT) {
+      s3Config.endpoint = process.env.S3_ENDPOINT;
+      s3Config.forcePathStyle = process.env.S3_FORCE_PATH_STYLE === 'true';
+      logger.info(`${serviceLocation}: Using custom S3 endpoint: ${process.env.S3_ENDPOINT} (forcePathStyle: ${s3Config.forcePathStyle})`);
+    }
+
+    s3Client = new S3Client(s3Config);
     logger.info(`${serviceLocation}: S3Client initialized for region: ${process.env.AWS_REGION}`);
 
     // Check if S3 client is configured correctly - using an IIFE to allow await
