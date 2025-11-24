@@ -92,7 +92,7 @@
     "@types/tough-cookie": "^4.0.5",
     "@typescript-eslint/eslint-plugin": "^8.41.0",
     "@typescript-eslint/parser": "^8.41.0",
-    "axios-cookiejar-support": "^6.0.4",
+    "axios-cookiejar-support": "^6.0.5",
     "cpx": "^1.5.0",
     "eslint": "^9.34.0",
     "eslint-config-prettier": "^10.1.8",
