@@ -56,7 +56,7 @@
     "helmet": "^8.1.0",
     "jsonwebtoken": "^9.0.2",
     "logform": "^2.7.0",
-    "mongoose": "^8.18.0",
+    "mongoose": "^9.0.0",
     "multer": "^2.0.2",
     "nifti-reader-js": "^0.8.0",
     "node-cron": "^4.2.1",
