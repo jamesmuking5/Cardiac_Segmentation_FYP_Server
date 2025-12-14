@@ -54,9 +54,15 @@ router.get('/start-bbox-inferencing', /*isAuth,*/ injectGpuAuthToken, async (req
     
     // Create sample job data
     const uuid = uuidv4(); // Generate a unique UUID for the job
-    const httpOrHttps = NODE_ENV === "development" ? "http" : "https"; // Use http for development and https for production
-    const callback_url = `${httpOrHttps}://192.168.0.2:${PORT}/gpu-webhook`; // Callback URL for the webhook
-    // const callback_url = `https://webhook-test.com/618bf16792c7dd3f3c61fe1204de78cd`; // Debug webhook URL for testing   
+    
+    // SECURITY: Callback URL should use CALLBACK_URL from environment variable, not hardcoded IP
+    const callback_url = process.env.CALLBACK_URL 
+        ? `${process.env.CALLBACK_URL}/gpu-webhook`
+        : (() => {
+            const httpOrHttps = NODE_ENV === "development" ? "http" : "https";
+            const host = process.env.HOST || "localhost";
+            return `${httpOrHttps}://${host}:${PORT}/gpu-webhook`;
+        })();   
 
     // Get fresh GPU server configuration from database
     const gpuServerAddress = await getFreshGPUServerAddress();
