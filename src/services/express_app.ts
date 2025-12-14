@@ -46,6 +46,11 @@ const envType = process.env.NODE_ENV || 'development'; // Default to 'developmen
 // Configure express-session with Redis store
 // Note: Ensure SESSION_SECRET is loaded before this runs (e.g., via dotenv in index.ts)
 
+// SECURITY: Validate that SESSION_SECRET is properly configured
+if (!process.env.SESSION_SECRET) {
+  throw new Error("SESSION_SECRET environment variable is required for security. Please set it in your .env file.");
+}
+
 // the middleware runs for every incoming request to your application, including /register, /login, and /logout.
 // When a request comes in, the express-session middleware will look for a session cookie.
 // If one exists, it will try to load the corresponding session from your Redis store and make it available on req.session.
@@ -53,7 +58,7 @@ const envType = process.env.NODE_ENV || 'development'; // Default to 'developmen
 app.use(
   session({
     store: redisStore,
-    secret: process.env.SESSION_SECRET || 'default_secret',
+    secret: process.env.SESSION_SECRET,
     resave: false,
 
     // This setting tells express-session not to save a session to the store (Redis)
