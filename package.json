@@ -7,7 +7,10 @@
     "start": "node dist/index.js",
     "dev": "npx nodemon src/index.ts",
     "build": "tsc && cpx \"src/python/**/*\" dist/python",
-    "test": "jest --runInBand --detectOpenHandles --forceExit"
+    "test": "jest --runInBand --detectOpenHandles --forceExit",
+    "check-secrets": "node scripts/check-secrets.js",
+    "prestart": "node scripts/check-secrets.js",
+    "prebuild": "node scripts/check-secrets.js"
   },
   "repository": {
     "type": "git",

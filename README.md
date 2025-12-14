@@ -2321,6 +2321,28 @@ POST /gpu-webhook
 
 ## Environment Configuration
 
+### 🔒 Security First
+
+**CRITICAL**: Before deploying this application, read the [SECURITY.md](SECURITY.md) document for complete security guidelines, including:
+- How to generate secure secrets
+- Production deployment checklist
+- Database security configuration
+- Medical data handling (HIPAA/GDPR considerations)
+
+### Quick Start
+
+1. Copy the example environment file:
+   ```bash
+   cp .env.example .env
+   ```
+
+2. **IMPORTANT**: Replace all placeholder values with secure credentials. Never use the example values in production!
+
+3. Generate secure secrets using:
+   ```bash
+   node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+   ```
+
 ### Required Environment Variables
 
 ```bash
@@ -2330,11 +2352,11 @@ MONGODB_URI=mongodb://localhost:27017/visheart
 # Redis
 REDIS_HOST=localhost
 REDIS_PORT=6379
-REDIS_PASSWORD=your_redis_password
+REDIS_PASSWORD=your_secure_redis_password
 
-# Security
-SESSION_SECRET=your_session_secret
-GPU_SERVER_AUTH_JWT_SECRET=your_gpu_auth_secret
+# Security - MUST BE CHANGED - Use cryptographically secure random strings
+SESSION_SECRET=CHANGE_THIS_TO_A_STRONG_RANDOM_STRING_AT_LEAST_32_CHARS
+GPU_SERVER_AUTH_JWT_SECRET=CHANGE_THIS_TO_A_STRONG_RANDOM_STRING_AT_LEAST_32_CHARS
 
 # AWS S3
 AWS_ACCESS_KEY_ID=your_aws_access_key

@@ -89,9 +89,10 @@ async function loadGPUConfig(): Promise<GPUConfig> {
       logger.info(
         `${serviceLocation}: - Has JWT Secret: ${!!config.gpuServerAuthJwtSecret}`
       );
-      logger.info(
-        `${serviceLocation}: - JWT Secret: ${config.gpuServerAuthJwtSecret}`
-      ); // Temporary debug
+      // SECURITY: Never log the actual JWT secret value
+      // logger.info(
+      //   `${serviceLocation}: - JWT Secret: ${config.gpuServerAuthJwtSecret}`
+      // ); // Removed for security - secrets should never be logged
       logger.info(
         `${serviceLocation}: - Server ID for GPU Server: ${config.serverIdForGpuServer}`
       );
@@ -265,8 +266,7 @@ function generateAndStoreJwt(): void {
   );
 
   if (!gpuServerAuthJwtSecret || gpuServerAuthJwtSecret === "change-this") {
-    // DEBUG
-    logger.info(gpuServerAuthJwtSecret);
+    // SECURITY: Never log the actual JWT secret value, even in error cases
     throw new Error("GPU server JWT secret is not properly configured.");
   }
 

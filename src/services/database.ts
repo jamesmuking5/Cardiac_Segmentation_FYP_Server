@@ -1995,12 +1995,26 @@ const seedGPUHost = async (): Promise<void> => {
       logger.error(`${serviceLocation}: Admin user not found. Cannot create GPU host configuration.`);
       throw new Error('Admin user not found. Cannot create GPU host configuration.');
     }
+    
+    // SECURITY: Validate JWT secret before storing
+    const jwtSecret = process.env.GPU_SERVER_AUTH_JWT_SECRET || 'change-this';
+    if (!process.env.GPU_SERVER_AUTH_JWT_SECRET || jwtSecret === 'change-this') {
+      logger.error(
+        `${serviceLocation}: CRITICAL SECURITY WARNING - GPU_SERVER_AUTH_JWT_SECRET is not properly configured. ` +
+        `This is a security risk. Set a strong GPU_SERVER_AUTH_JWT_SECRET in your .env file immediately.`
+      );
+      // In production, we should fail rather than store weak secrets
+      if (process.env.NODE_ENV === 'production') {
+        throw new Error('GPU_SERVER_AUTH_JWT_SECRET must be properly configured in production environment');
+      }
+    }
+    
     // Create a new GPU host configuration with default values
     const newGpuHostConfig: IGPUHost = {
       host: process.env.GPU_SERVER_URL || 'localhost',
       port: parseInt(process.env.GPU_SERVER_PORT || '8000', 10),
       isHTTPS: process.env.GPU_SERVER_SSL === 'true',
-      gpuServerAuthJwtSecret: process.env.GPU_SERVER_AUTH_JWT_SECRET || 'change-this',
+      gpuServerAuthJwtSecret: jwtSecret,
       serverIdForGpuServer: process.env.GPU_SERVER_ID_FOR_GPU_SERVER || 'default-server-id',
       gpuServerIdentity: process.env.GPU_SERVER_IDENTITY || 'default-gpu-server-identity',
       jwtRefreshInterval: parseInt(process.env.GPU_SERVER_JWT_REFRESH_INTERVAL || '480000', 10), // Default to 8 minutes

@@ -1,13 +1,53 @@
+# Environment files - NEVER commit these (contain secrets)
 .env
-.env.fyp
+.env.*
+!.env.template
+!.env.example
+.env.local
+.env.production
+.env.development
+
+# Dependencies
 /node_modules
+
+# Logs - may contain sensitive information
 /logs/winston_logger/*
+/logs/*.log
+
+# Build output
 /dist
 
+# Temporary directories - may contain sensitive medical data
 /src/temp_upload/.gitkeep
 /src/temp_upload/*
 /src/temp_jpeg/.gitkeep
 /src/temp_jpeg/*
 /src/temp_mesh/*
+/src/temp_exports/*
 
+# Python virtual environment
 .venv/
+venv/
+
+# Security - private keys and certificates
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+*.cer
+
+# Backup files
+*.backup
+*.bak
+*.dump
+*.sql
+
+# IDE and OS files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
