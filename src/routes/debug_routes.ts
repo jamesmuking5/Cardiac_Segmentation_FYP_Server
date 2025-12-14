@@ -43,12 +43,26 @@ router.get("/get-gpu_token", async (req: Request, res: Response): Promise<void> 
 // route to start bbox inferencing via the gpu with self-generated callback_url (below), presigned_url, uuid
 router.get('/start-bbox-inferencing', /*isAuth,*/ injectGpuAuthToken, async (req: Request, res: Response): Promise<void> => {
     logger.warn("DEBUG: Starting bbox inferencing..."); // Log the start of the process
+    
+    // SECURITY: Presigned URL must be provided as a query parameter, not hardcoded
+    const url = req.query.url as string;
+    if (!url) {
+        logger.error(`${serviceLocation}: Missing required 'url' query parameter`);
+        res.status(400).json({ error: "Missing 'url' query parameter. Please provide a valid presigned URL." });
+        return;
+    }
+    
     // Create sample job data
     const uuid = uuidv4(); // Generate a unique UUID for the job
-    const url = "https://devel-visheart-s3-bucket.s3.ap-southeast-1.amazonaws.com/source_nifti/test-folder-dont-delete/smaltarsample.tar?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Content-Sha256=UNSIGNED-PAYLOAD&X-Amz-Credential=ASIAQB4Y5V67QHZAMQHH%2F20250504%2Fap-southeast-1%2Fs3%2Faws4_request&X-Amz-Date=20250504T133649Z&X-Amz-Expires=10000&X-Amz-Security-Token=IQoJb3JpZ2luX2VjEG0aDmFwLXNvdXRoZWFzdC0xIkcwRQIhALKexDOY8PuMNY8KJRCz%2FvaRs4byuuUokcATKhGZXd6zAiAYYZkyu7qZEFN0SvB0D%2F3OUtkM3OqzMMDzYrtj7TvITCrJBQgWEAAaDDAwNDA3ODgwOTAyMyIMK%2FUUro7ONJ0mpyjvKqYFuCCbgBDjemN%2F82n8oNN2rXu7ybzmSinlnYMJjphid%2BYTg%2Bf3P9doUtKPO9FGoVaPu%2FoAps0YjQifw%2FJ4ZNjcc7nsWaYI4Kd%2FsPMFtlDfW3KmMdESTjzyb08Av%2FCLGmzQO0EIkd0%2B5SHKImnWcFOZMGqqLXRmoIskScnc6TZJmMxzFetr5dLcyTjXNGcrqwl%2B8W1AF7ZcrIL6Q5733G02bdHJfE5fJReE97z8B%2Ft5YpppSNmugaazJ1tNCLdVcs0hUE5BbdwGr1V5mASWnjyduG6KXFrOdepy%2BnRZOuUlSGPPUCJ7XkOBP8WmX0s5MHX3clPXp2jd8sIQK0jlWO8I0z8Pv5UmIxcKEf1fWbFfoIxba3QYld87t4%2FCozmPeQYvfPNOg2G1hRAAkgvshE2XW9etIflZOCWzA8LBawlRZU0%2BARXHpl1ubrpfMRYEcNtOg6%2BzIBRlpShOoKptgI032U0QvnISXJuK7tWpJzfXZZ1axcS6BiWB%2BqE3TJJRWJc%2F%2Brmz%2FE2n5OobSrWLoSvrK89DBI5IvPhEjbvVt9N9BN91C5cSoQwQYQ4mv0t7sb8%2FcBYGxHy%2F7NC8xpbgUFUCyJonr3FUHoP18ZVikxUGCTLdJGmigVrQY93XYMRg7s6MMDu5KiYcSKp4XHlIbb8V9yGm%2B%2FN%2FXax5kvhwOzHKCu8uzUHIKCQuYT%2FH6jnem3jO%2FQFQ8KrgvfA6oMMYyzE%2FaoXnNxYFfnRNFNu%2F2oC8ug36kUhZ6o6j8BG5EoXj69YccvCs9xyzJ01syUYkzngit7CgYQRA7dbfjF79sFpUc%2FVyTJu0zhrr%2FRE7XJ4amyMfPrvHCdrK2PoN9NA0eum3LIrWjxld9we9FRhli6189pxVNstqTIArMO6I1Sg4qvv8Ai5IFqJBMLvE3cAGOrIBDFBmdrLIPYAgQS45gThvbnpMGcgR5T97UJEwiU4w7t6ma0XVihKk4lWkNOilsjTJ1Fa1z%2FHYTyKrecSKpGA9eET%2BTSV74hrLRJ3jmUuKrtw0gH9HQKxAb%2B4%2BRDpUKcgc2xITsDpXJgy0iypVIfm5c5ifOJ4dQ4Om2hhrQ6ibEEJ5IDxs0PVzKc%2FqXTsMptx4PYmb%2FRO3z83Yax5WgV3srs%2Bsenmy1wvWvGxD9XpapIJOfg%3D%3D&X-Amz-Signature=dc23c954d99b822ef0aeb72dba0c12617b70128f39544a6b707b14605f5c74d5&X-Amz-SignedHeaders=host&x-amz-checksum-mode=ENABLED&x-id=GetObject"; // Presigned URL for the source NIfTI file
-    const httpOrHttps = NODE_ENV === "development" ? "http" : "https"; // Use http for development and https for production
-    const callback_url = `${httpOrHttps}://192.168.0.2:${PORT}/gpu-webhook`; // Callback URL for the webhook
-    // const callback_url = `https://webhook-test.com/618bf16792c7dd3f3c61fe1204de78cd`; // Debug webhook URL for testing   
+    
+    // SECURITY: Callback URL should use CALLBACK_URL from environment variable, not hardcoded IP
+    const callback_url = process.env.CALLBACK_URL 
+        ? `${process.env.CALLBACK_URL}/gpu-webhook`
+        : (() => {
+            const httpOrHttps = NODE_ENV === "development" ? "http" : "https";
+            const host = process.env.HOST || "localhost";
+            return `${httpOrHttps}://${host}:${PORT}/gpu-webhook`;
+        })();   
 
     // Get fresh GPU server configuration from database
     const gpuServerAddress = await getFreshGPUServerAddress();
