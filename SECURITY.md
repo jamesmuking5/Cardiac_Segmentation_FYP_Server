@@ -184,13 +184,26 @@ session({
 
 **Current State:**
 - Debug routes exist in `src/routes/debug_routes.ts`
+- Contains hardcoded local IP address (192.168.0.2) for callback URL
 - Should not be exposed in production
 
 **Recommendations:**
 - ⚠️ **CRITICAL**: Disable debug routes in production
 - Add environment check to prevent debug route registration
+- Remove hardcoded IP addresses, use environment variables instead
 - Consider implementing feature flags for debug functionality
 - Use separate debug build/deployment for testing
+
+**Example Production Protection:**
+```typescript
+// In src/routes/debug_routes.ts or express_app.ts
+if (process.env.NODE_ENV === 'production') {
+  // Do not register debug routes in production
+  console.warn('Debug routes are disabled in production');
+} else {
+  app.use('/debug', debugRoute);
+}
+```
 
 ### 7. File Upload Security
 
@@ -216,7 +229,7 @@ Before deploying to production, ensure:
 - [ ] SESSION_SECRET is a strong, random 32+ character string
 - [ ] GPU_SERVER_AUTH_JWT_SECRET is a strong, random 32+ character string
 - [ ] AWS credentials use IAM roles (not access keys) where possible
-- [ ] Debug routes are disabled or protected
+- [ ] Debug routes are disabled or protected (check `src/routes/debug_routes.ts`)
 - [ ] HTTPS is enabled (secure cookies)
 - [ ] Database credentials are rotated and strong
 - [ ] Redis password is set and strong
@@ -225,6 +238,9 @@ Before deploying to production, ensure:
 - [ ] Logging is configured to exclude secrets
 - [ ] Security headers are configured (helmet.js)
 - [ ] Regular security updates are scheduled
+- [ ] No hardcoded IP addresses or URLs in code
+- [ ] Run dependency audit: `pnpm audit` or `npm audit`
+- [ ] Review git history for accidentally committed secrets
 
 ---
 
@@ -265,6 +281,35 @@ If you discover a security issue:
 - Update security policies
 - Review and update disaster recovery plans
 - Security training for team members
+
+---
+
+## Recommended Security Tools
+
+### Static Analysis
+- **ESLint Security Plugin**: `eslint-plugin-security` - Detect security issues in code
+- **npm audit / pnpm audit**: Check for known vulnerabilities in dependencies
+- **Snyk**: Continuous vulnerability monitoring
+
+### Secret Scanning
+- **git-secrets**: Prevent committing secrets to git
+- **TruffleHog**: Find secrets in git history
+- **GitHub Secret Scanning**: Automatically enabled for public repos
+
+### Runtime Security
+- **helmet.js**: Security headers for Express (already in use)
+- **express-rate-limit**: Prevent brute force attacks
+- **express-validator**: Input validation and sanitization (already in use)
+
+### Installation Example:
+```bash
+# Install security tools
+pnpm add -D eslint-plugin-security
+pnpm add helmet express-rate-limit
+
+# Run security audit
+pnpm audit
+```
 
 ---
 
