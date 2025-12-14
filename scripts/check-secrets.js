@@ -86,7 +86,7 @@ function isWeakSecret(value, fieldName) {
     if (value.length < 16) {
       return { weak: true, reason: 'Too short (< 16 characters)' };
     }
-    if (value.length < 32 && (fieldName.includes('SECRET'))) {
+    if (value.length < 32 && fieldName.includes('SECRET')) {
       return { weak: true, reason: 'Should be at least 32 characters' };
     }
   }
@@ -149,16 +149,17 @@ function validateAWSCredentials(env) {
       return;
     }
     
-    // Check for example/placeholder values
-    if (value.includes('EXAMPLE') || value.includes('your-')) {
+    // Check for example/placeholder values (case-insensitive)
+    const lowerValue = value.toLowerCase();
+    if (lowerValue.includes('example') || lowerValue.includes('your-')) {
       log(`❌ ${varName}: Contains placeholder text`, 'red');
       hasErrors = true;
       return;
     }
     
-    // Validate AWS_ACCESS_KEY_ID format
+    // Validate AWS_ACCESS_KEY_ID format (supports both permanent AKIA and temporary ASIA credentials)
     if (varName === 'AWS_ACCESS_KEY_ID') {
-      if (!/^AKIA[0-9A-Z]{16}$/.test(value)) {
+      if (!/^A(KIA|SIA)[0-9A-Z]{16}$/.test(value)) {
         log(`⚠️  ${varName}: Format doesn't match typical AWS access key`, 'yellow');
       } else {
         log(`✅ ${varName}: Format looks correct`, 'green');
